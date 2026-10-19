@@ -4,7 +4,8 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
@@ -27,19 +28,51 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
-  const [isSecurityMenuOpen, setIsSecurityMenuOpen] = useState(false);
   const [isTwoFactorOpen, setIsTwoFactorOpen] = useState(false);
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
   const needs2FA = isSuperAdmin(role) && !!currentCaregiver && !currentCaregiver.totp_enabled;
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const ar = locale === "ar";
+
+  const actions: { key: string; icon: LucideIcon; label: string; tone: string; onClick: () => void; hint?: string }[] = [
+    ...(isSuperAdmin(role)
+      ? [
+          { key: "users", icon: ShieldAlert, label: t.userManagement, tone: "bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60", onClick: () => setIsUserModalOpen(true) },
+          { key: "shifts", icon: Clock, label: t.manageShifts, tone: "bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60", onClick: () => setIsShiftModalOpen(true) },
+        ]
+      : []),
+    ...(canManageMedications(role)
+      ? [
+          { key: "schedule", icon: Calendar, label: t.manageSchedule, tone: "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60", onClick: () => setIsScheduleModalOpen(true) },
+          { key: "meds", icon: Pill, label: t.manageMedications, tone: "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60", onClick: () => setIsMedModalOpen(true) },
+        ]
+      : []),
+    ...(currentCaregiver
+      ? [{ key: "pin", icon: KeyRound, label: ar ? "تغيير الرمز السري" : "Change PIN", tone: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700", onClick: () => setIsChangePinOpen(true) }]
+      : []),
+    ...(isSuperAdmin(role)
+      ? [{
+          key: "2fa",
+          icon: currentCaregiver?.totp_enabled ? ShieldCheck : ShieldOff,
+          label: ar ? "تطبيق المصادقة (2FA)" : "Authenticator (2FA)",
+          hint: currentCaregiver?.totp_enabled ? (ar ? "مفعّل" : "On") : ar ? "غير مفعّل" : "Off",
+          tone: currentCaregiver?.totp_enabled
+            ? "bg-slate-100 hover:bg-slate-200 text-emerald-700 dark:bg-slate-800 dark:text-emerald-400 dark:hover:bg-slate-700"
+            : "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+          onClick: () => setIsTwoFactorOpen(true),
+        }]
+      : []),
+    { key: "lang", icon: Globe, label: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },
+  ];
 
   return (
     <>
       <header className="sticky top-0 z-30 w-full border-b border-slate-200/80 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/90 shadow-xs">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-3 sm:px-6 py-2.5">
           {/* Left: Active Caregiver Avatar & Profile */}
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <div
               className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white font-semibold text-sm shadow-sm ring-2 ring-white dark:ring-slate-800"
               style={{ backgroundColor: currentCaregiver?.avatar_color || "#059669" }}
@@ -76,12 +109,12 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               />
             </div>
 
-            <div className="flex flex-col">
+            <div className="flex min-w-0 flex-col">
               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 {t.activeCaregiver}
               </span>
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-sm font-bold text-slate-900 dark:text-white">
+                <span className="truncate text-sm font-bold text-slate-900 dark:text-white">
                   {currentCaregiver?.name || "..."}
                 </span>
 
@@ -104,81 +137,28 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
           </div>
 
-          {/* Right: Management Buttons & Personas Switcher */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Super Admin: User Management */}
-            {isSuperAdmin(role) && (
-              <button
-                type="button"
-                onClick={() => setIsUserModalOpen(true)}
-                aria-label={t.userManagement}
-                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 text-xs font-bold text-purple-700 transition-colors active:scale-95 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60"
-                title={locale === "ar" ? "إدارة المستخدمين والأدوار" : "Manage Users & Roles"}
-              >
-                <ShieldAlert className="h-4 w-4" />
-                <span className="hidden md:inline">{t.userManagement}</span>
-              </button>
-            )}
+          {/* Actions. Mobile first: phones get Switch + Menu (bottom sheet); the full
+              row only appears from lg up, where it fits. One list feeds both. */}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <div className="hidden lg:flex items-center gap-2">
+              {actions.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={a.onClick}
+                  aria-label={a.label}
+                  title={a.label}
+                  className={`flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold transition-colors active:scale-95 ${a.tone}`}
+                >
+                  <a.icon className="h-4 w-4" />
+                  <span className="hidden xl:inline">{a.label}</span>
+                </button>
+              ))}
+            </div>
 
-            {/* Super Admin: Shift Management (24h / 4h shifts) */}
-            {isSuperAdmin(role) && (
-              <button
-                type="button"
-                onClick={() => setIsShiftModalOpen(true)}
-                aria-label={t.manageShifts}
-                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 text-xs font-bold text-blue-700 transition-colors active:scale-95 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60"
-                title={locale === "ar" ? "إدارة وتحديد فترات الورديات والمناوبين" : "Manage Work Shifts & Duty Schedule"}
-              >
-                <Clock className="h-4 w-4" />
-                <span className="hidden md:inline">{t.manageShifts}</span>
-              </button>
-            )}
-
-            {/* Admin or Super Admin: Schedule Management */}
-            {canManageMedications(role) && (
-              <button
-                type="button"
-                onClick={() => setIsScheduleModalOpen(true)}
-                aria-label={t.manageSchedule}
-                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 text-xs font-bold text-emerald-800 transition-colors active:scale-95 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
-                title={locale === "ar" ? "إدارة مواعيد وأيام الأدوية" : "Manage Times & Days Schedule"}
-              >
-                <Calendar className="h-4 w-4" />
-                <span className="hidden md:inline">{t.manageSchedule}</span>
-              </button>
-            )}
-
-            {/* Admin or Super Admin: Medications Catalog */}
-            {canManageMedications(role) && (
-              <button
-                type="button"
-                onClick={() => setIsMedModalOpen(true)}
-                aria-label={t.manageMedications}
-                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-800 transition-colors active:scale-95 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60"
-                title={locale === "ar" ? "إدارة الأدوية والجرعات" : "Prescriptions Catalog"}
-              >
-                <Pill className="h-4 w-4" />
-                <span className="hidden md:inline">{t.manageMedications}</span>
-              </button>
-            )}
-
-            {/* Change own PIN */}
-            {currentCaregiver && (
-              <button
-                type="button"
-                onClick={() => (isSuperAdmin(role) ? setIsSecurityMenuOpen(true) : setIsChangePinOpen(true))}
-                aria-label={locale === "ar" ? "الأمان" : "Security"}
-                title={locale === "ar" ? "الأمان" : "Security"}
-                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-              >
-                <KeyRound className="h-4 w-4" />
-                <span className="hidden md:inline">{locale === "ar" ? "الأمان" : "Security"}</span>
-              </button>
-            )}
-
-            {/* Switch Profile Button */}
+            {/* Switch Profile Button: always visible, it's the most used action */}
             <button
-                type="button"
+              type="button"
               onClick={() => openPinModal()}
               className="flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               aria-label={t.switchCaregiver}
@@ -187,16 +167,15 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               <span className="hidden sm:inline">{t.switchCaregiver}</span>
             </button>
 
-            {/* Language Switcher */}
             <button
-                type="button"
-              onClick={toggleLocale}
-              aria-label={locale === "ar" ? "Switch to English" : "التبديل إلى العربية"}
-              className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors active:scale-95 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              title="Switch Language"
+              type="button"
+              onClick={() => setIsMenuOpen(true)}
+              aria-label={locale === "ar" ? "القائمة" : "Menu"}
+              aria-expanded={isMenuOpen}
+              className="relative flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 lg:hidden"
             >
-              <Globe className="h-3.5 w-3.5" />
-              <span>{locale === "ar" ? "EN" : "عربي"}</span>
+              <Menu className="h-5 w-5" />
+              {needs2FA && <span className="absolute top-2 end-2 h-2 w-2 rounded-full bg-amber-500" />}
             </button>
           </div>
         </div>
@@ -243,40 +222,39 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
       <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
 
-      {isSecurityMenuOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-xs p-0 sm:p-4" onClick={() => setIsSecurityMenuOpen(false)}>
+      {/* Mobile menu: bottom sheet within thumb reach */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs lg:hidden" onClick={() => setIsMenuOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={locale === "ar" ? "الأمان" : "Security"}
-            className="w-full max-w-sm space-y-2 rounded-t-3xl sm:rounded-3xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900"
+            aria-label={ar ? "القائمة" : "Menu"}
+            className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              onClick={() => {
-                setIsSecurityMenuOpen(false);
-                setIsChangePinOpen(true);
-              }}
-              className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-200 px-4 text-sm font-bold text-slate-800 dark:border-slate-700 dark:text-slate-100"
-            >
-              <KeyRound className="h-5 w-5 text-slate-500" />
-              {locale === "ar" ? "تغيير الرمز السري" : "Change PIN"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsSecurityMenuOpen(false);
-                setIsTwoFactorOpen(true);
-              }}
-              className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-200 px-4 text-sm font-bold text-slate-800 dark:border-slate-700 dark:text-slate-100"
-            >
-              {currentCaregiver?.totp_enabled ? <ShieldCheck className="h-5 w-5 text-emerald-600" /> : <ShieldOff className="h-5 w-5 text-amber-600" />}
-              <span className="flex-1 text-start">{locale === "ar" ? "تطبيق المصادقة (2FA)" : "Authenticator app (2FA)"}</span>
-              <span className={`text-xs ${currentCaregiver?.totp_enabled ? "text-emerald-600" : "text-amber-600"}`}>
-                {currentCaregiver?.totp_enabled ? (locale === "ar" ? "مفعّل" : "On") : locale === "ar" ? "غير مفعّل" : "Off"}
-              </span>
-            </button>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="ps-2 text-sm font-bold text-slate-500 dark:text-slate-400">{ar ? "القائمة" : "Menu"}</span>
+              <button type="button" onClick={() => setIsMenuOpen(false)} aria-label={ar ? "إغلاق" : "Close"} className="flex min-h-12 min-w-12 items-center justify-center rounded-full text-slate-400">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {actions.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    a.onClick();
+                  }}
+                  className={`flex min-h-14 w-full items-center gap-3 rounded-2xl px-4 text-start text-sm font-bold active:scale-[0.98] ${a.tone}`}
+                >
+                  <a.icon className="h-5 w-5 shrink-0" />
+                  <span className="flex-1">{a.label}</span>
+                  {a.hint && <span className="text-xs font-semibold opacity-80">{a.hint}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
