@@ -36,27 +36,28 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const ar = locale === "ar";
 
-  const actions: { key: string; icon: LucideIcon; label: string; tone: string; onClick: () => void; hint?: string }[] = [
+  const actions: { key: string; icon: LucideIcon; label: string; short: string; tone: string; onClick: () => void; hint?: string }[] = [
     ...(isSuperAdmin(role)
       ? [
-          { key: "users", icon: ShieldAlert, label: t.userManagement, tone: "bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60", onClick: () => setIsUserModalOpen(true) },
-          { key: "shifts", icon: Clock, label: t.manageShifts, tone: "bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60", onClick: () => setIsShiftModalOpen(true) },
+          { key: "users", icon: ShieldAlert, label: t.userManagement, short: ar ? "المستخدمون" : "Users", tone: "bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60", onClick: () => setIsUserModalOpen(true) },
+          { key: "shifts", icon: Clock, label: t.manageShifts, short: ar ? "الورديات" : "Shifts", tone: "bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60", onClick: () => setIsShiftModalOpen(true) },
         ]
       : []),
     ...(canManageMedications(role)
       ? [
-          { key: "schedule", icon: Calendar, label: t.manageSchedule, tone: "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60", onClick: () => setIsScheduleModalOpen(true) },
-          { key: "meds", icon: Pill, label: t.manageMedications, tone: "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60", onClick: () => setIsMedModalOpen(true) },
+          { key: "schedule", icon: Calendar, label: t.manageSchedule, short: ar ? "مواعيد الأدوية" : "Schedule", tone: "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60", onClick: () => setIsScheduleModalOpen(true) },
+          { key: "meds", icon: Pill, label: t.manageMedications, short: ar ? "الأدوية" : "Medications", tone: "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60", onClick: () => setIsMedModalOpen(true) },
         ]
       : []),
     ...(currentCaregiver
-      ? [{ key: "pin", icon: KeyRound, label: ar ? "تغيير الرمز السري" : "Change PIN", tone: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700", onClick: () => setIsChangePinOpen(true) }]
+      ? [{ key: "pin", icon: KeyRound, label: ar ? "تغيير الرمز السري" : "Change PIN", short: ar ? "تغيير الرمز" : "Change PIN", tone: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700", onClick: () => setIsChangePinOpen(true) }]
       : []),
     ...(isSuperAdmin(role)
       ? [{
           key: "2fa",
           icon: currentCaregiver?.totp_enabled ? ShieldCheck : ShieldOff,
           label: ar ? "تطبيق المصادقة (2FA)" : "Authenticator (2FA)",
+          short: ar ? "المصادقة الثنائية" : "Two-step login",
           hint: currentCaregiver?.totp_enabled ? (ar ? "مفعّل" : "On") : ar ? "غير مفعّل" : "Off",
           tone: currentCaregiver?.totp_enabled
             ? "bg-slate-100 hover:bg-slate-200 text-emerald-700 dark:bg-slate-800 dark:text-emerald-400 dark:hover:bg-slate-700"
@@ -64,7 +65,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           onClick: () => setIsTwoFactorOpen(true),
         }]
       : []),
-    { key: "lang", icon: Globe, label: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },
+    { key: "lang", icon: Globe, label: ar ? "English" : "العربية", short: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },
   ];
 
   return (
@@ -137,24 +138,9 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
           </div>
 
-          {/* Actions. Mobile first: phones get Switch + Menu (bottom sheet); the full
-              row only appears from lg up, where it fits. One list feeds both. */}
+          {/* Phones: Switch + Menu (bottom sheet). From lg the actions get their own
+              labelled row below, so words never compete with the name for space. */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <div className="hidden lg:flex items-center gap-2">
-              {actions.map((a) => (
-                <button
-                  key={a.key}
-                  type="button"
-                  onClick={a.onClick}
-                  aria-label={a.label}
-                  title={a.label}
-                  className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-xl transition-colors active:scale-95 ${a.tone}`}
-                >
-                  <a.icon className="h-4 w-4" />
-                </button>
-              ))}
-            </div>
-
             {/* Switch Profile Button: always visible, it's the most used action */}
             <button
               type="button"
@@ -162,7 +148,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               className="flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               aria-label={t.switchCaregiver}
             >
-              <Users className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <Users className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span className="sm:hidden">{ar ? "تبديل" : "Switch"}</span>
               <span className="hidden sm:inline">{t.switchCaregiver}</span>
             </button>
 
@@ -171,12 +158,29 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               onClick={() => setIsMenuOpen(true)}
               aria-label={locale === "ar" ? "القائمة" : "Menu"}
               aria-expanded={isMenuOpen}
-              className="relative flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 lg:hidden"
+              className="relative flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 lg:hidden"
             >
-              <Menu className="h-5 w-5" />
+              <Menu className="h-5 w-5 shrink-0" />
+              <span>{ar ? "القائمة" : "Menu"}</span>
               {needs2FA && <span className="absolute top-2 end-2 h-2 w-2 rounded-full bg-amber-500" />}
             </button>
           </div>
+        </div>
+
+        <div className="mx-auto hidden max-w-5xl flex-wrap items-center gap-2 px-3 pb-2.5 sm:px-6 lg:flex">
+          {actions.map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              onClick={a.onClick}
+              title={a.label}
+              className={`flex min-h-12 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
+            >
+              <a.icon className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">{a.short}</span>
+              {a.hint && <span className="text-xs font-normal opacity-75">({a.hint})</span>}
+            </button>
+          ))}
         </div>
 
         {/* Super Admin without an authenticator: one leaked PIN = full access */}
