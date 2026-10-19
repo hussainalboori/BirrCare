@@ -23,7 +23,8 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://127.0.0.1:8080/api/v1
+      - INTERNAL_BACKEND_URL=http://birrcare-backend:8080
+      - NEXT_PUBLIC_API_URL=/api/v1
       - NODE_ENV=production
     depends_on:
       - birrcare-backend

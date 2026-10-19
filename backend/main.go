@@ -66,7 +66,8 @@ func main() {
 
 	// CORS configuration for local dev and decoupled Next.js container
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000", "https://*.yourdomain.com"},
+		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "Cf-Access-Authenticated-User-Email"},
 		ExposedHeaders:   []string{"Link"},
