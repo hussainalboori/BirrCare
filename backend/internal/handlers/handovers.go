@@ -65,7 +65,7 @@ func (h *HandoverHandler) ListHandovers(w http.ResponseWriter, r *http.Request) 
 }
 
 type CreateHandoverRequest struct {
-	ShiftType  string `json:"shift_type"` // 'morning', 'evening', 'night'
+	ShiftType  string `json:"shift_type"` // 'morning', 'evening', 'night' or a shift id (e.g. "shift_4h_1")
 	Summary    string `json:"summary"`
 	UrgentFlag bool   `json:"urgent_flag"`
 }

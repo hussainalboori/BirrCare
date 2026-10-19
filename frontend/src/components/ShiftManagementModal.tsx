@@ -383,7 +383,7 @@ export function ShiftManagementModal({
                   </span>
                 </div>
               ) : activeTab === "presets" ? (
-                /* TAB 1: Presets (24h vs 4h shifts) */
+                /* TAB 1: Presets (24h, 4h, 8h, 12h shifts) */
                 <div className="space-y-4">
                   <div className="rounded-2xl bg-amber-50/70 p-4 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-900/40">
                     <h3 className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2">

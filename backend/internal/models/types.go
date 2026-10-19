@@ -115,7 +115,7 @@ type HandoverNote struct {
 	CaregiverName string    `json:"caregiver_name,omitempty"`
 	AvatarColor   string    `json:"avatar_color,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
-	ShiftType     string    `json:"shift_type"` // 'morning', 'evening', 'night'
+	ShiftType     string    `json:"shift_type"` // 'morning', 'evening', 'night' or a shift id (e.g. "shift_4h_1")
 	Summary       string    `json:"summary"`
 	UrgentFlag    bool      `json:"urgent_flag"`
 }
@@ -134,7 +134,7 @@ type AuditLog struct {
 // SSEMessage is the payload envelope broadcasted over Server-Sent Events.
 type SSEMessage struct {
 	ID        string      `json:"id"`
-	Type      string      `json:"type"` // "MED_LOGGED", "VITAL_LOGGED", "NOTE_ADDED", "CAREGIVER_SWITCHED"
+	Type      string      `json:"type"` // "MED_LOGGED", "VITAL_LOGGED", "NOTE_ADDED", "CAREGIVER_SWITCHED", "CAREGIVERS_UPDATED", "MEDICATIONS_UPDATED", "INSULIN_LOGGED", "INSULIN_PLANS_UPDATED", "SHIFT_UPDATED", "DUTY_UPDATED"
 	Timestamp time.Time   `json:"timestamp"`
 	Actor     ActorInfo   `json:"actor"`
 	Payload   interface{} `json:"payload"`
