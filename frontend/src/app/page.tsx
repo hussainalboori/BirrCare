@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { useLanguage } from "@/context/LanguageContext";
@@ -20,6 +20,15 @@ export default function MedicationsPage() {
   const followsTodayRef = useRef(true);
   const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const selectedDayName = useMemo(() => {
+    if (!selectedDate) return "";
+    const parts = selectedDate.split("-").map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return "";
+    const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+    if (isNaN(dt.getTime())) return "";
+    return dt.toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US", { weekday: "long" });
+  }, [selectedDate, locale]);
   // Monotonic request id: responses for an older date/request are discarded, so a slow
   // response can never render one day's doses under another day's date picker.
   const requestSeqRef = useRef(0);
@@ -99,16 +108,24 @@ export default function MedicationsPage() {
             </p>
           </div>
 
-          {/* Date Picker Input */}
-          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-1.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-            <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => handleDateChange(e.target.value)}
-              aria-label={locale === "ar" ? "تاريخ الجدول" : "Schedule date"}
-              className="min-h-11 bg-transparent text-base font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
-            />
+          {/* Date Picker Input & Day Name */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {selectedDayName && (
+              <span className="rounded-xl bg-emerald-50 dark:bg-emerald-950/80 px-3 py-2 text-xs font-bold text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                {selectedDayName}
+              </span>
+            )}
+
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-1.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+              <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => handleDateChange(e.target.value)}
+                aria-label={locale === "ar" ? "تاريخ الجدول" : "Schedule date"}
+                className="min-h-11 bg-transparent text-base font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
+              />
+            </div>
           </div>
         </div>
 

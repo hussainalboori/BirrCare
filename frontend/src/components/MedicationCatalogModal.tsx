@@ -26,11 +26,23 @@ interface MedicationCatalogModalProps {
 }
 
 const ALL_SLOTS = [
-  { id: "morning", labelAr: "الصباح", labelEn: "Morning" },
-  { id: "afternoon", labelAr: "الظهيرة", labelEn: "Afternoon" },
-  { id: "evening", labelAr: "المساء", labelEn: "Evening" },
-  { id: "bedtime", labelAr: "قبل النوم", labelEn: "Bedtime" },
+  { id: "morning", labelAr: "الصباح", labelEn: "Morning", defaultTime: "08:00" },
+  { id: "afternoon", labelAr: "الظهيرة", labelEn: "Afternoon", defaultTime: "14:00" },
+  { id: "evening", labelAr: "المساء", labelEn: "Evening", defaultTime: "20:00" },
+  { id: "bedtime", labelAr: "قبل النوم", labelEn: "Bedtime", defaultTime: "22:30" },
 ];
+
+const DAYS_LIST = [
+  { id: "sun", labelAr: "الأحد", labelEn: "Sun" },
+  { id: "mon", labelAr: "الإثنين", labelEn: "Mon" },
+  { id: "tue", labelAr: "الثلاثاء", labelEn: "Tue" },
+  { id: "wed", labelAr: "الأربعاء", labelEn: "Wed" },
+  { id: "thu", labelAr: "الخميس", labelEn: "Thu" },
+  { id: "fri", labelAr: "الجمعة", labelEn: "Fri" },
+  { id: "sat", labelAr: "السبت", labelEn: "Sat" },
+];
+
+const ALL_DAY_IDS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 const PILL_PRESETS = [
   { id: "aspirin", url: "/meds/aspirin.svg", labelAr: "أسبرين (أصفر)", labelEn: "Aspirin (Yellow)" },
@@ -62,6 +74,13 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [instEn, setInstEn] = useState("");
   const [imageUrl, setImageUrl] = useState("/meds/pill-default.svg");
   const [selectedSlots, setSelectedSlots] = useState<string[]>(["morning"]);
+  const [daysOfWeek, setDaysOfWeek] = useState<string[]>(ALL_DAY_IDS);
+  const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
+    morning: "08:00",
+    afternoon: "14:00",
+    evening: "20:00",
+    bedtime: "22:30",
+  });
 
   const loadMeds = async () => {
     setLoading(true);
@@ -93,6 +112,13 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstEn("");
     setImageUrl("/meds/pill-default.svg");
     setSelectedSlots(["morning"]);
+    setDaysOfWeek(ALL_DAY_IDS);
+    setSlotTimes({
+      morning: "08:00",
+      afternoon: "14:00",
+      evening: "20:00",
+      bedtime: "22:30",
+    });
     setShowForm(true);
   };
 
@@ -105,7 +131,23 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstEn(med.instructions_en || "");
     setImageUrl(med.image_url || "/meds/pill-default.svg");
     setSelectedSlots(med.frequency_slots || ["morning"]);
+    setDaysOfWeek(med.days_of_week && med.days_of_week.length > 0 ? med.days_of_week : ALL_DAY_IDS);
+    const times: Record<string, string> = {};
+    ALL_SLOTS.forEach((s) => {
+      times[s.id] = med.slot_times?.[s.id] || s.defaultTime;
+    });
+    setSlotTimes(times);
     setShowForm(true);
+  };
+
+  const handleToggleDay = (dayId: string) => {
+    if (daysOfWeek.includes(dayId)) {
+      if (daysOfWeek.length > 1) {
+        setDaysOfWeek(daysOfWeek.filter((d) => d !== dayId));
+      }
+    } else {
+      setDaysOfWeek([...daysOfWeek, dayId]);
+    }
   };
 
   const handleToggleSlot = (slotId: string) => {
@@ -135,6 +177,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             frequency_slots: selectedSlots,
+            days_of_week: daysOfWeek,
+            slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
           }),
         });
@@ -149,6 +193,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             frequency_slots: selectedSlots,
+            days_of_week: daysOfWeek,
+            slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
           }),
         });
@@ -308,30 +354,98 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
               </div>
 
-              {/* FREQUENCY SLOTS SELECTION */}
-              <div className="mb-3">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {locale === "ar" ? "فترات اليوم المقررة للجرعة *" : "Scheduled Daily Time Slots *"}
+              {/* FREQUENCY SLOTS & EXACT TIMES */}
+              <div className="mb-4">
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {ALL_SLOTS.map((slot) => {
                     const isChecked = selectedSlots.includes(slot.id);
+                    const currentSlotTime = slotTimes[slot.id] || slot.defaultTime;
+                    return (
+                      <div
+                        key={slot.id}
+                        className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
+                          isChecked
+                            ? "border-amber-500/80 bg-amber-50/80 text-amber-950 dark:bg-amber-950/40 dark:text-amber-200"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSlot(slot.id)}
+                          className="flex items-center gap-2 flex-1 text-start"
+                        >
+                          <div
+                            className={`flex h-4 w-4 items-center justify-center rounded-md border ${
+                              isChecked
+                                ? "bg-amber-600 border-amber-600 text-white"
+                                : "border-slate-300 dark:border-slate-600"
+                            }`}
+                          >
+                            {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                          </div>
+                          <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                          <span className="font-bold">{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
+                        </button>
+
+                        {/* Clock Time input */}
+                        {isChecked && (
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
+                            <span className="text-[10px] text-slate-400 font-mono">⏰</span>
+                            <input
+                              type="time"
+                              value={currentSlotTime}
+                              onChange={(e) =>
+                                setSlotTimes((prev) => ({
+                                  ...prev,
+                                  [slot.id]: e.target.value,
+                                }))
+                              }
+                              className="bg-transparent text-base font-mono font-bold text-slate-900 focus:outline-none dark:text-white"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* DAYS OF WEEK SELECTION */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "أيام أخذ الدواء في الأسبوع *" : "Prescription Days of Week *"}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setDaysOfWeek(ALL_DAY_IDS)}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${
+                      daysOfWeek.length === 7
+                        ? "bg-amber-500 text-white border-amber-500"
+                        : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                    }`}
+                  >
+                    {locale === "ar" ? "يومياً (طوال الأسبوع)" : "Daily (Every Day)"}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {DAYS_LIST.map((day) => {
+                    const isSelected = daysOfWeek.includes(day.id);
                     return (
                       <button
                         type="button"
-                        key={slot.id}
-                        onClick={() => handleToggleSlot(slot.id)}
-                        className={`flex items-center justify-between p-2 rounded-xl border text-xs font-bold transition-all ${
-                          isChecked
-                            ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300"
+                        key={day.id}
+                        onClick={() => handleToggleDay(day.id)}
+                        className={`flex min-h-9 min-w-10 items-center justify-center px-2.5 py-1 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
+                          isSelected
+                            ? "bg-amber-600 text-white border-amber-600 shadow-2xs"
+                            : "bg-slate-50 text-slate-500 hover:border-slate-300 dark:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-700"
                         }`}
                       >
-                        <span className="flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5" />
-                          <span>{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
-                        </span>
-                        {isChecked && <Check className="h-3.5 w-3.5 text-amber-600" />}
+                        {locale === "ar" ? day.labelAr : day.labelEn}
                       </button>
                     );
                   })}
@@ -496,17 +610,38 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                           </p>
                         )}
 
-                      {/* Scheduled slots */}
+                      {/* Scheduled days & slots */}
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Days badge */}
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-[10px] font-bold text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
+                          <Check className="h-3 w-3" />
+                          <span>
+                            {!med.days_of_week || med.days_of_week.length === 7
+                              ? locale === "ar"
+                                ? "يومياً"
+                                : "Daily"
+                              : `${locale === "ar" ? "أيام:" : "Days:"} ${med.days_of_week
+                                  .map((d) => (locale === "ar" ? DAYS_LIST.find((x) => x.id === d)?.labelAr : DAYS_LIST.find((x) => x.id === d)?.labelEn) || d)
+                                  .join("، ")}`}
+                          </span>
+                        </span>
+
+                        {/* Slots and Times */}
                         {med.frequency_slots?.map((s) => {
                           const slotDef = ALL_SLOTS.find((item) => item.id === s);
+                          const slotTime = med.slot_times?.[s] || slotDef?.defaultTime;
                           return (
                             <span
                               key={s}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-700 dark:text-slate-300"
                             >
-                              <Clock className="h-3 w-3" />
+                              <Clock className="h-3 w-3 text-slate-400" />
                               <span>{locale === "ar" ? slotDef?.labelAr || s : slotDef?.labelEn || s}</span>
+                              {slotTime && (
+                                <span className="font-mono font-bold text-slate-900 dark:text-white ms-0.5">
+                                  {slotTime}
+                                </span>
+                              )}
                             </span>
                           );
                         })}

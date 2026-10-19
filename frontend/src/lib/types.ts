@@ -25,6 +25,8 @@ export interface Medication {
   instructions_ar?: string;
   instructions_en?: string;
   frequency_slots: string[];
+  days_of_week?: string[];
+  slot_times?: Record<string, string>;
   image_url?: string;
   is_active: boolean;
   created_by?: string;
@@ -47,6 +49,7 @@ export interface MedicationLog {
 export interface ScheduledDose {
   medication: Medication;
   slot: string;
+  time?: string;
   log?: MedicationLog;
 }
 

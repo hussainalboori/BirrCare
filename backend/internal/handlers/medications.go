@@ -25,6 +25,17 @@ type MedicationHandler struct {
 }
 
 var allowedSlots = map[string]bool{"morning": true, "afternoon": true, "evening": true, "bedtime": true, "night": true}
+var allowedDays = map[string]bool{"sun": true, "mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true}
+
+var defaultSlotTimes = map[string]string{
+	"morning":   "08:00",
+	"afternoon": "14:00",
+	"evening":   "20:00",
+	"bedtime":   "22:30",
+	"night":     "02:00",
+}
+
+var allDaysOfWeek = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
 func validSlots(slots []string) bool {
 	if len(slots) == 0 {
@@ -40,9 +51,54 @@ func validSlots(slots []string) bool {
 	return true
 }
 
+func validDays(days []string) bool {
+	if len(days) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, d := range days {
+		dl := strings.ToLower(strings.TrimSpace(d))
+		if !allowedDays[dl] || seen[dl] {
+			return false
+		}
+		seen[dl] = true
+	}
+	return true
+}
+
+func isValidTimeHHMM(t string) bool {
+	t = strings.TrimSpace(t)
+	if len(t) != 5 || t[2] != ':' {
+		return false
+	}
+	var h, m int
+	if n, _ := fmt.Sscanf(t, "%02d:%02d", &h, &m); n != 2 {
+		return false
+	}
+	return h >= 0 && h <= 23 && m >= 0 && m <= 59
+}
+
+func normalizeSlotTimes(times map[string]string, slots []string) map[string]string {
+	res := make(map[string]string)
+	for _, s := range slots {
+		if times != nil {
+			if t, ok := times[s]; ok && isValidTimeHHMM(t) {
+				res[s] = strings.TrimSpace(t)
+				continue
+			}
+		}
+		if def, exists := defaultSlotTimes[s]; exists {
+			res[s] = def
+		} else {
+			res[s] = "08:00"
+		}
+	}
+	return res
+}
+
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -54,11 +110,11 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	var list []models.Medication
 	for rows.Next() {
 		var m models.Medication
-		var instAr, instEn, createdBy, imgURL sql.NullString
+		var instAr, instEn, createdBy, imgURL, daysJSON, timesJSON sql.NullString
 		var slotsJSON string
 		var createdAtStr string
 
-		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr); err != nil {
+		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON); err != nil {
 			continue
 		}
 		if instAr.Valid {
@@ -74,6 +130,19 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 			m.ImageURL = imgURL.String
 		}
 		json.Unmarshal([]byte(slotsJSON), &m.FrequencySlots)
+
+		if daysJSON.Valid && daysJSON.String != "" {
+			json.Unmarshal([]byte(daysJSON.String), &m.DaysOfWeek)
+		}
+		if len(m.DaysOfWeek) == 0 {
+			m.DaysOfWeek = allDaysOfWeek
+		}
+
+		if timesJSON.Valid && timesJSON.String != "" {
+			json.Unmarshal([]byte(timesJSON.String), &m.SlotTimes)
+		}
+		m.SlotTimes = normalizeSlotTimes(m.SlotTimes, m.FrequencySlots)
+
 		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 		list = append(list, m)
 	}
@@ -83,13 +152,15 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 }
 
 type CreateMedicationRequest struct {
-	NameAr         string   `json:"name_ar"`
-	NameEn         string   `json:"name_en"`
-	Dosage         string   `json:"dosage"`
-	InstructionsAr string   `json:"instructions_ar"`
-	InstructionsEn string   `json:"instructions_en"`
-	FrequencySlots []string `json:"frequency_slots"`
-	ImageURL       string   `json:"image_url,omitempty"`
+	NameAr         string            `json:"name_ar"`
+	NameEn         string            `json:"name_en"`
+	Dosage         string            `json:"dosage"`
+	InstructionsAr string            `json:"instructions_ar"`
+	InstructionsEn string            `json:"instructions_en"`
+	FrequencySlots []string          `json:"frequency_slots"`
+	DaysOfWeek     []string          `json:"days_of_week,omitempty"`
+	SlotTimes      map[string]string `json:"slot_times,omitempty"`
+	ImageURL       string            `json:"image_url,omitempty"`
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -114,13 +185,25 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	days := req.DaysOfWeek
+	if len(days) == 0 {
+		days = allDaysOfWeek
+	} else if !validDays(days) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_DAYS", "days_of_week must contain valid days (sun, mon, tue, wed, thu, fri, sat)")
+		return
+	}
+
+	slotTimes := normalizeSlotTimes(req.SlotTimes, req.FrequencySlots)
+
 	id := "med_" + uuid.New().String()[:8]
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
+	daysJSON, _ := json.Marshal(days)
+	timesJSON, _ := json.Marshal(slotTimes)
 
 	_, err := h.DB.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), req.ImageURL, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -148,14 +231,16 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 }
 
 type UpdateMedicationRequest struct {
-	NameAr         string   `json:"name_ar"`
-	NameEn         string   `json:"name_en"`
-	Dosage         string   `json:"dosage"`
-	InstructionsAr string   `json:"instructions_ar"`
-	InstructionsEn string   `json:"instructions_en"`
-	FrequencySlots []string `json:"frequency_slots"`
-	ImageURL       string   `json:"image_url,omitempty"`
-	IsActive       *bool    `json:"is_active,omitempty"`
+	NameAr         string            `json:"name_ar"`
+	NameEn         string            `json:"name_en"`
+	Dosage         string            `json:"dosage"`
+	InstructionsAr string            `json:"instructions_ar"`
+	InstructionsEn string            `json:"instructions_en"`
+	FrequencySlots []string          `json:"frequency_slots"`
+	DaysOfWeek     []string          `json:"days_of_week,omitempty"`
+	SlotTimes      map[string]string `json:"slot_times,omitempty"`
+	ImageURL       string            `json:"image_url,omitempty"`
+	IsActive       *bool             `json:"is_active,omitempty"`
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +271,13 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if req.DaysOfWeek != nil {
+		if len(req.DaysOfWeek) > 0 && !validDays(req.DaysOfWeek) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_DAYS", "days_of_week must contain valid days (sun, mon, tue, wed, thu, fri, sat)")
+			return
+		}
+	}
+
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
 	_, err := h.DB.Exec(`
 		UPDATE medications
@@ -202,6 +294,21 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		internalError(w, "failed to update medication", err)
 		return
+	}
+
+	if req.DaysOfWeek != nil && len(req.DaysOfWeek) > 0 {
+		daysJSON, _ := json.Marshal(req.DaysOfWeek)
+		_, _ = h.DB.Exec("UPDATE medications SET days_of_week = ? WHERE id = ?", string(daysJSON), medID)
+	}
+
+	if req.SlotTimes != nil {
+		var currentSlotsJSON string
+		_ = h.DB.QueryRow("SELECT frequency_slots FROM medications WHERE id = ?", medID).Scan(&currentSlotsJSON)
+		var currentSlots []string
+		_ = json.Unmarshal([]byte(currentSlotsJSON), &currentSlots)
+		normalizedTimes := normalizeSlotTimes(req.SlotTimes, currentSlots)
+		timesJSON, _ := json.Marshal(normalizedTimes)
+		_, _ = h.DB.Exec("UPDATE medications SET slot_times = ? WHERE id = ?", string(timesJSON), medID)
 	}
 
 	if req.IsActive != nil {
@@ -227,6 +334,93 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "success",
 		"message": "Medication updated successfully",
+	})
+}
+
+type UpdateScheduleRequest struct {
+	DaysOfWeek []string          `json:"days_of_week"`
+	SlotTimes  map[string]string `json:"slot_times"`
+}
+
+// UpdateSchedule allows Admins and Super Admins to configure the times and days of a medication
+func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+	if !auth.CanManageMedications(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Only Admins and Super Admins can manage medication schedules"}`, http.StatusForbidden)
+		return
+	}
+
+	medID := chi.URLParam(r, "id")
+	if medID == "" {
+		http.Error(w, `{"error":"missing medication id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req UpdateScheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.DaysOfWeek) > 0 && !validDays(req.DaysOfWeek) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_DAYS", "days_of_week must be a subset of sun, mon, tue, wed, thu, fri, sat")
+		return
+	}
+
+	// Fetch existing slots
+	var slotsJSON string
+	err := h.DB.QueryRow("SELECT frequency_slots FROM medications WHERE id = ?", medID).Scan(&slotsJSON)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, `{"error":"medication not found"}`, http.StatusNotFound)
+			return
+		}
+		internalError(w, "database query error", err)
+		return
+	}
+
+	var slots []string
+	json.Unmarshal([]byte(slotsJSON), &slots)
+	normalizedTimes := normalizeSlotTimes(req.SlotTimes, slots)
+
+	daysToSave := req.DaysOfWeek
+	if len(daysToSave) == 0 {
+		daysToSave = allDaysOfWeek
+	}
+
+	daysJSON, _ := json.Marshal(daysToSave)
+	timesJSON, _ := json.Marshal(normalizedTimes)
+
+	_, err = h.DB.Exec(`
+		UPDATE medications
+		SET days_of_week = ?,
+		    slot_times = ?
+		WHERE id = ?
+	`, string(daysJSON), string(timesJSON), medID)
+	if err != nil {
+		internalError(w, "failed to update schedule", err)
+		return
+	}
+
+	audit.Log(h.DB, caregiver.ID, "UPDATE_SCHEDULE", "medication", medID, fmt.Sprintf("Updated schedule for %s", medID))
+
+	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
+		ID:          caregiver.ID,
+		Name:        caregiver.Name,
+		AvatarColor: caregiver.AvatarColor,
+	}, map[string]interface{}{
+		"action": "schedule_updated",
+		"id":     medID,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Medication schedule updated successfully",
 	})
 }
 
@@ -284,9 +478,30 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 1. Fetch all active medications
+	// Determine day of the week for target date (e.g., "sun", "mon", "tue", "wed", "thu", "fri", "sat")
+	var targetDayKey string
+	if targetDate, err := time.Parse("2006-01-02", dateStr); err == nil {
+		switch targetDate.Weekday() {
+		case time.Sunday:
+			targetDayKey = "sun"
+		case time.Monday:
+			targetDayKey = "mon"
+		case time.Tuesday:
+			targetDayKey = "tue"
+		case time.Wednesday:
+			targetDayKey = "wed"
+		case time.Thursday:
+			targetDayKey = "thu"
+		case time.Friday:
+			targetDayKey = "fri"
+		case time.Saturday:
+			targetDayKey = "sat"
+		}
+	}
+
+	// 1. Fetch all active medications including days_of_week and slot_times
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times
 		FROM medications WHERE is_active = 1
 	`)
 	if err != nil {
@@ -298,9 +513,9 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	var meds []models.Medication
 	for medRows.Next() {
 		var m models.Medication
-		var instAr, instEn, imgURL sql.NullString
+		var instAr, instEn, imgURL, daysJSON, timesJSON sql.NullString
 		var slotsJSON, createdAtStr string
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr); err != nil {
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON); err != nil {
 			continue
 		}
 		if instAr.Valid {
@@ -313,6 +528,19 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 			m.ImageURL = imgURL.String
 		}
 		json.Unmarshal([]byte(slotsJSON), &m.FrequencySlots)
+
+		if daysJSON.Valid && daysJSON.String != "" {
+			json.Unmarshal([]byte(daysJSON.String), &m.DaysOfWeek)
+		}
+		if len(m.DaysOfWeek) == 0 {
+			m.DaysOfWeek = allDaysOfWeek
+		}
+
+		if timesJSON.Valid && timesJSON.String != "" {
+			json.Unmarshal([]byte(timesJSON.String), &m.SlotTimes)
+		}
+		m.SlotTimes = normalizeSlotTimes(m.SlotTimes, m.FrequencySlots)
+
 		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 		meds = append(meds, m)
 	}
@@ -354,19 +582,46 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	// 3. Assemble scheduled dose cards
 	var schedule []models.ScheduledDose
 	for _, m := range meds {
+		// Filter by day of week
+		isScheduledToday := true
+		if targetDayKey != "" && len(m.DaysOfWeek) > 0 {
+			isScheduledToday = slices.Contains(m.DaysOfWeek, targetDayKey)
+		}
+
 		for _, slot := range m.FrequencySlots {
 			key := fmt.Sprintf("%s:%s", m.ID, slot)
+			log, hasLog := logsMap[key]
+
+			// Only show if scheduled for today OR if there's already a logged dose on this day
+			if !isScheduledToday && !hasLog {
+				continue
+			}
+
+			scheduledTime := m.SlotTimes[slot]
+			if scheduledTime == "" {
+				scheduledTime = defaultSlotTimes[slot]
+			}
+
 			item := models.ScheduledDose{
 				Medication: m,
 				Slot:       slot,
+				Time:       scheduledTime,
 			}
-			if log, exists := logsMap[key]; exists {
+			if hasLog {
 				logCopy := log
 				item.Log = &logCopy
 			}
 			schedule = append(schedule, item)
 		}
 	}
+
+	// Sort chronologically by dose time
+	slices.SortStableFunc(schedule, func(a, b models.ScheduledDose) int {
+		if a.Time != b.Time {
+			return strings.Compare(a.Time, b.Time)
+		}
+		return strings.Compare(a.Slot, b.Slot)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

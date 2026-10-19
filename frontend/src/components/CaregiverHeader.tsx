@@ -4,10 +4,11 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
+import { ScheduleManagementModal } from "./ScheduleManagementModal";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -20,6 +21,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
@@ -110,6 +112,20 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               </button>
             )}
 
+            {/* Admin or Super Admin: Schedule Management */}
+            {canManageMedications(role) && (
+              <button
+                type="button"
+                onClick={() => setIsScheduleModalOpen(true)}
+                aria-label={t.manageSchedule}
+                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 text-xs font-bold text-emerald-800 transition-colors active:scale-95 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
+                title={locale === "ar" ? "إدارة مواعيد وأيام الأدوية" : "Manage Times & Days Schedule"}
+              >
+                <Calendar className="h-4 w-4" />
+                <span className="hidden md:inline">{t.manageSchedule}</span>
+              </button>
+            )}
+
             {/* Admin or Super Admin: Medications Catalog */}
             {canManageMedications(role) && (
               <button
@@ -162,6 +178,12 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <UserManagementModal
         isOpen={isUserModalOpen}
         onClose={() => setIsUserModalOpen(false)}
+      />
+
+      <ScheduleManagementModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        onUpdated={onMedicationsUpdated}
       />
 
       <MedicationCatalogModal

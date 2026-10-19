@@ -14,6 +14,8 @@ import (
 	"birrcare/backend/internal/handlers"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/sse"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func setupTestDB(t *testing.T) (*handlers.MedicationHandler, *handlers.VitalsHandler, func()) {
@@ -229,6 +231,79 @@ func TestRBACPermissions(t *testing.T) {
 	usersHandler.CreateUser(recSuperCreateUser, reqSuperCreateUser)
 	if recSuperCreateUser.Code != http.StatusCreated {
 		t.Fatalf("Expected 201 Created for super admin creating user, got %d: %s", recSuperCreateUser.Code, recSuperCreateUser.Body.String())
+	}
+}
+
+func TestMedicationScheduleManagement(t *testing.T) {
+	medHandler, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	admin := &models.Caregiver{ID: "cg_hussain", Name: "حسين", Role: models.RoleAdmin}
+	caregiver := &models.Caregiver{ID: "cg_fatima", Name: "فاطمة", Role: models.RoleCaregiver}
+
+	// 1. Caregiver cannot update medication schedule (403 Forbidden)
+	schedBody, _ := json.Marshal(handlers.UpdateScheduleRequest{
+		DaysOfWeek: []string{"mon", "wed", "fri"},
+		SlotTimes:  map[string]string{"morning": "07:30"},
+	})
+
+	rCaregiver := chi.NewRouteContext()
+	rCaregiver.URLParams.Add("id", "med_aspirin")
+	reqCaregiver := httptest.NewRequest(http.MethodPut, "/api/v1/medications/med_aspirin/schedule", bytes.NewReader(schedBody))
+	reqCaregiver = reqCaregiver.WithContext(context.WithValue(authContext(reqCaregiver.Context(), caregiver), chi.RouteCtxKey, rCaregiver))
+	recCaregiver := httptest.NewRecorder()
+	medHandler.UpdateSchedule(recCaregiver, reqCaregiver)
+	if recCaregiver.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for caregiver updating schedule, got %d", recCaregiver.Code)
+	}
+
+	// 2. Admin can update schedule (200 OK)
+	rAdmin := chi.NewRouteContext()
+	rAdmin.URLParams.Add("id", "med_aspirin")
+	reqAdmin := httptest.NewRequest(http.MethodPut, "/api/v1/medications/med_aspirin/schedule", bytes.NewReader(schedBody))
+	reqAdmin = reqAdmin.WithContext(context.WithValue(authContext(reqAdmin.Context(), admin), chi.RouteCtxKey, rAdmin))
+	recAdmin := httptest.NewRecorder()
+	medHandler.UpdateSchedule(recAdmin, reqAdmin)
+	if recAdmin.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for admin updating schedule, got %d: %s", recAdmin.Code, recAdmin.Body.String())
+	}
+
+	// 3. 2026-10-19 is a Monday -> med_aspirin MUST be in schedule with time 07:30
+	reqMon := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date=2026-10-19", nil)
+	recMon := httptest.NewRecorder()
+	medHandler.GetSchedule(recMon, reqMon)
+	if recMon.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", recMon.Code)
+	}
+	var monResp struct {
+		Schedule []models.ScheduledDose `json:"schedule"`
+	}
+	json.NewDecoder(recMon.Body).Decode(&monResp)
+	foundAspirin := false
+	for _, dose := range monResp.Schedule {
+		if dose.Medication.ID == "med_aspirin" {
+			foundAspirin = true
+			if dose.Time != "07:30" {
+				t.Fatalf("Expected Aspirin scheduled time 07:30, got %s", dose.Time)
+			}
+		}
+	}
+	if !foundAspirin {
+		t.Fatalf("Expected med_aspirin to be scheduled on Monday 2026-10-19")
+	}
+
+	// 4. 2026-10-18 is a Sunday -> med_aspirin MUST NOT be in schedule
+	reqSun := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date=2026-10-18", nil)
+	recSun := httptest.NewRecorder()
+	medHandler.GetSchedule(recSun, reqSun)
+	var sunResp struct {
+		Schedule []models.ScheduledDose `json:"schedule"`
+	}
+	json.NewDecoder(recSun.Body).Decode(&sunResp)
+	for _, dose := range sunResp.Schedule {
+		if dose.Medication.ID == "med_aspirin" {
+			t.Fatalf("med_aspirin should NOT be scheduled on Sunday 2026-10-18")
+		}
 	}
 }
 

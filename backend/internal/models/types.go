@@ -47,19 +47,21 @@ type ResetPinRequest struct {
 	NewPIN string `json:"new_pin"`
 }
 
-// Medication represents a prescribed medicine with bilingual labels and timing slots.
+// Medication represents a prescribed medicine with bilingual labels, timing slots, days of week, and clock times.
 type Medication struct {
-	ID             string    `json:"id"`
-	NameAr         string    `json:"name_ar"`
-	NameEn         string    `json:"name_en"`
-	Dosage         string    `json:"dosage"`
-	InstructionsAr string    `json:"instructions_ar,omitempty"`
-	InstructionsEn string    `json:"instructions_en,omitempty"`
-	FrequencySlots []string  `json:"frequency_slots"` // e.g., ["morning", "afternoon", "evening", "bedtime"]
-	ImageURL       string    `json:"image_url,omitempty"`
-	IsActive       bool      `json:"is_active"`
-	CreatedBy      string    `json:"created_by,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string            `json:"id"`
+	NameAr         string            `json:"name_ar"`
+	NameEn         string            `json:"name_en"`
+	Dosage         string            `json:"dosage"`
+	InstructionsAr string            `json:"instructions_ar,omitempty"`
+	InstructionsEn string            `json:"instructions_en,omitempty"`
+	FrequencySlots []string          `json:"frequency_slots"` // e.g., ["morning", "afternoon", "evening", "bedtime"]
+	DaysOfWeek     []string          `json:"days_of_week"`    // e.g., ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+	SlotTimes      map[string]string `json:"slot_times"`      // e.g., {"morning": "08:00", "evening": "20:00"}
+	ImageURL       string            `json:"image_url,omitempty"`
+	IsActive       bool              `json:"is_active"`
+	CreatedBy      string            `json:"created_by,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 // MedicationLog represents an intake entry with double-dose safety constraint.
@@ -80,6 +82,7 @@ type MedicationLog struct {
 type ScheduledDose struct {
 	Medication Medication     `json:"medication"`
 	Slot       string         `json:"slot"`
+	Time       string         `json:"time,omitempty"` // scheduled dose clock time, e.g. "08:00"
 	Log        *MedicationLog `json:"log,omitempty"`
 }
 

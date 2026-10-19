@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS medications (
     instructions_ar TEXT,
     instructions_en TEXT,
     frequency_slots TEXT NOT NULL, -- JSON string: '["morning", "evening"]'
+    days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]',
+    slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}',
     image_url TEXT,
     is_active INTEGER DEFAULT 1,
     created_by TEXT REFERENCES caregivers(id),
@@ -156,12 +158,28 @@ func Migrate(database *sql.DB) error {
 			)`)
 	}
 
-	// 3. Migrate medications table: add image_url column if missing
+	// 3. Migrate medications table: add image_url, days_of_week, and slot_times columns if missing
 	var colCount int
 	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name='image_url'").Scan(&colCount)
 	if colCount == 0 {
 		log.Println("Migrating medications table: adding image_url column...")
 		_, _ = database.Exec("ALTER TABLE medications ADD COLUMN image_url TEXT")
+	}
+
+	var daysColCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name='days_of_week'").Scan(&daysColCount)
+	if daysColCount == 0 {
+		log.Println("Migrating medications table: adding days_of_week column...")
+		_, _ = database.Exec(`ALTER TABLE medications ADD COLUMN days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]'`)
+		_, _ = database.Exec(`UPDATE medications SET days_of_week = '["sun","mon","tue","wed","thu","fri","sat"]' WHERE days_of_week IS NULL OR days_of_week = ''`)
+	}
+
+	var timesColCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name='slot_times'").Scan(&timesColCount)
+	if timesColCount == 0 {
+		log.Println("Migrating medications table: adding slot_times column...")
+		_, _ = database.Exec(`ALTER TABLE medications ADD COLUMN slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}'`)
+		_, _ = database.Exec(`UPDATE medications SET slot_times = '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}' WHERE slot_times IS NULL OR slot_times = ''`)
 	}
 
 	// Update visual pill image paths for seeded medications if empty

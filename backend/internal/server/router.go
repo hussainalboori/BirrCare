@@ -130,6 +130,7 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/medications", medHandler.ListMedications)
 				api.Post("/medications", medHandler.CreateMedication)
 				api.Put("/medications/{id}", medHandler.UpdateMedication)
+				api.Put("/medications/{id}/schedule", medHandler.UpdateSchedule)
 				api.Delete("/medications/{id}", medHandler.DeleteMedication)
 				api.Get("/medications/schedule", medHandler.GetSchedule)
 				api.Post("/medications/log", medHandler.LogDose)

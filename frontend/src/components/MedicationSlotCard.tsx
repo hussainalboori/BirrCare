@@ -125,6 +125,19 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
 
   // Format timestamp for display (handles RFC3339 and raw SQLite UTC strings)
   const formattedTime = formatTime(log?.taken_at, locale);
+  const scheduledTime = dose.time || (medication.slot_times?.[slot] || "");
+
+  const isOverdue = (() => {
+    if (isLogged || !scheduledTime) return false;
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (scheduledDate !== todayStr) return false;
+    const [sh, sm] = scheduledTime.split(":").map(Number);
+    if (isNaN(sh) || isNaN(sm)) return false;
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const scheduledMinutes = sh * 60 + sm;
+    return currentMinutes > scheduledMinutes + 30;
+  })();
 
   return (
     <>
@@ -160,16 +173,30 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             </button>
 
             <div className="flex-1 min-w-0">
-              {/* Slot & Dosage Badges */}
+              {/* Slot & Dosage & Scheduled Time Badges */}
               <div className="flex items-center gap-1.5 flex-wrap mb-1">
                 <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   <Clock className="h-3 w-3" />
                   {t.slots[slot as keyof typeof t.slots] || slot}
                 </span>
 
+                {scheduledTime && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
+                    <span className="text-[10px]">⏰</span>
+                    <span className="font-mono">{scheduledTime}</span>
+                  </span>
+                )}
+
                 <Auto className="rounded-md bg-emerald-100/80 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
                   {medication.dosage}
                 </Auto>
+
+                {isOverdue && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 animate-pulse">
+                    <AlertCircle className="h-3 w-3 text-rose-600" />
+                    <span>{t.overdue}</span>
+                  </span>
+                )}
               </div>
 
               {/* Medication Name */}
