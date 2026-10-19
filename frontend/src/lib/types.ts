@@ -25,6 +25,7 @@ export interface Medication {
   instructions_ar?: string;
   instructions_en?: string;
   frequency_slots: string[];
+  image_url?: string;
   is_active: boolean;
   created_by?: string;
   created_at: string;

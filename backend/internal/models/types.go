@@ -56,6 +56,7 @@ type Medication struct {
 	InstructionsAr string    `json:"instructions_ar,omitempty"`
 	InstructionsEn string    `json:"instructions_en,omitempty"`
 	FrequencySlots []string  `json:"frequency_slots"` // e.g., ["morning", "afternoon", "evening", "bedtime"]
+	ImageURL       string    `json:"image_url,omitempty"`
 	IsActive       bool      `json:"is_active"`
 	CreatedBy      string    `json:"created_by,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`

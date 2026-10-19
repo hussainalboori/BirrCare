@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS medications (
     instructions_ar TEXT,
     instructions_en TEXT,
     frequency_slots TEXT NOT NULL, -- JSON string: '["morning", "evening"]'
+    image_url TEXT,
     is_active INTEGER DEFAULT 1,
     created_by TEXT REFERENCES caregivers(id),
     created_at TEXT DEFAULT (datetime('now'))
@@ -138,6 +139,21 @@ func Migrate(database *sql.DB) error {
 		_, _ = database.Exec("UPDATE caregivers SET role = 'super_admin' WHERE id = 'cg_hussain' OR role = 'admin'")
 	}
 
+	// 3. Migrate medications table: add image_url column if missing
+	var colCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name='image_url'").Scan(&colCount)
+	if colCount == 0 {
+		log.Println("Migrating medications table: adding image_url column...")
+		_, _ = database.Exec("ALTER TABLE medications ADD COLUMN image_url TEXT")
+	}
+
+	// Update visual pill image paths for seeded medications if empty
+	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/aspirin.svg' WHERE id = 'med_aspirin' AND (image_url IS NULL OR image_url = '')")
+	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/clopidogrel.svg' WHERE id = 'med_clopidogrel' AND (image_url IS NULL OR image_url = '')")
+	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/amlodipine.svg' WHERE id = 'med_amlodipine' AND (image_url IS NULL OR image_url = '')")
+	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/atorvastatin.svg' WHERE id = 'med_atorvastatin' AND (image_url IS NULL OR image_url = '')")
+	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/citicoline.svg' WHERE id = 'med_citicoline' AND (image_url IS NULL OR image_url = '')")
+
 	if err := seedCaregivers(database); err != nil {
 		return fmt.Errorf("failed seeding caregivers: %w", err)
 	}
@@ -201,7 +217,7 @@ func seedMedications(database *sql.DB) error {
 	}
 
 	meds := []struct {
-		id, nameAr, nameEn, dosage, instAr, instEn, slots string
+		id, nameAr, nameEn, dosage, instAr, instEn, slots, imgURL string
 	}{
 		{
 			"med_aspirin",
@@ -211,6 +227,7 @@ func seedMedications(database *sql.DB) error {
 			"قرص واحد يومياً بعد الإفطار مع ماء وافر",
 			"One tablet daily after breakfast with plenty of water",
 			`["morning"]`,
+			"/meds/aspirin.svg",
 		},
 		{
 			"med_clopidogrel",
@@ -220,6 +237,7 @@ func seedMedications(database *sql.DB) error {
 			"قرص واحد يومياً في نفس الموعد لمنع التجلط",
 			"One tablet daily at the exact same hour to prevent thrombosis",
 			`["evening"]`,
+			"/meds/clopidogrel.svg",
 		},
 		{
 			"med_amlodipine",
@@ -229,6 +247,7 @@ func seedMedications(database *sql.DB) error {
 			"قرص واحد صباحاً لضبط ضغط الدم الشرياني",
 			"One tablet in the morning to maintain blood pressure within range",
 			`["morning"]`,
+			"/meds/amlodipine.svg",
 		},
 		{
 			"med_atorvastatin",
@@ -238,6 +257,7 @@ func seedMedications(database *sql.DB) error {
 			"قرص واحد مساءً قبل النوم لخفض الكوليسترول",
 			"One tablet at bedtime to regulate lipid panel",
 			`["bedtime"]`,
+			"/meds/atorvastatin.svg",
 		},
 		{
 			"med_citicoline",
@@ -247,14 +267,15 @@ func seedMedications(database *sql.DB) error {
 			"قرص مرتين يومياً صباحاً ومساءً لدعم التعافي العصبي",
 			"Twice daily morning and evening to support neuro-recovery",
 			`["morning", "evening"]`,
+			"/meds/citicoline.svg",
 		},
 	}
 
 	for _, m := range meds {
 		_, err := database.Exec(`
-			INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, created_by)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 'cg_hussain')
-		`, m.id, m.nameAr, m.nameEn, m.dosage, m.instAr, m.instEn, m.slots)
+			INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, created_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cg_hussain')
+		`, m.id, m.nameAr, m.nameEn, m.dosage, m.instAr, m.instEn, m.slots, m.imgURL)
 		if err != nil {
 			return err
 		}

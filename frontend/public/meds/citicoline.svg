@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <!-- Background subtle gradient -->
+    <radialGradient id="citiBg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f5f3ff" />
+      <stop offset="100%" stop-color="#ede9fe" />
+    </radialGradient>
+    <!-- Caplet 3D Pearl Surface -->
+    <radialGradient id="citiPill" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="50%" stop-color="#f8fafc" />
+      <stop offset="85%" stop-color="#e2e8f0" />
+      <stop offset="100%" stop-color="#cbd5e1" />
+    </radialGradient>
+    <filter id="shadowCiti" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#4c1d95" flood-opacity="0.22" />
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.12" />
+    </filter>
+    <linearGradient id="bevelCiti" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="100%" stop-color="#94a3b8" stop-opacity="0.7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Container background -->
+  <rect width="200" height="200" rx="36" fill="url(#citiBg)" />
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#ddd6fe" stroke-width="2" stroke-dasharray="4 4" opacity="0.8" />
+
+  <!-- Drop Shadow & Oblong Caplet Body -->
+  <g filter="url(#shadowCiti)">
+    <!-- Outer Caplet Bevel -->
+    <rect x="32" y="70" width="136" height="60" rx="30" fill="url(#bevelCiti)" />
+    <!-- Inner Caplet Face -->
+    <rect x="36" y="74" width="128" height="52" rx="26" fill="url(#citiPill)" />
+    <!-- Glossy Highlight Arch -->
+    <path d="M 50 82 Q 100 76 150 82 Q 100 86 50 82 Z" fill="#ffffff" opacity="0.7" />
+  </g>
+
+  <!-- Center Score Line -->
+  <line x1="100" y1="74" x2="100" y2="126" stroke="#94a3b8" stroke-width="2" />
+  <line x1="101.5" y1="74" x2="101.5" y2="126" stroke="#ffffff" stroke-width="1.5" />
+
+  <!-- Left Side Deboss "CITI" -->
+  <text x="68" y="105" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" text-anchor="middle" fill="#ffffff" letter-spacing="0.5">CITI</text>
+  <text x="68" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" text-anchor="middle" fill="#64748b" letter-spacing="0.5">CITI</text>
+
+  <!-- Right Side Deboss "500" -->
+  <text x="132" y="105" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" text-anchor="middle" fill="#ffffff" letter-spacing="0.5">500</text>
+  <text x="132" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" text-anchor="middle" fill="#64748b" letter-spacing="0.5">500</text>
+
+  <!-- Label Badge -->
+  <g transform="translate(100, 172)">
+    <rect x="-48" y="-12" width="96" height="20" rx="10" fill="#ede9fe" stroke="#a78bfa" stroke-width="1" />
+    <text x="0" y="2" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="700" text-anchor="middle" fill="#5b21b6">CITICOLINE 500</text>
+  </g>
+</svg>

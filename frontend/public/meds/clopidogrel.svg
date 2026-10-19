@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <!-- Background subtle gradient -->
+    <radialGradient id="plavixBg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff1f2" />
+      <stop offset="100%" stop-color="#ffe4e6" />
+    </radialGradient>
+    <!-- Tablet 3D Pink Film-Coated Surface -->
+    <radialGradient id="plavixPill" cx="35%" cy="30%" r="65%">
+      <stop offset="0%" stop-color="#fda4af" />
+      <stop offset="40%" stop-color="#fb7185" />
+      <stop offset="80%" stop-color="#f43f5e" />
+      <stop offset="100%" stop-color="#e11d48" />
+    </radialGradient>
+    <filter id="shadowPlavix" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#881337" flood-opacity="0.3" />
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.15" />
+    </filter>
+    <linearGradient id="bevelPlavix" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#9f1239" stop-opacity="0.7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Container background -->
+  <rect width="200" height="200" rx="36" fill="url(#plavixBg)" />
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#fecdd3" stroke-width="2" stroke-dasharray="4 4" opacity="0.6" />
+
+  <!-- Drop Shadow & Main Pill Body -->
+  <g filter="url(#shadowPlavix)">
+    <!-- Outer Bevel Rim -->
+    <circle cx="100" cy="100" r="62" fill="url(#bevelPlavix)" />
+    <!-- Inner Pill Body -->
+    <circle cx="100" cy="100" r="56" fill="url(#plavixPill)" />
+    <!-- Glossy Highlight Arch -->
+    <path d="M 62 70 A 48 48 0 0 1 138 70 A 50 44 0 0 0 62 70 Z" fill="#ffffff" opacity="0.4" />
+  </g>
+
+  <!-- Debossed Text "75" -->
+  <text x="100.5" y="108.5" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900" text-anchor="middle" fill="#fecdd3" letter-spacing="1">75</text>
+  <text x="100" y="107" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900" text-anchor="middle" fill="#881337" letter-spacing="1">75</text>
+
+  <!-- Label Badge -->
+  <g transform="translate(100, 172)">
+    <rect x="-44" y="-12" width="88" height="20" rx="10" fill="#ffe4e6" stroke="#fb7185" stroke-width="1" />
+    <text x="0" y="2" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="700" text-anchor="middle" fill="#9f1239">PLAVIX 75mg</text>
+  </g>
+</svg>

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <!-- Background subtle gradient -->
+    <radialGradient id="defBg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f0fdf4" />
+      <stop offset="100%" stop-color="#dcfce7" />
+    </radialGradient>
+    <!-- Capsule Left Half: Emerald Green -->
+    <linearGradient id="capGreen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="50%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <!-- Capsule Right Half: Teal / White -->
+    <linearGradient id="capTeal" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="50%" stop-color="#f1f5f9" />
+      <stop offset="100%" stop-color="#cbd5e1" />
+    </linearGradient>
+    <filter id="shadowDef" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#064e3b" flood-opacity="0.25" />
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.12" />
+    </filter>
+  </defs>
+
+  <!-- Container background -->
+  <rect width="200" height="200" rx="36" fill="url(#defBg)" />
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#bbf7d0" stroke-width="2" stroke-dasharray="4 4" opacity="0.8" />
+
+  <!-- Drop Shadow & Capsule Body (rotated at -30 deg) -->
+  <g filter="url(#shadowDef)" transform="rotate(-30 100 100)">
+    <!-- Capsule Base Outer Shell -->
+    <g>
+      <!-- Left Half (Emerald Green) -->
+      <path d="M 52 76 A 24 24 0 0 0 52 124 L 100 124 L 100 76 Z" fill="url(#capGreen)" />
+      <!-- Right Half (White/Silver) -->
+      <path d="M 100 76 L 148 76 A 24 24 0 0 1 148 124 L 100 124 Z" fill="url(#capTeal)" />
+      <!-- Center Ring Divider -->
+      <line x1="100" y1="74" x2="100" y2="126" stroke="#047857" stroke-width="2" />
+      <!-- Highlight Reflection -->
+      <rect x="44" y="82" width="112" height="6" rx="3" fill="#ffffff" opacity="0.5" />
+    </g>
+  </g>
+
+  <!-- Label Badge -->
+  <g transform="translate(100, 172)">
+    <rect x="-42" y="-12" width="84" height="20" rx="10" fill="#dcfce7" stroke="#86efac" stroke-width="1" />
+    <text x="0" y="2" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="700" text-anchor="middle" fill="#065f46">MEDICATION</text>
+  </g>
+</svg>

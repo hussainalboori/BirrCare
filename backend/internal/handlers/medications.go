@@ -23,7 +23,7 @@ type MedicationHandler struct {
 
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, is_active, created_by, created_at
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -35,11 +35,11 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	var list []models.Medication
 	for rows.Next() {
 		var m models.Medication
-		var instAr, instEn, createdBy sql.NullString
+		var instAr, instEn, createdBy, imgURL sql.NullString
 		var slotsJSON string
 		var createdAtStr string
 
-		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &m.IsActive, &createdBy, &createdAtStr); err != nil {
+		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr); err != nil {
 			continue
 		}
 		if instAr.Valid {
@@ -50,6 +50,9 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		}
 		if createdBy.Valid {
 			m.CreatedBy = createdBy.String
+		}
+		if imgURL.Valid {
+			m.ImageURL = imgURL.String
 		}
 		json.Unmarshal([]byte(slotsJSON), &m.FrequencySlots)
 		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
@@ -67,6 +70,7 @@ type CreateMedicationRequest struct {
 	InstructionsAr string   `json:"instructions_ar"`
 	InstructionsEn string   `json:"instructions_en"`
 	FrequencySlots []string `json:"frequency_slots"`
+	ImageURL       string   `json:"image_url,omitempty"`
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -90,9 +94,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
 
 	_, err := h.DB.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), req.ImageURL, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -126,6 +130,7 @@ type UpdateMedicationRequest struct {
 	InstructionsAr string   `json:"instructions_ar"`
 	InstructionsEn string   `json:"instructions_en"`
 	FrequencySlots []string `json:"frequency_slots"`
+	ImageURL       string   `json:"image_url,omitempty"`
 	IsActive       *bool    `json:"is_active,omitempty"`
 }
 
@@ -160,9 +165,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		    dosage = COALESCE(NULLIF(?, ''), dosage),
 		    instructions_ar = ?,
 		    instructions_en = ?,
-		    frequency_slots = CASE WHEN ? = '[]' OR ? = 'null' THEN frequency_slots ELSE ? END
+		    frequency_slots = CASE WHEN ? = '[]' OR ? = 'null' THEN frequency_slots ELSE ? END,
+		    image_url = CASE WHEN ? != '' THEN ? ELSE image_url END
 		WHERE id = ?
-	`, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(slotsJSON), string(slotsJSON), medID)
+	`, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(slotsJSON), string(slotsJSON), req.ImageURL, req.ImageURL, medID)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"failed to update medication: %v"}`, err), http.StatusInternalServerError)
@@ -245,7 +251,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 
 	// 1. Fetch all active medications
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, is_active, created_at
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at
 		FROM medications WHERE is_active = 1
 	`)
 	if err != nil {
@@ -257,9 +263,9 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	var meds []models.Medication
 	for medRows.Next() {
 		var m models.Medication
-		var instAr, instEn sql.NullString
+		var instAr, instEn, imgURL sql.NullString
 		var slotsJSON, createdAtStr string
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &m.IsActive, &createdAtStr); err != nil {
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr); err != nil {
 			continue
 		}
 		if instAr.Valid {
@@ -267,6 +273,9 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		}
 		if instEn.Valid {
 			m.InstructionsEn = instEn.String
+		}
+		if imgURL.Valid {
+			m.ImageURL = imgURL.String
 		}
 		json.Unmarshal([]byte(slotsJSON), &m.FrequencySlots)
 		m.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)

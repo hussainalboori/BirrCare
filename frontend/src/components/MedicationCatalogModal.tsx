@@ -32,6 +32,15 @@ const ALL_SLOTS = [
   { id: "bedtime", labelAr: "قبل النوم", labelEn: "Bedtime" },
 ];
 
+const PILL_PRESETS = [
+  { id: "aspirin", url: "/meds/aspirin.svg", labelAr: "أسبرين (أصفر)", labelEn: "Aspirin (Yellow)" },
+  { id: "clopidogrel", url: "/meds/clopidogrel.svg", labelAr: "بلافيكس (وردي)", labelEn: "Plavix (Pink)" },
+  { id: "amlodipine", url: "/meds/amlodipine.svg", labelAr: "أملوديبين (ثماني)", labelEn: "Amlodipine (Octagon)" },
+  { id: "atorvastatin", url: "/meds/atorvastatin.svg", labelAr: "ليبيتور (بيضاوي)", labelEn: "Lipitor (Oval)" },
+  { id: "citicoline", url: "/meds/citicoline.svg", labelAr: "سيتيكولين (كبسولة)", labelEn: "Citicoline (Caplet)" },
+  { id: "generic", url: "/meds/pill-default.svg", labelAr: "كبسولة عامة", labelEn: "Generic Pill" },
+];
+
 export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: MedicationCatalogModalProps) {
   const { currentCaregiver } = useCaregiver();
   const { locale } = useLanguage();
@@ -51,6 +60,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [dosage, setDosage] = useState("");
   const [instAr, setInstAr] = useState("");
   const [instEn, setInstEn] = useState("");
+  const [imageUrl, setImageUrl] = useState("/meds/pill-default.svg");
   const [selectedSlots, setSelectedSlots] = useState<string[]>(["morning"]);
 
   const loadMeds = async () => {
@@ -81,6 +91,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setDosage("");
     setInstAr("");
     setInstEn("");
+    setImageUrl("/meds/pill-default.svg");
     setSelectedSlots(["morning"]);
     setShowForm(true);
   };
@@ -92,6 +103,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setDosage(med.dosage);
     setInstAr(med.instructions_ar || "");
     setInstEn(med.instructions_en || "");
+    setImageUrl(med.image_url || "/meds/pill-default.svg");
     setSelectedSlots(med.frequency_slots || ["morning"]);
     setShowForm(true);
   };
@@ -123,6 +135,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             frequency_slots: selectedSlots,
+            image_url: imageUrl.trim() || undefined,
           }),
         });
       } else {
@@ -136,6 +149,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             frequency_slots: selectedSlots,
+            image_url: imageUrl.trim() || undefined,
           }),
         });
       }
@@ -351,6 +365,60 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
               </div>
 
+              {/* PILL APPEARANCE & IMAGE SELECTOR */}
+              <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white/70 dark:bg-slate-800/50 p-3">
+                <label className="block text-[11px] font-bold text-slate-800 dark:text-slate-200 mb-2">
+                  {locale === "ar" ? "شكل ولون الحبة للتعرف البصري (Pill Appearance)" : "Pill Appearance & Visual Identifier"}
+                </label>
+
+                <div className="flex items-center gap-3 mb-2.5">
+                  {/* Live preview */}
+                  <div className="h-16 w-16 shrink-0 rounded-xl border-2 border-amber-400 bg-slate-50 dark:bg-slate-900 p-1.5 shadow-xs flex items-center justify-center">
+                    <img
+                      src={imageUrl || "/meds/pill-default.svg"}
+                      alt="Pill Preview"
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = "/meds/pill-default.svg";
+                      }}
+                    />
+                  </div>
+
+                  {/* Preset quick buttons */}
+                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {PILL_PRESETS.map((p) => {
+                      const isSelected = imageUrl === p.url;
+                      return (
+                        <button
+                          type="button"
+                          key={p.id}
+                          onClick={() => setImageUrl(p.url)}
+                          className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[11px] font-semibold transition-all ${
+                            isSelected
+                              ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 ring-1 ring-amber-500"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                        >
+                          <img src={p.url} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                          <span className="truncate">{locale === "ar" ? p.labelAr : p.labelEn}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Custom URL input */}
+                <div>
+                  <input
+                    type="text"
+                    placeholder={locale === "ar" ? "أو أدخل رابط صورة مخصص (URL)" : "Or enter custom image URL"}
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
               {/* ACTIONS */}
               <div className="flex items-center justify-end gap-2">
                 <button
@@ -397,21 +465,34 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     key={med.id}
                     className="flex items-start justify-between p-3.5 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 dark:bg-slate-800/80 dark:border-slate-700 shadow-2xs transition-all"
                   >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-bold text-slate-900 dark:text-white">
-                          {name}
-                        </span>
-                        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
-                          {med.dosage}
-                        </span>
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      {/* Pill Image Thumbnail */}
+                      <div className="h-12 w-12 shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-1 flex items-center justify-center">
+                        <img
+                          src={med.image_url || "/meds/pill-default.svg"}
+                          alt={name}
+                          className="h-full w-full object-contain"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = "/meds/pill-default.svg";
+                          }}
+                        />
                       </div>
 
-                      {inst && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed">
-                          {inst}
-                        </p>
-                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-bold text-slate-900 dark:text-white">
+                            {name}
+                          </span>
+                          <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
+                            {med.dosage}
+                          </span>
+                        </div>
+
+                        {inst && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed">
+                            {inst}
+                          </p>
+                        )}
 
                       {/* Scheduled slots */}
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -429,6 +510,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                         })}
                       </div>
                     </div>
+                  </div>
 
                     {/* Actions */}
                     <div className="flex items-center gap-1.5 ms-3">
