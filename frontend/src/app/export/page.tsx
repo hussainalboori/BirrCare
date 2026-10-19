@@ -45,7 +45,7 @@ export default function DoctorExportPage() {
         <CaregiverHeader />
       </div>
 
-      <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+      <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:max-w-none lg:px-8">
         {/* Actions Bar */}
         <div className="no-print mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -229,7 +229,7 @@ export default function DoctorExportPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {summary.recent_vitals.slice(0, 10).map((v) => (
+                    {(summary.recent_vitals ?? []).slice(0, 10).map((v) => (
                       <tr key={v.id}>
                         <td className="py-2 pe-3 font-mono text-slate-600 dark:text-slate-400">
                           <Ltr>{formatDateTime(v.recorded_at, locale)}</Ltr>

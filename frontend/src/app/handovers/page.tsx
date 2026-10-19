@@ -132,7 +132,7 @@ export default function HandoversPage() {
     <div className="min-h-screen">
       <CaregiverHeader connectionStatus={connectionStatus} />
 
-      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>

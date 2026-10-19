@@ -71,7 +71,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   return (
     <>
       <header className="sticky top-0 z-30 w-full border-b border-slate-200/80 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/90 shadow-xs">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 sm:px-6 py-2.5">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 sm:px-6 py-2.5 lg:max-w-none lg:px-8">
           {/* Left: Active Caregiver Avatar & Profile */}
           <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
             <div
@@ -167,7 +167,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           </div>
         </div>
 
-        <div className="mx-auto hidden max-w-3xl flex-wrap items-center gap-1.5 px-4 pb-2.5 sm:px-6 lg:flex">
+        <div className="mx-auto hidden max-w-3xl flex-wrap items-center gap-1.5 px-4 pb-2.5 sm:px-6 lg:flex lg:max-w-none lg:px-8">
           {actions.map((a) => (
             <button
               key={a.key}

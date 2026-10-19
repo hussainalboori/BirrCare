@@ -74,7 +74,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 
 	var stats VitalsStats
 	alertnessMap := map[string]int{"alert": 0, "confused": 0, "restless": 0, "drowsy": 0}
-	var recentVitals []models.VitalsLog
+	recentVitals := []models.VitalsLog{} // never null in JSON: the report maps over it
 	var sumSys, sumDia, sumPulse, sumSugar float64
 	var bpCount, pulseCount, sugarCount int
 
@@ -198,7 +198,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		LIMIT 15
 	`, startDateStr)
 
-	var recentNotes []models.HandoverNote
+	recentNotes := []models.HandoverNote{}
 	if noteRows != nil {
 		defer noteRows.Close()
 		for noteRows.Next() {

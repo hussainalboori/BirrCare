@@ -56,7 +56,7 @@ export default function InsulinPage() {
     <div className="min-h-screen">
       <CaregiverHeader connectionStatus={connectionStatus} />
 
-      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-xl font-black text-slate-900 dark:text-white sm:text-2xl">
@@ -96,7 +96,7 @@ export default function InsulinPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="grid items-start gap-4 lg:grid-cols-2">
             {statuses.map((s) => (
               <InsulinPlanCard key={s.plan.id} status={s} onLogged={load} />
             ))}

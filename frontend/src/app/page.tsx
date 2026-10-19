@@ -94,7 +94,7 @@ export default function MedicationsPage() {
         onMedicationsUpdated={() => loadSchedule(selectedDate)}
       />
 
-      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         {/* Header & Date Selector */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -180,7 +180,7 @@ export default function MedicationsPage() {
                     </h2>
                   </div>
 
-                  <div className="grid gap-3">
+                  <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                     {doses.map((dose) => (
                       <MedicationSlotCard
                         key={`${selectedDate}:${dose.medication.id}:${dose.slot}`}
