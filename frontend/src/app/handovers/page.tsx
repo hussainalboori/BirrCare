@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { HandoverNote, ShiftType } from "@/lib/types";
+import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { ClipboardList, Plus, AlertTriangle, Clock, Send, Loader2 } from "lucide-react";
 
@@ -54,6 +55,11 @@ export default function HandoversPage() {
       return;
     }
 
+    if (!canTakeActions(currentCaregiver.role)) {
+      alert(locale === "ar" ? "حسابك مخصص للمشاهدة فقط ولا يملك صلاحية إضافة ملاحظات تسليم الوردية" : "Viewer accounts cannot post handover notes");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await fetchApi("/handovers", {
@@ -97,13 +103,15 @@ export default function HandoversPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{t.newHandover}</span>
-          </button>
+          {!isViewer(currentCaregiver?.role) && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{t.newHandover}</span>
+            </button>
+          )}
         </div>
 
         {/* New Handover Note Form */}

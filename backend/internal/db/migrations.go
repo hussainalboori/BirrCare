@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS caregivers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE,
-    role TEXT NOT NULL DEFAULT 'caregiver' CHECK (role IN ('admin', 'caregiver')),
+    role TEXT NOT NULL DEFAULT 'caregiver' CHECK (role IN ('super_admin', 'admin', 'caregiver', 'viewer')),
     pin_hash TEXT NOT NULL,
     avatar_color TEXT DEFAULT '#2563eb',
     preferred_lang TEXT DEFAULT 'ar' CHECK (preferred_lang IN ('ar', 'en')),
@@ -100,6 +101,43 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed executing schema: %w", err)
 	}
 
+	// 1. Safe migration for existing SQLite databases where caregivers table had CHECK (role IN ('admin', 'caregiver'))
+	var sqlDef string
+	err := database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='caregivers'").Scan(&sqlDef)
+	if err == nil && (!strings.Contains(sqlDef, "super_admin") || !strings.Contains(sqlDef, "viewer")) {
+		log.Println("Migrating caregivers table schema to support super_admin and viewer roles...")
+		migrationSQL := `
+			PRAGMA foreign_keys = OFF;
+			CREATE TABLE IF NOT EXISTS caregivers_v2 (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				email TEXT UNIQUE,
+				role TEXT NOT NULL DEFAULT 'caregiver' CHECK (role IN ('super_admin', 'admin', 'caregiver', 'viewer')),
+				pin_hash TEXT NOT NULL,
+				avatar_color TEXT DEFAULT '#2563eb',
+				preferred_lang TEXT DEFAULT 'ar' CHECK (preferred_lang IN ('ar', 'en')),
+				phone TEXT,
+				is_active INTEGER DEFAULT 1,
+				created_at TEXT DEFAULT (datetime('now'))
+			);
+			INSERT OR IGNORE INTO caregivers_v2 (id, name, email, role, pin_hash, avatar_color, preferred_lang, phone, is_active, created_at)
+			SELECT id, name, email, role, pin_hash, avatar_color, preferred_lang, phone, is_active, created_at FROM caregivers;
+			DROP TABLE caregivers;
+			ALTER TABLE caregivers_v2 RENAME TO caregivers;
+			PRAGMA foreign_keys = ON;
+		`
+		if _, err := database.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed migrating caregivers table: %w", err)
+		}
+	}
+
+	// 2. Ensure at least one super_admin exists (promote existing admin or cg_hussain)
+	var superAdminCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM caregivers WHERE role = 'super_admin'").Scan(&superAdminCount)
+	if superAdminCount == 0 {
+		_, _ = database.Exec("UPDATE caregivers SET role = 'super_admin' WHERE id = 'cg_hussain' OR role = 'admin'")
+	}
+
 	if err := seedCaregivers(database); err != nil {
 		return fmt.Errorf("failed seeding caregivers: %w", err)
 	}
@@ -132,10 +170,10 @@ func seedCaregivers(database *sql.DB) error {
 	caregivers := []struct {
 		id, name, email, role, avatarColor, lang string
 	}{
+		{"cg_hussain", "حسين (Hussain)", "hussain@family.local", "super_admin", "#d97706", "ar"},
+		{"cg_ali", "علي (Ali)", "ali@family.local", "admin", "#2563eb", "ar"},
 		{"cg_fatima", "فاطمة (Fatima)", "fatima@family.local", "caregiver", "#059669", "ar"},
-		{"cg_ali", "علي (Ali)", "ali@family.local", "caregiver", "#2563eb", "ar"},
-		{"cg_zainab", "زينب (Zainab)", "zainab@family.local", "caregiver", "#7c3aed", "ar"},
-		{"cg_hussain", "حسين (Hussain)", "hussain@family.local", "admin", "#d97706", "ar"},
+		{"cg_zainab", "زينب (Zainab)", "zainab@family.local", "viewer", "#7c3aed", "ar"},
 	}
 
 	for _, c := range caregivers {

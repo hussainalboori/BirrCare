@@ -50,6 +50,7 @@ func main() {
 
 	// 4. Handlers
 	authHandler := &handlers.AuthHandler{DB: database, Broker: broker}
+	usersHandler := &handlers.UsersHandler{DB: database, Broker: broker}
 	medHandler := &handlers.MedicationHandler{DB: database, Broker: broker}
 	vitalsHandler := &handlers.VitalsHandler{DB: database, Broker: broker}
 	handoverHandler := &handlers.HandoverHandler{DB: database, Broker: broker}
@@ -95,9 +96,18 @@ func main() {
 		api.Post("/auth/verify-pin", authHandler.VerifyPIN)
 		api.Post("/auth/logout", authHandler.Logout)
 
+		// User Management (Super Admin only)
+		api.Get("/users", usersHandler.ListUsers)
+		api.Post("/users", usersHandler.CreateUser)
+		api.Put("/users/{id}", usersHandler.UpdateUser)
+		api.Post("/users/{id}/reset-pin", usersHandler.ResetUserPIN)
+		api.Delete("/users/{id}", usersHandler.ToggleUserActive)
+
 		// Medications & Scheduling
 		api.Get("/medications", medHandler.ListMedications)
 		api.Post("/medications", medHandler.CreateMedication)
+		api.Put("/medications/{id}", medHandler.UpdateMedication)
+		api.Delete("/medications/{id}", medHandler.DeleteMedication)
 		api.Get("/medications/schedule", medHandler.GetSchedule)
 		api.Post("/medications/log", medHandler.LogDose)
 

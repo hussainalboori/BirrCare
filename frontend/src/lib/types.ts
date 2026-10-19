@@ -3,11 +3,13 @@ export type BPStatus = "NORMAL" | "ELEVATED" | "STAGE_2" | "CRISIS";
 export type BloodSugarStatus = "LOW" | "NORMAL" | "ELEVATED" | "VERY_HIGH";
 export type ShiftType = "morning" | "evening" | "night";
 
+export type CaregiverRole = "super_admin" | "admin" | "caregiver" | "viewer";
+
 export interface Caregiver {
   id: string;
   name: string;
   email?: string;
-  role: "admin" | "caregiver";
+  role: CaregiverRole;
   avatar_color: string;
   preferred_lang: "ar" | "en";
   phone?: string;

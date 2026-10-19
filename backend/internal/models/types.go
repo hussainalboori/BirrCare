@@ -2,18 +2,49 @@ package models
 
 import "time"
 
+const (
+	RoleSuperAdmin = "super_admin"
+	RoleAdmin      = "admin"
+	RoleCaregiver  = "caregiver"
+	RoleViewer     = "viewer"
+)
+
 // Caregiver represents a family member or caregiver authorized in the system.
 type Caregiver struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Email         string    `json:"email,omitempty"`
-	Role          string    `json:"role"` // 'admin', 'caregiver'
+	Role          string    `json:"role"` // 'super_admin', 'admin', 'caregiver', 'viewer'
 	PINHash       string    `json:"-"`
 	AvatarColor   string    `json:"avatar_color"`
 	PreferredLang string    `json:"preferred_lang"` // 'ar', 'en'
 	Phone         string    `json:"phone,omitempty"`
 	IsActive      bool      `json:"is_active"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+type CreateUserRequest struct {
+	Name          string `json:"name"`
+	Email         string `json:"email,omitempty"`
+	Role          string `json:"role"` // 'super_admin', 'admin', 'caregiver', 'viewer'
+	PIN           string `json:"pin"`  // 4-digit PIN
+	AvatarColor   string `json:"avatar_color,omitempty"`
+	PreferredLang string `json:"preferred_lang,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+}
+
+type UpdateUserRequest struct {
+	Name          string `json:"name"`
+	Email         string `json:"email,omitempty"`
+	Role          string `json:"role"`
+	AvatarColor   string `json:"avatar_color,omitempty"`
+	PreferredLang string `json:"preferred_lang,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	IsActive      *bool  `json:"is_active,omitempty"`
+}
+
+type ResetPinRequest struct {
+	NewPIN string `json:"new_pin"`
 }
 
 // Medication represents a prescribed medicine with bilingual labels and timing slots.

@@ -55,7 +55,10 @@ export default function MedicationsPage() {
 
   return (
     <div className="min-h-screen">
-      <CaregiverHeader connectionStatus={connectionStatus} />
+      <CaregiverHeader
+        connectionStatus={connectionStatus}
+        onMedicationsUpdated={() => loadSchedule(selectedDate)}
+      />
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
         {/* Header & Date Selector */}

@@ -13,6 +13,7 @@ interface CaregiverContextType {
   targetCaregiverId: string | null;
   verifyPin: (caregiverId: string, pin: string) => Promise<{ success: boolean; error?: string }>;
   refreshCaregiver: () => Promise<void>;
+  refreshCaregivers: () => Promise<void>;
   setCurrentCaregiver: (c: Caregiver) => void;
 }
 
@@ -94,6 +95,7 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
         targetCaregiverId,
         verifyPin,
         refreshCaregiver,
+        refreshCaregivers: fetchCaregiversList,
         setCurrentCaregiver,
       }}
     >

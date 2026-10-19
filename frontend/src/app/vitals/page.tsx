@@ -9,6 +9,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { VitalsLog, AlertnessLevel } from "@/lib/types";
 import { ALERTNESS_METAS, classifyBloodPressure, classifyBloodSugar, BloodSugarTiming } from "@/lib/clinical";
+import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { Activity, Plus, Heart, Droplet, Brain, Clock, Loader2, Filter, AlertTriangle } from "lucide-react";
 
@@ -57,6 +58,11 @@ export default function VitalsPage() {
     e.preventDefault();
     if (!currentCaregiver) {
       openPinModal();
+      return;
+    }
+
+    if (!canTakeActions(currentCaregiver.role)) {
+      alert(locale === "ar" ? "حسابك مخصص للمشاهدة فقط ولا يملك صلاحية تسجيل المؤشرات الحيوية" : "Viewer accounts cannot record vitals");
       return;
     }
 
@@ -126,13 +132,15 @@ export default function VitalsPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{t.recordVitals}</span>
-          </button>
+          {!isViewer(currentCaregiver?.role) && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{t.recordVitals}</span>
+            </button>
+          )}
         </div>
 
         {/* New Vitals Recording Form Drawer / Card */}

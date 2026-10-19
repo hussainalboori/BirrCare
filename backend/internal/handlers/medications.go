@@ -12,6 +12,7 @@ import (
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/sse"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -74,6 +75,10 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 		return
 	}
+	if !auth.CanManageMedications(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Only Admins and Super Admins can add medications"}`, http.StatusForbidden)
+		return
+	}
 
 	var req CreateMedicationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NameAr == "" || req.Dosage == "" {
@@ -96,11 +101,138 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 
 	audit.Log(h.DB, caregiver.ID, "CREATE_MEDICATION", "medication", id, fmt.Sprintf("Added prescription: %s (%s)", req.NameAr, req.Dosage))
 
+	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
+		ID:          caregiver.ID,
+		Name:        caregiver.Name,
+		AvatarColor: caregiver.AvatarColor,
+	}, map[string]interface{}{
+		"action": "created",
+		"id":     id,
+		"name":   req.NameAr,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":      id,
 		"message": "Prescription created",
+	})
+}
+
+type UpdateMedicationRequest struct {
+	NameAr         string   `json:"name_ar"`
+	NameEn         string   `json:"name_en"`
+	Dosage         string   `json:"dosage"`
+	InstructionsAr string   `json:"instructions_ar"`
+	InstructionsEn string   `json:"instructions_en"`
+	FrequencySlots []string `json:"frequency_slots"`
+	IsActive       *bool    `json:"is_active,omitempty"`
+}
+
+func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+	if !auth.CanManageMedications(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Only Admins and Super Admins can edit medications"}`, http.StatusForbidden)
+		return
+	}
+
+	medID := chi.URLParam(r, "id")
+	if medID == "" {
+		http.Error(w, `{"error":"missing medication id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req UpdateMedicationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	slotsJSON, _ := json.Marshal(req.FrequencySlots)
+	_, err := h.DB.Exec(`
+		UPDATE medications
+		SET name_ar = COALESCE(NULLIF(?, ''), name_ar),
+		    name_en = COALESCE(NULLIF(?, ''), name_en),
+		    dosage = COALESCE(NULLIF(?, ''), dosage),
+		    instructions_ar = ?,
+		    instructions_en = ?,
+		    frequency_slots = CASE WHEN ? = '[]' OR ? = 'null' THEN frequency_slots ELSE ? END
+		WHERE id = ?
+	`, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(slotsJSON), string(slotsJSON), medID)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to update medication: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	if req.IsActive != nil {
+		activeInt := 0
+		if *req.IsActive {
+			activeInt = 1
+		}
+		_, _ = h.DB.Exec("UPDATE medications SET is_active = ? WHERE id = ?", activeInt, medID)
+	}
+
+	audit.Log(h.DB, caregiver.ID, "UPDATE_MEDICATION", "medication", medID, fmt.Sprintf("Updated prescription %s", medID))
+
+	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
+		ID:          caregiver.ID,
+		Name:        caregiver.Name,
+		AvatarColor: caregiver.AvatarColor,
+	}, map[string]interface{}{
+		"action": "updated",
+		"id":     medID,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Medication updated successfully",
+	})
+}
+
+func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+	if !auth.CanManageMedications(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Only Admins and Super Admins can deactivate medications"}`, http.StatusForbidden)
+		return
+	}
+
+	medID := chi.URLParam(r, "id")
+	if medID == "" {
+		http.Error(w, `{"error":"missing medication id"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err := h.DB.Exec("UPDATE medications SET is_active = 0 WHERE id = ?", medID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to deactivate medication: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	audit.Log(h.DB, caregiver.ID, "DEACTIVATE_MEDICATION", "medication", medID, "Deactivated prescription")
+
+	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
+		ID:          caregiver.ID,
+		Name:        caregiver.Name,
+		AvatarColor: caregiver.AvatarColor,
+	}, map[string]interface{}{
+		"action": "deactivated",
+		"id":     medID,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Medication deactivated successfully",
 	})
 }
 
@@ -211,6 +343,10 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
 	if caregiver == nil {
 		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+		return
+	}
+	if !auth.CanTakeActions(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Viewers are not permitted to log medication doses"}`, http.StatusForbidden)
 		return
 	}
 

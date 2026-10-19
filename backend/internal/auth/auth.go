@@ -175,3 +175,19 @@ func getDefaultCaregiver(database *sql.DB) *models.Caregiver {
 	c.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 	return &c
 }
+
+// CanManageUsers checks if caregiver has super_admin privileges
+func CanManageUsers(c *models.Caregiver) bool {
+	return c != nil && c.Role == models.RoleSuperAdmin
+}
+
+// CanManageMedications checks if caregiver can add/edit medication prescriptions (super_admin or admin)
+func CanManageMedications(c *models.Caregiver) bool {
+	return c != nil && (c.Role == models.RoleSuperAdmin || c.Role == models.RoleAdmin)
+}
+
+// CanTakeActions checks if caregiver can perform clinical logging (super_admin, admin, caregiver).
+// Viewers are strictly prohibited from writing or logging data.
+func CanTakeActions(c *models.Caregiver) bool {
+	return c != nil && c.Role != models.RoleViewer && (c.Role == models.RoleSuperAdmin || c.Role == models.RoleAdmin || c.Role == models.RoleCaregiver)
+}

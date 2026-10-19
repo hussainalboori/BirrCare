@@ -56,6 +56,7 @@ func TestDoubleDosingLock(t *testing.T) {
 	dummyCaregiver := &models.Caregiver{
 		ID:          "cg_fatima",
 		Name:        "فاطمة",
+		Role:        models.RoleCaregiver,
 		AvatarColor: "#059669",
 	}
 
@@ -145,6 +146,88 @@ func TestCalculateSugarStatusMmolL(t *testing.T) {
 			}
 			t.Errorf("CalculateSugarStatus(%v) = %s; want %s", val, status, tt.expected)
 		}
+	}
+}
+
+func TestRBACPermissions(t *testing.T) {
+	medHandler, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	usersHandler := &handlers.UsersHandler{DB: medHandler.DB, Broker: medHandler.Broker}
+
+	viewer := &models.Caregiver{ID: "cg_zainab", Name: "زينب", Role: models.RoleViewer}
+	caregiver := &models.Caregiver{ID: "cg_fatima", Name: "فاطمة", Role: models.RoleCaregiver}
+	admin := &models.Caregiver{ID: "cg_ali", Name: "علي", Role: models.RoleAdmin}
+	superAdmin := &models.Caregiver{ID: "cg_hussain", Name: "حسين", Role: models.RoleSuperAdmin}
+
+	// 1. Viewer cannot log doses (403 Forbidden)
+	doseBody, _ := json.Marshal(handlers.LogDoseRequest{
+		MedicationID:  "med_aspirin",
+		Slot:          "morning",
+		ScheduledDate: "2026-10-19",
+		Status:        "taken",
+	})
+	reqViewerDose := httptest.NewRequest(http.MethodPost, "/api/v1/medications/log", bytes.NewReader(doseBody))
+	reqViewerDose = reqViewerDose.WithContext(authContext(reqViewerDose.Context(), viewer))
+	recViewerDose := httptest.NewRecorder()
+	medHandler.LogDose(recViewerDose, reqViewerDose)
+	if recViewerDose.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for viewer logging dose, got %d", recViewerDose.Code)
+	}
+
+	// 2. Caregiver cannot create medication (403 Forbidden)
+	medBody, _ := json.Marshal(handlers.CreateMedicationRequest{
+		NameAr:         "دواء جديد",
+		NameEn:         "New Medicine",
+		Dosage:         "50mg",
+		FrequencySlots: []string{"morning"},
+	})
+	reqCaregiverMed := httptest.NewRequest(http.MethodPost, "/api/v1/medications", bytes.NewReader(medBody))
+	reqCaregiverMed = reqCaregiverMed.WithContext(authContext(reqCaregiverMed.Context(), caregiver))
+	recCaregiverMed := httptest.NewRecorder()
+	medHandler.CreateMedication(recCaregiverMed, reqCaregiverMed)
+	if recCaregiverMed.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for caregiver creating medication, got %d", recCaregiverMed.Code)
+	}
+
+	// 3. Admin can create medication (201 Created)
+	reqAdminMed := httptest.NewRequest(http.MethodPost, "/api/v1/medications", bytes.NewReader(medBody))
+	reqAdminMed = reqAdminMed.WithContext(authContext(reqAdminMed.Context(), admin))
+	recAdminMed := httptest.NewRecorder()
+	medHandler.CreateMedication(recAdminMed, reqAdminMed)
+	if recAdminMed.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for admin creating medication, got %d: %s", recAdminMed.Code, recAdminMed.Body.String())
+	}
+
+	// 4. Admin cannot manage users (403 Forbidden)
+	reqAdminListUsers := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	reqAdminListUsers = reqAdminListUsers.WithContext(authContext(reqAdminListUsers.Context(), admin))
+	recAdminListUsers := httptest.NewRecorder()
+	usersHandler.ListUsers(recAdminListUsers, reqAdminListUsers)
+	if recAdminListUsers.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for admin listing users, got %d", recAdminListUsers.Code)
+	}
+
+	// 5. Super Admin can list and create users (200 OK & 201 Created)
+	reqSuperListUsers := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	reqSuperListUsers = reqSuperListUsers.WithContext(authContext(reqSuperListUsers.Context(), superAdmin))
+	recSuperListUsers := httptest.NewRecorder()
+	usersHandler.ListUsers(recSuperListUsers, reqSuperListUsers)
+	if recSuperListUsers.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for super admin listing users, got %d: %s", recSuperListUsers.Code, recSuperListUsers.Body.String())
+	}
+
+	newUserBody, _ := json.Marshal(models.CreateUserRequest{
+		Name: "سارة (Sarah)",
+		Role: models.RoleCaregiver,
+		PIN:  "4321",
+	})
+	reqSuperCreateUser := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(newUserBody))
+	reqSuperCreateUser = reqSuperCreateUser.WithContext(authContext(reqSuperCreateUser.Context(), superAdmin))
+	recSuperCreateUser := httptest.NewRecorder()
+	usersHandler.CreateUser(recSuperCreateUser, reqSuperCreateUser)
+	if recSuperCreateUser.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for super admin creating user, got %d: %s", recSuperCreateUser.Code, recSuperCreateUser.Body.String())
 	}
 }
 

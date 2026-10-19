@@ -5,7 +5,8 @@ import { ScheduledDose } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
-import { Check, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { isViewer } from "@/lib/permissions";
+import { Check, Clock, AlertCircle, Loader2, Eye } from "lucide-react";
 
 interface MedicationSlotCardProps {
   dose: ScheduledDose;
@@ -28,6 +29,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
 
     if (!currentCaregiver) {
       openPinModal();
+      return;
+    }
+
+    if (isViewer(currentCaregiver.role)) {
+      alert(locale === "ar" ? "حسابك مخصص للمشاهدة فقط ولا يملك صلاحية تسجيل الجرعات" : "Viewer accounts cannot log doses");
       return;
     }
 
@@ -134,6 +140,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                   {t.givenBy} {log.caregiver_name} {t.atTime} {formattedTime}
                 </span>
               </div>
+            </div>
+          ) : isViewer(currentCaregiver?.role) ? (
+            <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <Eye className="h-3.5 w-3.5 text-slate-400" />
+              <span>{locale === "ar" ? "قيد الانتظار" : "Pending"}</span>
             </div>
           ) : (
             <button

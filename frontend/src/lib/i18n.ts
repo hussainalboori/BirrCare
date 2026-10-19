@@ -21,6 +21,15 @@ export const translations = {
     pinHint: "رمز المرور الافتراضي: 1234",
     confirm: "تأكيد",
     cancel: "إلغاء",
+    userManagement: "إدارة المستخدمين",
+    manageMedications: "إدارة الأدوية والجرعات",
+    readOnlyNotice: "وضع القراءة فقط: حساب المشاهد مخصص للمتابعة بدون إمكانية تسجيل أو تعديل البيانات.",
+    roles: {
+      super_admin: "مشرف عام",
+      admin: "مدير أدوية",
+      caregiver: "مقدم رعاية",
+      viewer: "مشاهد (قراءة فقط)",
+    },
 
     // Meds
     todayMedications: "جدول أدوية اليوم",
@@ -104,6 +113,15 @@ export const translations = {
     pinHint: "Default PIN: 1234",
     confirm: "Confirm",
     cancel: "Cancel",
+    userManagement: "User Management",
+    manageMedications: "Prescriptions Catalog",
+    readOnlyNotice: "View-only mode: This profile is authorized for monitoring only without write access.",
+    roles: {
+      super_admin: "Super Admin",
+      admin: "Admin",
+      caregiver: "Caregiver",
+      viewer: "Viewer (Read Only)",
+    },
 
     // Meds
     todayMedications: "Today's Medication Schedule",

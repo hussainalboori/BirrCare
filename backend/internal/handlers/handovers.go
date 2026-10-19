@@ -75,6 +75,10 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 		return
 	}
+	if !auth.CanTakeActions(caregiver) {
+		http.Error(w, `{"error":"FORBIDDEN","message":"Viewers are not permitted to create handover notes"}`, http.StatusForbidden)
+		return
+	}
 
 	var req CreateHandoverRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Summary == "" {
