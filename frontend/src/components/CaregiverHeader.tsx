@@ -72,7 +72,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <header className="sticky top-0 z-30 w-full border-b border-slate-200/80 bg-white/90 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/90 shadow-xs">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-3 sm:px-6 py-2.5">
           {/* Left: Active Caregiver Avatar & Profile */}
-          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
             <div
               className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white font-semibold text-sm shadow-sm ring-2 ring-white dark:ring-slate-800"
               style={{ backgroundColor: currentCaregiver?.avatar_color || "#059669" }}
@@ -110,17 +110,17 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
 
             <div className="flex min-w-0 flex-col">
-              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              <span className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 {t.activeCaregiver}
               </span>
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <span className="truncate text-sm font-bold text-slate-900 dark:text-white">
                   {currentCaregiver?.name || "..."}
                 </span>
 
                 {/* Role Badge */}
                 <span
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md text-[10px] font-bold border ${roleMeta.badgeClass}`}
+                  className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-md text-[10px] font-bold border ${roleMeta.badgeClass}`}
                 >
                   {role === "super_admin" ? (
                     <ShieldAlert className="h-3 w-3" />
@@ -148,10 +148,9 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                   onClick={a.onClick}
                   aria-label={a.label}
                   title={a.label}
-                  className={`flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold transition-colors active:scale-95 ${a.tone}`}
+                  className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-xl transition-colors active:scale-95 ${a.tone}`}
                 >
                   <a.icon className="h-4 w-4" />
-                  <span className="hidden xl:inline">{a.label}</span>
                 </button>
               ))}
             </div>
