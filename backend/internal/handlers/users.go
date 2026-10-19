@@ -43,7 +43,7 @@ func (h *UsersHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		ORDER BY created_at ASC
 	`)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to query users: %v"}`, err), http.StatusInternalServerError)
+		internalError(w, "failed to query users", err)
 		return
 	}
 	defer rows.Close()
@@ -138,7 +138,11 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	`, id, req.Name, emailVal, req.Role, string(hash), req.AvatarColor, req.PreferredLang, phoneVal)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to insert user: %v"}`, err), http.StatusInternalServerError)
+		if isUniqueViolation(err) {
+			writeJSONError(w, http.StatusConflict, "EMAIL_TAKEN", "a user with this email already exists")
+			return
+		}
+		internalError(w, "failed to insert user", err)
 		return
 	}
 
@@ -218,10 +222,26 @@ func (h *UsersHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	query += " WHERE id = ?"
 	args = append(args, userID)
 
+	// Never allow demoting the last active super admin (would lock everyone out of user management).
+	if req.Role != "" && req.Role != models.RoleSuperAdmin {
+		var currentRole string
+		var activeSupers int
+		_ = h.DB.QueryRow("SELECT role FROM caregivers WHERE id = ?", userID).Scan(&currentRole)
+		_ = h.DB.QueryRow("SELECT COUNT(*) FROM caregivers WHERE role = 'super_admin' AND is_active = 1").Scan(&activeSupers)
+		if currentRole == models.RoleSuperAdmin && activeSupers <= 1 {
+			writeJSONError(w, http.StatusBadRequest, "LAST_SUPER_ADMIN", "cannot demote the last super admin")
+			return
+		}
+	}
+
 	_, err := h.DB.Exec(query, args...)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to update user: %v"}`, err), http.StatusInternalServerError)
+		if isUniqueViolation(err) {
+			writeJSONError(w, http.StatusConflict, "EMAIL_TAKEN", "a user with this email already exists")
+			return
+		}
+		internalError(w, "failed to update user", err)
 		return
 	}
 
@@ -277,7 +297,7 @@ func (h *UsersHandler) ResetUserPIN(w http.ResponseWriter, r *http.Request) {
 
 	_, err = h.DB.Exec("UPDATE caregivers SET pin_hash = ? WHERE id = ?", string(hash), userID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to reset PIN: %v"}`, err), http.StatusInternalServerError)
+		internalError(w, "failed to reset PIN", err)
 		return
 	}
 
@@ -315,7 +335,7 @@ func (h *UsersHandler) ToggleUserActive(w http.ResponseWriter, r *http.Request) 
 
 	_, err := h.DB.Exec("UPDATE caregivers SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?", userID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to toggle user status: %v"}`, err), http.StatusInternalServerError)
+		internalError(w, "failed to toggle user status", err)
 		return
 	}
 

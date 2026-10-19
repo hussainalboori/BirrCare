@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- 7. Server-side settings (e.g. persisted session signing secret)
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_handover_date ON handover_notes(created_at DESC);
@@ -137,7 +144,16 @@ func Migrate(database *sql.DB) error {
 	var superAdminCount int
 	_ = database.QueryRow("SELECT COUNT(*) FROM caregivers WHERE role = 'super_admin'").Scan(&superAdminCount)
 	if superAdminCount == 0 {
-		_, _ = database.Exec("UPDATE caregivers SET role = 'super_admin' WHERE id = 'cg_hussain' OR role = 'admin'")
+		// Promote exactly ONE account (cg_hussain if present, else the oldest admin).
+		// Promoting every admin would silently escalate privileges on each restart.
+		_, _ = database.Exec(`
+			UPDATE caregivers SET role = 'super_admin'
+			WHERE id = (
+				SELECT id FROM caregivers
+				WHERE id = 'cg_hussain' OR role = 'admin'
+				ORDER BY CASE WHEN id = 'cg_hussain' THEN 0 ELSE 1 END, created_at ASC
+				LIMIT 1
+			)`)
 	}
 
 	// 3. Migrate medications table: add image_url column if missing
@@ -186,6 +202,12 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating vitals_logs table: %w", err)
 		}
+	}
+
+	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.
+	// Refuse to start if a future table rebuild ever drops it.
+	if err := verifyDoseUniqueConstraint(database); err != nil {
+		return err
 	}
 
 	if err := seedCaregivers(database); err != nil {
@@ -317,4 +339,40 @@ func seedMedications(database *sql.DB) error {
 
 	log.Println("Seeded post-stroke medical prescription catalog.")
 	return nil
+}
+
+// verifyDoseUniqueConstraint asserts medication_logs has a UNIQUE index covering
+// exactly (medication_id, scheduled_date, slot).
+func verifyDoseUniqueConstraint(database *sql.DB) error {
+	rows, err := database.Query(`SELECT name FROM pragma_index_list('medication_logs') WHERE "unique" = 1`)
+	if err != nil {
+		return fmt.Errorf("failed inspecting medication_logs indexes: %w", err)
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err == nil {
+			names = append(names, n)
+		}
+	}
+	rows.Close() // release the single pooled connection before the next query
+
+	for _, n := range names {
+		cols, err := database.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, n)
+		if err != nil {
+			continue
+		}
+		var got []string
+		for cols.Next() {
+			var c string
+			if err := cols.Scan(&c); err == nil {
+				got = append(got, c)
+			}
+		}
+		cols.Close()
+		if strings.Join(got, ",") == "medication_id,scheduled_date,slot" {
+			return nil
+		}
+	}
+	return fmt.Errorf("SAFETY: medication_logs is missing UNIQUE(medication_id, scheduled_date, slot) - double-dose lock disabled")
 }

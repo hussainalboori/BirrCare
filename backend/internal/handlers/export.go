@@ -54,7 +54,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		days = d
 	}
 
-	endDate := time.Now().UTC()
+	endDate := time.Now().In(ClinicalLocation())
 	startDate := endDate.AddDate(0, 0, -days)
 	startDateStr := startDate.Format("2006-01-02")
 	endDateStr := endDate.Format("2006-01-02")
@@ -147,6 +147,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			alertnessMap[v.AlertnessLevel]++
 			recentVitals = append(recentVitals, v)
 		}
+		rows.Close() // release the single pooled connection before the next query
 	}
 
 	if bpCount > 0 {

@@ -189,8 +189,17 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	validAlertness := map[string]bool{"alert": true, "confused": true, "restless": true, "drowsy": true}
-	if !validAlertness[req.AlertnessLevel] {
-		req.AlertnessLevel = "alert"
+	if req.AlertnessLevel != "" && !validAlertness[req.AlertnessLevel] {
+		// Never coerce an unrecognised cognitive state (e.g. a typo of "confused") into "alert".
+		writeJSONError(w, http.StatusBadRequest, "INVALID_ALERTNESS", "alertness_level must be alert, confused, restless or drowsy")
+		return
+	}
+	if req.AlertnessLevel == "" {
+		req.AlertnessLevel = "alert" // TODO(clinical): store NULL when not assessed; see audit report
+	}
+	if len(req.Notes) > maxNotesLen {
+		writeJSONError(w, http.StatusBadRequest, "NOTES_TOO_LONG", "notes are too long")
+		return
 	}
 
 	id := uuid.New().String()
@@ -207,7 +216,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, req.AlertnessLevel, vitalType, req.Notes)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to log vitals: %v"}`, err), http.StatusInternalServerError)
+		internalError(w, "failed to log vitals", err)
 		return
 	}
 

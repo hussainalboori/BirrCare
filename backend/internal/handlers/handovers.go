@@ -87,8 +87,15 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	}
 
 	validShifts := map[string]bool{"morning": true, "evening": true, "night": true}
-	if !validShifts[req.ShiftType] {
+	if req.ShiftType == "" {
 		req.ShiftType = "morning"
+	} else if !validShifts[req.ShiftType] {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_SHIFT", "shift_type must be morning, evening or night")
+		return
+	}
+	if len(req.Summary) > 10000 {
+		writeJSONError(w, http.StatusBadRequest, "SUMMARY_TOO_LONG", "summary is too long")
+		return
 	}
 
 	id := uuid.New().String()
@@ -104,7 +111,7 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to create handover: %v"}`, err), http.StatusInternalServerError)
+		internalError(w, "failed to create handover", err)
 		return
 	}
 

@@ -12,72 +12,130 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	clientBufferSize  = 32
+	heartbeatInterval = 15 * time.Second
+)
+
 // Broker coordinates connected SSE clients and broadcasts realtime notifications.
+//
+// Concurrency model: the listen goroutine is the ONLY goroutine that sends on or
+// closes a client channel, so a channel is closed exactly once and never sent on
+// after close. Sends are non-blocking; a client whose buffer is full is evicted
+// (its channel closed) so its HTTP handler returns and the browser's EventSource
+// reconnects and refetches state, instead of silently missing a MED_LOGGED event
+// and showing a dose as "not given".
 type Broker struct {
-	clients        map[chan string]bool
+	clients        map[chan string]struct{}
 	newClients     chan chan string
 	closingClients chan chan string
 	events         chan string
-	mu             sync.RWMutex
+	countReq       chan chan int
+	done           chan struct{}
+	closeOnce      sync.Once
+	heartbeat      time.Duration
 }
 
-var GlobalBroker *Broker
-
 func InitBroker() *Broker {
+	return newBroker(heartbeatInterval)
+}
+
+func newBroker(heartbeat time.Duration) *Broker {
 	b := &Broker{
-		clients:        make(map[chan string]bool),
+		clients:        make(map[chan string]struct{}),
 		newClients:     make(chan chan string),
 		closingClients: make(chan chan string),
-		events:         make(chan string, 100),
+		events:         make(chan string, 256),
+		countReq:       make(chan chan int),
+		done:           make(chan struct{}),
+		heartbeat:      heartbeat,
 	}
-	GlobalBroker = b
 	go b.listen()
 	return b
 }
 
+// Close stops the broker goroutine and disconnects every client.
+func (b *Broker) Close() {
+	b.closeOnce.Do(func() { close(b.done) })
+}
+
 func (b *Broker) listen() {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(b.heartbeat)
 	defer ticker.Stop()
+
+	fanout := func(msg string) {
+		for client := range b.clients {
+			select {
+			case client <- msg:
+			default:
+				// Slow consumer: never block the broadcaster. Evict it so it resyncs.
+				delete(b.clients, client)
+				close(client)
+				log.Printf("[SSE] Evicted slow client. Total active listeners: %d", len(b.clients))
+			}
+		}
+	}
 
 	for {
 		select {
-		case client := <-b.newClients:
-			b.mu.Lock()
-			b.clients[client] = true
-			b.mu.Unlock()
-			log.Printf("[SSE] Client connected. Total active listeners: %d", len(b.clients))
-
-		case client := <-b.closingClients:
-			b.mu.Lock()
-			if _, ok := b.clients[client]; ok {
+		case <-b.done:
+			for client := range b.clients {
 				delete(b.clients, client)
 				close(client)
 			}
-			b.mu.Unlock()
-			log.Printf("[SSE] Client disconnected. Total active listeners: %d", len(b.clients))
+			return
+
+		case client := <-b.newClients:
+			b.clients[client] = struct{}{}
+			log.Printf("[SSE] Client connected. Total active listeners: %d", len(b.clients))
+
+		case client := <-b.closingClients:
+			if _, ok := b.clients[client]; ok {
+				delete(b.clients, client)
+				close(client)
+				log.Printf("[SSE] Client disconnected. Total active listeners: %d", len(b.clients))
+			}
+
+		case reply := <-b.countReq:
+			reply <- len(b.clients)
 
 		case event := <-b.events:
-			b.mu.RLock()
-			for client := range b.clients {
-				select {
-				case client <- event:
-				default:
-					// Slow consumer, avoid blocking the broker
-				}
-			}
-			b.mu.RUnlock()
+			fanout(event)
 
 		case <-ticker.C:
-			// Send heartbeat comment to keep mobile SSE connections alive
-			b.mu.RLock()
-			for client := range b.clients {
-				select {
-				case client <- ": ping\n\n":
-				default:
-				}
-			}
-			b.mu.RUnlock()
+			// SSE comment line keeps Cloudflare / mobile proxies from idling out the stream
+			fanout(": ping\n\n")
 		}
+	}
+}
+
+// subscribe registers a new client channel. Returns nil if the broker is closed.
+func (b *Broker) subscribe(bufSize int) chan string {
+	ch := make(chan string, bufSize)
+	select {
+	case b.newClients <- ch:
+		return ch
+	case <-b.done:
+		return nil
+	}
+}
+
+// unsubscribe removes a client. Safe to call after eviction or broker Close.
+func (b *Broker) unsubscribe(ch chan string) {
+	select {
+	case b.closingClients <- ch:
+	case <-b.done:
+	}
+}
+
+// ClientCount returns the number of connected clients (0 once closed).
+func (b *Broker) ClientCount() int {
+	reply := make(chan int, 1)
+	select {
+	case b.countReq <- reply:
+		return <-reply
+	case <-b.done:
+		return 0
 	}
 }
 
@@ -98,7 +156,10 @@ func (b *Broker) Broadcast(eventType string, actor models.ActorInfo, payload int
 	}
 
 	data := fmt.Sprintf("event: message\ndata: %s\n\n", string(bytes))
-	b.events <- data
+	select {
+	case b.events <- data:
+	case <-b.done:
+	}
 }
 
 // ServeHTTP handles the SSE streaming connection endpoint.
@@ -109,22 +170,27 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The server has WriteTimeout=0 for SSE; also clear any per-request deadline
+	// that a wrapper may have set (ignored if unsupported).
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	messageChan := b.subscribe(clientBufferSize)
+	if messageChan == nil {
+		http.Error(w, "Event stream unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer b.unsubscribe(messageChan)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Channel for this client
-	messageChan := make(chan string, 10)
-	b.newClients <- messageChan
-
-	defer func() {
-		b.closingClients <- messageChan
-	}()
-
-	// Send initial connection handshake
-	initEvent := fmt.Sprintf("event: connected\ndata: {\"status\":\"connected\",\"time\":\"%s\"}\n\n", time.Now().UTC().Format(time.RFC3339))
-	w.Write([]byte(initEvent))
+	// Initial handshake; retry hint tells EventSource to reconnect after 3s
+	initEvent := fmt.Sprintf("retry: 3000\nevent: connected\ndata: {\"status\":\"connected\",\"time\":\"%s\"}\n\n", time.Now().UTC().Format(time.RFC3339))
+	if _, err := w.Write([]byte(initEvent)); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	notify := r.Context().Done()
@@ -135,7 +201,7 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case msg, ok := <-messageChan:
 			if !ok {
-				return
+				return // evicted or broker closed
 			}
 			if _, err := w.Write([]byte(msg)); err != nil {
 				return

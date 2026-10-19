@@ -3,14 +3,19 @@ package auth
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"birrcare/backend/internal/models"
@@ -21,58 +26,176 @@ type contextKey string
 const (
 	CaregiverContextKey contextKey = "authenticated_caregiver"
 	SessionCookieName              = "birrcare_session"
+
+	// SessionTTL bounds how long a PIN session token is accepted, independent of
+	// the cookie's Expires attribute (which the client controls).
+	SessionTTL = 30 * 24 * time.Hour
+
+	minSecretLen = 32
 )
 
+// sessionSecret holds the HMAC key used to sign session cookies. It is NEVER a
+// hard-coded value: it comes from SESSION_SECRET, a value persisted in the DB, or
+// (until InitSessionSecret runs) a random per-process key.
 var (
-	// Secret key for signing session cookies
-	sessionSecret = []byte(getEnv("SESSION_SECRET", "birrcare-super-secret-family-recovery-key-2026"))
+	sessionSecret     atomic.Pointer[[]byte]
+	sessionSecretOnce sync.Once
 )
 
-func getEnv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
+func getSecret() []byte {
+	sessionSecretOnce.Do(func() {
+		if sessionSecret.Load() == nil {
+			b := make([]byte, 32)
+			if _, err := rand.Read(b); err != nil {
+				panic("auth: cannot read crypto/rand: " + err.Error())
+			}
+			sessionSecret.Store(&b)
+		}
+	})
+	return *sessionSecret.Load()
+}
+
+// SetSessionSecret overrides the signing key (used by InitSessionSecret and tests).
+func SetSessionSecret(secret []byte) {
+	sessionSecretOnce.Do(func() {})
+	s := append([]byte(nil), secret...)
+	sessionSecret.Store(&s)
+}
+
+// InitSessionSecret loads the session signing key. Priority:
+//  1. SESSION_SECRET env (must be >= 32 chars)
+//  2. a random key persisted in app_settings (generated on first boot), so
+//     restarts do not log every sibling out.
+func InitSessionSecret(database *sql.DB) error {
+	if env := os.Getenv("SESSION_SECRET"); env != "" {
+		if len(env) < minSecretLen {
+			return fmt.Errorf("SESSION_SECRET must be at least %d characters", minSecretLen)
+		}
+		SetSessionSecret([]byte(env))
+		return nil
 	}
-	return def
+
+	var stored string
+	err := database.QueryRow("SELECT value FROM app_settings WHERE key = 'session_secret'").Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("failed generating session secret: %w", err)
+		}
+		if _, err := database.Exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('session_secret', ?)", hex.EncodeToString(b)); err != nil {
+			return fmt.Errorf("failed persisting session secret: %w", err)
+		}
+		err = database.QueryRow("SELECT value FROM app_settings WHERE key = 'session_secret'").Scan(&stored)
+	}
+	if err != nil {
+		return fmt.Errorf("failed loading session secret: %w", err)
+	}
+	if len(stored) < minSecretLen {
+		return errors.New("persisted session secret is too short")
+	}
+	SetSessionSecret([]byte(stored))
+	return nil
+}
+
+func sign(payload string) string {
+	mac := hmac.New(sha256.New, getSecret())
+	mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // GenerateSessionToken signs caregiverID:timestamp
 func GenerateSessionToken(caregiverID string) string {
-	ts := time.Now().Unix()
-	payload := fmt.Sprintf("%s:%d", caregiverID, ts)
-	mac := hmac.New(sha256.New, sessionSecret)
-	mac.Write([]byte(payload))
-	signature := hex.EncodeToString(mac.Sum(nil))
-	return fmt.Sprintf("%s:%s", payload, signature)
+	payload := fmt.Sprintf("%s:%d", caregiverID, time.Now().Unix())
+	return fmt.Sprintf("%s:%s", payload, sign(payload))
 }
 
-// ParseSessionToken verifies signature and returns caregiverID
+// ParseSessionToken verifies signature and age, and returns caregiverID
 func ParseSessionToken(token string) (string, error) {
 	parts := strings.Split(token, ":")
 	if len(parts) != 3 {
 		return "", errors.New("invalid session token format")
 	}
-	caregiverID := parts[0]
-	ts := parts[1]
-	providedSig := parts[2]
+	caregiverID, ts, providedSig := parts[0], parts[1], parts[2]
 
-	payload := fmt.Sprintf("%s:%s", caregiverID, ts)
-	mac := hmac.New(sha256.New, sessionSecret)
-	mac.Write([]byte(payload))
-	expectedSig := hex.EncodeToString(mac.Sum(nil))
-
+	expectedSig := sign(caregiverID + ":" + ts)
 	if !hmac.Equal([]byte(providedSig), []byte(expectedSig)) {
 		return "", errors.New("invalid signature")
+	}
+
+	issued, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return "", errors.New("invalid session timestamp")
+	}
+	age := time.Since(time.Unix(issued, 0))
+	if age > SessionTTL || age < -5*time.Minute {
+		return "", errors.New("session expired")
 	}
 
 	return caregiverID, nil
 }
 
-// Middleware injects authenticated Caregiver into context.
+// Config controls which identity sources the middleware trusts.
+type Config struct {
+	// CFAccess validates Cf-Access-Jwt-Assertion (nil = disabled).
+	CFAccess *CFAccessVerifier
+	// TrustEmailHeader trusts the raw Cf-Access-Authenticated-User-Email header.
+	// INSECURE: any client that can reach the frontend/backend without passing
+	// through Cloudflare (LAN, host, misrouted tunnel) can spoof it.
+	TrustEmailHeader bool
+	// DevFallback authenticates anonymous requests as the first active caregiver.
+	// Must be false in production.
+	DevFallback bool
+}
+
+func envBool(k string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return def
+}
+
+// ConfigFromEnv builds Config from:
+//
+//	CF_ACCESS_TEAM_DOMAIN        e.g. "yourteam.cloudflareaccess.com"
+//	CF_ACCESS_AUD                Access application AUD tag
+//	CF_ACCESS_TRUST_EMAIL_HEADER "true" to trust the raw email header (not recommended)
+//	AUTH_DEV_FALLBACK            default true unless APP_ENV=production
+func ConfigFromEnv() Config {
+	cfg := Config{
+		TrustEmailHeader: envBool("CF_ACCESS_TRUST_EMAIL_HEADER", false),
+		DevFallback:      envBool("AUTH_DEV_FALLBACK", os.Getenv("APP_ENV") != "production"),
+	}
+	team, aud := os.Getenv("CF_ACCESS_TEAM_DOMAIN"), os.Getenv("CF_ACCESS_AUD")
+	if team != "" && aud != "" {
+		cfg.CFAccess = NewCFAccessVerifier(team, aud)
+	} else if team != "" || aud != "" {
+		log.Println("[AUTH] WARNING: both CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD are required; Cloudflare JWT validation disabled")
+	}
+	if cfg.TrustEmailHeader {
+		log.Println("[AUTH] WARNING: trusting raw Cf-Access-Authenticated-User-Email header without JWT validation")
+	}
+	if cfg.DevFallback {
+		log.Println("[AUTH] WARNING: AUTH_DEV_FALLBACK enabled - anonymous requests act as the first active caregiver")
+	}
+	return cfg
+}
+
+// Middleware injects the authenticated Caregiver into context using ConfigFromEnv.
+func Middleware(database *sql.DB) func(http.Handler) http.Handler {
+	return MiddlewareWithConfig(database, ConfigFromEnv())
+}
+
+// MiddlewareWithConfig injects authenticated Caregiver into context.
 // Priority:
 // 1. Session Cookie (active PIN persona on device)
-// 2. Cloudflare Access Header (Cf-Access-Authenticated-User-Email)
-// 3. Fallback to default active caregiver if local dev or single family setup
-func Middleware(database *sql.DB) func(http.Handler) http.Handler {
+// 2. Cloudflare Access JWT (Cf-Access-Jwt-Assertion), validated against team JWKS
+// 3. Raw Cf-Access-Authenticated-User-Email header (only if explicitly trusted)
+// 4. Dev fallback to first active caregiver (only if explicitly enabled)
+func MiddlewareWithConfig(database *sql.DB, cfg Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var caregiver *models.Caregiver
@@ -84,27 +207,55 @@ func Middleware(database *sql.DB) func(http.Handler) http.Handler {
 				}
 			}
 
-			// 2. Check Cloudflare Access Header if no session cookie or if cookie invalid
-			if caregiver == nil {
-				cfEmail := r.Header.Get("Cf-Access-Authenticated-User-Email")
-				if cfEmail != "" {
+			// 2. Cloudflare Access signed JWT
+			if caregiver == nil && cfg.CFAccess != nil {
+				token := r.Header.Get("Cf-Access-Jwt-Assertion")
+				if token == "" {
+					if c, err := r.Cookie("CF_Authorization"); err == nil {
+						token = c.Value
+					}
+				}
+				if token != "" {
+					if email, err := cfg.CFAccess.Verify(r.Context(), token); err == nil {
+						caregiver = getCaregiverByEmail(database, email)
+					} else {
+						log.Printf("[AUTH] Rejected Cloudflare Access JWT: %v", err)
+					}
+				}
+			}
+
+			// 3. Raw header (legacy / explicitly trusted only)
+			if caregiver == nil && cfg.TrustEmailHeader {
+				if cfEmail := r.Header.Get("Cf-Access-Authenticated-User-Email"); cfEmail != "" {
 					caregiver = getCaregiverByEmail(database, cfEmail)
 				}
 			}
 
-			// 3. Dev / local fallback: If still nil, select the first active caregiver
-			if caregiver == nil {
+			// 4. Dev / local fallback
+			if caregiver == nil && cfg.DevFallback {
 				caregiver = getDefaultCaregiver(database)
 			}
 
 			if caregiver != nil {
 				ctx := context.WithValue(r.Context(), CaregiverContextKey, caregiver)
-				next.ServeHTTP(w, r.WithContext(ctx))
-			} else {
-				next.ServeHTTP(w, r)
+				r = r.WithContext(ctx)
 			}
+			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireAuth rejects requests that have no authenticated caregiver in context.
+func RequireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if GetCaregiverFromContext(r.Context()) == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"UNAUTHENTICATED","message":"Select your profile and enter your PIN"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // GetCaregiverFromContext returns the authenticated caregiver or nil.
@@ -116,17 +267,13 @@ func GetCaregiverFromContext(ctx context.Context) *models.Caregiver {
 	return c
 }
 
-func getCaregiverByID(database *sql.DB, id string) *models.Caregiver {
-	row := database.QueryRow(`
-		SELECT id, name, email, role, avatar_color, preferred_lang, is_active, created_at
-		FROM caregivers WHERE id = ? AND is_active = 1
-	`, id)
+const caregiverCols = `id, name, email, role, avatar_color, preferred_lang, is_active, created_at`
 
+func scanCaregiver(row *sql.Row) *models.Caregiver {
 	var c models.Caregiver
 	var email sql.NullString
 	var createdAtStr string
-	err := row.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr)
-	if err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr); err != nil {
 		return nil
 	}
 	if email.Valid {
@@ -134,46 +281,22 @@ func getCaregiverByID(database *sql.DB, id string) *models.Caregiver {
 	}
 	c.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 	return &c
+}
+
+func getCaregiverByID(database *sql.DB, id string) *models.Caregiver {
+	return scanCaregiver(database.QueryRow(`SELECT `+caregiverCols+` FROM caregivers WHERE id = ? AND is_active = 1`, id))
 }
 
 func getCaregiverByEmail(database *sql.DB, email string) *models.Caregiver {
-	row := database.QueryRow(`
-		SELECT id, name, email, role, avatar_color, preferred_lang, is_active, created_at
-		FROM caregivers WHERE email = ? AND is_active = 1
-	`, email)
-
-	var c models.Caregiver
-	var mail sql.NullString
-	var createdAtStr string
-	err := row.Scan(&c.ID, &c.Name, &mail, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr)
-	if err != nil {
+	email = strings.TrimSpace(email)
+	if email == "" {
 		return nil
 	}
-	if mail.Valid {
-		c.Email = mail.String
-	}
-	c.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
-	return &c
+	return scanCaregiver(database.QueryRow(`SELECT `+caregiverCols+` FROM caregivers WHERE lower(email) = lower(?) AND is_active = 1`, email))
 }
 
 func getDefaultCaregiver(database *sql.DB) *models.Caregiver {
-	row := database.QueryRow(`
-		SELECT id, name, email, role, avatar_color, preferred_lang, is_active, created_at
-		FROM caregivers WHERE is_active = 1 ORDER BY id ASC LIMIT 1
-	`)
-
-	var c models.Caregiver
-	var email sql.NullString
-	var createdAtStr string
-	err := row.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr)
-	if err != nil {
-		return nil
-	}
-	if email.Valid {
-		c.Email = email.String
-	}
-	c.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
-	return &c
+	return scanCaregiver(database.QueryRow(`SELECT ` + caregiverCols + ` FROM caregivers WHERE is_active = 1 ORDER BY id ASC LIMIT 1`))
 }
 
 // CanManageUsers checks if caregiver has super_admin privileges
@@ -189,5 +312,5 @@ func CanManageMedications(c *models.Caregiver) bool {
 // CanTakeActions checks if caregiver can perform clinical logging (super_admin, admin, caregiver).
 // Viewers are strictly prohibited from writing or logging data.
 func CanTakeActions(c *models.Caregiver) bool {
-	return c != nil && c.Role != models.RoleViewer && (c.Role == models.RoleSuperAdmin || c.Role == models.RoleAdmin || c.Role == models.RoleCaregiver)
+	return c != nil && (c.Role == models.RoleSuperAdmin || c.Role == models.RoleAdmin || c.Role == models.RoleCaregiver)
 }

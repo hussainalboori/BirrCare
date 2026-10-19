@@ -1,0 +1,172 @@
+package server
+
+import (
+	"bufio"
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"birrcare/backend/internal/auth"
+	"birrcare/backend/internal/db"
+	"birrcare/backend/internal/models"
+	"birrcare/backend/internal/sse"
+)
+
+func setup(t *testing.T, cfg auth.Config, timeout time.Duration) (*httptest.Server, *sql.DB, *sse.Broker) {
+	t.Helper()
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "birrcare.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.InitSessionSecret(database); err != nil {
+		t.Fatal(err)
+	}
+	broker := sse.InitBroker()
+	h := NewRouter(Options{
+		DB: database, Broker: broker, Auth: cfg, Limiter: auth.NewPINLimiter(),
+		RequestTimeout: timeout, MaxBodyBytes: 1 << 20,
+		AllowedOrigins: []string{"http://localhost:3000"},
+	})
+	srv := httptest.NewServer(h)
+	t.Cleanup(func() { broker.Close(); srv.Close(); database.Close() })
+	return srv, database, broker
+}
+
+var prodCfg = auth.Config{} // no dev fallback, no CF, no raw-header trust
+
+func do(t *testing.T, method, url string, body interface{}, hdr map[string]string, cookies ...*http.Cookie) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	if body != nil {
+		json.NewEncoder(&buf).Encode(body)
+	}
+	req, _ := http.NewRequest(method, url, &buf)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+func TestProductionRequiresAuthAndIgnoresSpoofedHeader(t *testing.T) {
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+
+	if r := do(t, "GET", srv.URL+"/api/v1/vitals", nil, nil); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous read: want 401, got %d", r.StatusCode)
+	}
+	spoof := map[string]string{"Cf-Access-Authenticated-User-Email": "hussain@family.local"}
+	if r := do(t, "GET", srv.URL+"/api/v1/users", nil, spoof); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("spoofed email header: want 401, got %d", r.StatusCode)
+	}
+	dose := map[string]string{"medication_id": "med_aspirin", "slot": "morning", "scheduled_date": time.Now().Format("2006-01-02")}
+	if r := do(t, "POST", srv.URL+"/api/v1/medications/log", dose, spoof); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("spoofed dose log: want 401, got %d", r.StatusCode)
+	}
+	if r := do(t, "GET", srv.URL+"/api/v1/events/stream", nil, nil); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous SSE: want 401, got %d", r.StatusCode)
+	}
+	if r := do(t, "GET", srv.URL+"/api/v1/caregivers", nil, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("caregiver list for PIN picker: want 200, got %d", r.StatusCode)
+	}
+	if r := do(t, "GET", srv.URL+"/api/v1/health", nil, map[string]string{"Origin": "https://evil.example"}); r.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("CORS reflected arbitrary origin: %q", r.Header.Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestPINBruteForceLockoutAndCookieFlags(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	srv, database, _ := setup(t, prodCfg, time.Minute)
+
+	for i := 0; i < 5; i++ {
+		r := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_ali", "pin": "0000"}, nil)
+		if r.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("wrong PIN %d: want 401, got %d", i, r.StatusCode)
+		}
+	}
+	r := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_ali", "pin": "1234"}, nil)
+	if r.StatusCode != http.StatusTooManyRequests || r.Header.Get("Retry-After") == "" {
+		t.Fatalf("after 5 failures even the right PIN must be throttled: got %d", r.StatusCode)
+	}
+	var failures int
+	database.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action='PIN_FAILED' AND caregiver_id='cg_ali'`).Scan(&failures)
+	if failures != 5 {
+		t.Fatalf("expected 5 PIN_FAILED audit rows, got %d", failures)
+	}
+
+	// Different caregiver is unaffected; check cookie hardening.
+	r = do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_fatima", "pin": "1234"}, nil)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("correct PIN: want 200, got %d", r.StatusCode)
+	}
+	var session *http.Cookie
+	for _, c := range r.Cookies() {
+		if c.Name == auth.SessionCookieName {
+			session = c
+		}
+	}
+	if session == nil || !session.HttpOnly || !session.Secure || session.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie must be HttpOnly; Secure; SameSite=Strict: %+v", session)
+	}
+
+	me := do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, session)
+	var c models.Caregiver
+	json.NewDecoder(me.Body).Decode(&c)
+	if me.StatusCode != http.StatusOK || c.ID != "cg_fatima" {
+		t.Fatalf("session not honoured: %d %+v", me.StatusCode, c)
+	}
+}
+
+func TestSSEStreamOutlivesRequestTimeout(t *testing.T) {
+	srv, _, broker := setup(t, auth.Config{DevFallback: true}, 100*time.Millisecond)
+
+	resp, err := http.Get(srv.URL + "/api/v1/events/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+
+	go func() {
+		time.Sleep(400 * time.Millisecond) // 4x the request timeout
+		broker.Broadcast("MED_LOGGED", models.ActorInfo{ID: "cg_ali"}, map[string]string{"slot": "morning"})
+	}()
+
+	got := make(chan bool, 1)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if strings.Contains(sc.Text(), `"MED_LOGGED"`) {
+				got <- true
+				return
+			}
+		}
+		got <- false
+	}()
+	select {
+	case ok := <-got:
+		if !ok {
+			t.Fatal("stream was closed before the event arrived (killed by request timeout?)")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out")
+	}
+}

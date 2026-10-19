@@ -3,8 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"birrcare/backend/internal/audit"
@@ -15,8 +17,9 @@ import (
 )
 
 type AuthHandler struct {
-	DB     *sql.DB
-	Broker *sse.Broker
+	DB      *sql.DB
+	Broker  *sse.Broker
+	Limiter *auth.PINLimiter // nil = auth.DefaultPINLimiter
 }
 
 func (h *AuthHandler) ListCaregivers(w http.ResponseWriter, r *http.Request) {
@@ -64,10 +67,21 @@ type VerifyPinRequest struct {
 	PIN         string `json:"pin"`
 }
 
+func (h *AuthHandler) limiter() *auth.PINLimiter {
+	if h.Limiter != nil {
+		return h.Limiter
+	}
+	return auth.DefaultPINLimiter
+}
+
+func secureCookies() bool {
+	return os.Getenv("APP_ENV") == "production"
+}
+
 func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	var req VerifyPinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CaregiverID == "" {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
 		return
 	}
 
@@ -79,27 +93,49 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	`, req.CaregiverID).Scan(&pinHash, &name, &avatarColor, &role, &preferredLang)
 
 	if err != nil {
-		http.Error(w, `{"error":"caregiver not found"}`, http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.PIN)); err != nil {
-		http.Error(w, `{"error":"incorrect PIN"}`, http.StatusUnauthorized)
+	// Brute-force protection: reserve an attempt BEFORE the comparison so parallel
+	// bursts cannot exceed the budget. Keyed by (existing) caregiver id only, so the
+	// limiter map is bounded by the number of caregivers.
+	lim := h.limiter()
+	ok, retryAfter := lim.Begin(req.CaregiverID)
+	if !ok {
+		secs := int(math.Ceil(retryAfter.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":               "TOO_MANY_ATTEMPTS",
+			"message":             "Too many incorrect PIN attempts. Try again later.",
+			"retry_after_seconds": secs,
+		})
 		return
 	}
+
+	// bcrypt comparison is constant-time with respect to the PIN.
+	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.PIN)); err != nil {
+		lim.Done(req.CaregiverID, false)
+		audit.Log(h.DB, req.CaregiverID, "PIN_FAILED", "caregiver", req.CaregiverID, "Incorrect PIN entered on keypad")
+		writeJSONError(w, http.StatusUnauthorized, "INCORRECT_PIN", "incorrect PIN")
+		return
+	}
+	lim.Done(req.CaregiverID, true)
 
 	// Issue session token
 	token := auth.GenerateSessionToken(req.CaregiverID)
 
-	isSecure := os.Getenv("APP_ENV") == "production"
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    token,
 		Path:     "/",
-		Expires:  time.Now().Add(30 * 24 * time.Hour),
+		Expires:  time.Now().Add(auth.SessionTTL),
+		MaxAge:   int(auth.SessionTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secureCookies(),
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	audit.Log(h.DB, req.CaregiverID, "CAREGIVER_SWITCH", "caregiver", req.CaregiverID, "Switched profile via PIN keypad")
@@ -131,13 +167,18 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	if c := auth.GetCaregiverFromContext(r.Context()); c != nil {
+		audit.Log(h.DB, c.ID, "LOGOUT", "caregiver", c.ID, "Logged out")
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secureCookies(),
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

@@ -39,6 +39,7 @@ func setupTestDB(t *testing.T) (*handlers.MedicationHandler, *handlers.VitalsHan
 	vitalsHandler := &handlers.VitalsHandler{DB: database, Broker: broker}
 
 	cleanup := func() {
+		broker.Close()
 		database.Close()
 		os.Remove(tmpPath)
 		os.Remove(tmpPath + "-wal")
