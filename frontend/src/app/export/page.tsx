@@ -128,8 +128,8 @@ export default function DoctorExportPage() {
                   {locale === "ar" ? "متوسط السكر" : "Avg Glucose"}
                 </span>
                 <span className="text-lg font-black text-blue-900 dark:text-blue-100">
-                  {summary.vitals_stats.avg_blood_sugar ? Math.round(summary.vitals_stats.avg_blood_sugar) : "--"}{" "}
-                  <span className="text-xs font-normal">mg/dL</span>
+                  {summary.vitals_stats.avg_blood_sugar ? summary.vitals_stats.avg_blood_sugar.toFixed(1) : "--"}{" "}
+                  <span className="text-xs font-normal">mmol/L</span>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {locale === "ar" ? "سكر الدم" : "Blood Sugar"}
@@ -228,7 +228,7 @@ export default function DoctorExportPage() {
                           {v.systolic}/{v.diastolic} mmHg
                         </td>
                         <td className="py-2 font-semibold text-blue-700 dark:text-blue-300">
-                          {v.blood_sugar ? `${v.blood_sugar} mg/dL` : "--"}
+                          {v.blood_sugar ? `${Number(v.blood_sugar.toFixed(1))} mmol/L` : "--"}
                         </td>
                         <td className="py-2 text-slate-700 dark:text-slate-300">{v.pulse} bpm</td>
                         <td className="py-2">

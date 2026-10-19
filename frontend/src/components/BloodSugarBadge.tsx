@@ -30,9 +30,9 @@ export function BloodSugarBadge({ sugar, timing = "random", showDetails = false 
         <div className="flex items-center gap-1">
           <Droplet className={`h-4 w-4 ${isAlert ? "text-rose-500 fill-rose-500" : "text-blue-500 fill-blue-500"}`} />
           <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-            {sugar}
+            {typeof sugar === "number" ? Number(sugar.toFixed(1)) : sugar}
           </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">mg/dL</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">mmol/L</span>
         </div>
 
         {timing && (

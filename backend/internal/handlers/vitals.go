@@ -38,13 +38,13 @@ func CalculateSugarStatus(sugar *float64) string {
 		return ""
 	}
 	s := *sugar
-	if s < 70 {
+	if s < 3.9 {
 		return "LOW"
 	}
-	if s >= 200 {
+	if s >= 13.9 {
 		return "VERY_HIGH"
 	}
-	if s > 140 {
+	if s > 7.8 {
 		return "ELEVATED"
 	}
 	return "NORMAL"
@@ -146,7 +146,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 
 	auditDetails := fmt.Sprintf("BP %d/%d, Pulse %d, Alertness: %s (Status: %s)", req.Systolic, req.Diastolic, req.Pulse, req.AlertnessLevel, bpStatus)
 	if req.BloodSugar != nil {
-		auditDetails += fmt.Sprintf(", Sugar: %.1f mg/dL (%s)", *req.BloodSugar, sugarStatus)
+		auditDetails += fmt.Sprintf(", Sugar: %.1f mmol/L (%s)", *req.BloodSugar, sugarStatus)
 	}
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 

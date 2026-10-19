@@ -71,7 +71,7 @@ export interface SugarClassification {
 }
 
 export function classifyBloodSugar(sugar: number, timing: BloodSugarTiming = "random"): SugarClassification {
-  if (sugar < 70) {
+  if (sugar < 3.9) {
     return {
       status: "LOW",
       badgeClass: "bg-rose-600 text-white animate-pulse shadow-rose-500/40 shadow-lg",
@@ -84,10 +84,10 @@ export function classifyBloodSugar(sugar: number, timing: BloodSugarTiming = "ra
   }
 
   const isFasting = timing === "fasting";
-  const elevatedThreshold = isFasting ? 126 : 180;
-  const normalThreshold = isFasting ? 100 : 140;
+  const elevatedThreshold = isFasting ? 7.0 : 10.0;
+  const normalThreshold = isFasting ? 5.6 : 7.8;
 
-  if (sugar >= 250) {
+  if (sugar >= 13.9) {
     return {
       status: "VERY_HIGH",
       badgeClass: "bg-rose-600 text-white shadow-rose-500/30 shadow-md",

@@ -119,6 +119,35 @@ func TestStrokeBPStatusCalculation(t *testing.T) {
 	}
 }
 
+func TestCalculateSugarStatusMmolL(t *testing.T) {
+	ptr := func(f float64) *float64 { return &f }
+	tests := []struct {
+		sugar    *float64
+		expected string
+	}{
+		{nil, ""},
+		{ptr(3.2), "LOW"},
+		{ptr(3.8), "LOW"},
+		{ptr(5.5), "NORMAL"},
+		{ptr(7.2), "NORMAL"},
+		{ptr(8.5), "ELEVATED"},
+		{ptr(13.8), "ELEVATED"},
+		{ptr(14.0), "VERY_HIGH"},
+		{ptr(18.5), "VERY_HIGH"},
+	}
+
+	for _, tt := range tests {
+		status := handlers.CalculateSugarStatus(tt.sugar)
+		if status != tt.expected {
+			var val float64
+			if tt.sugar != nil {
+				val = *tt.sugar
+			}
+			t.Errorf("CalculateSugarStatus(%v) = %s; want %s", val, status, tt.expected)
+		}
+	}
+}
+
 // helper
 func authContext(ctx testingContext, c *models.Caregiver) testingContext {
 	return contextWithVal(ctx, auth.CaregiverContextKey, c)

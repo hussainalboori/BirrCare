@@ -26,7 +26,7 @@ export default function VitalsPage() {
   const [systolic, setSystolic] = useState<number>(120);
   const [diastolic, setDiastolic] = useState<number>(80);
   const [pulse, setPulse] = useState<number>(75);
-  const [bloodSugar, setBloodSugar] = useState<string>("115");
+  const [bloodSugar, setBloodSugar] = useState<string>("6.4");
   const [sugarTiming, setSugarTiming] = useState<BloodSugarTiming>("random");
   const [alertness, setAlertness] = useState<AlertnessLevel>("alert");
   const [notes, setNotes] = useState<string>("");
@@ -99,7 +99,7 @@ export default function VitalsPage() {
     }
     if (filterMode === "alerts") {
       const bpAlert = v.bp_status === "CRISIS" || v.bp_status === "STAGE_2";
-      const sugarAlert = v.blood_sugar && (v.blood_sugar < 70 || v.blood_sugar >= 180);
+      const sugarAlert = v.blood_sugar && (v.blood_sugar < 3.9 || v.blood_sugar >= 10.0);
       return bpAlert || sugarAlert;
     }
     return true;
@@ -228,22 +228,22 @@ export default function VitalsPage() {
                 <div className="relative flex-1">
                   <input
                     type="number"
-                    step="1"
-                    min="20"
-                    max="600"
-                    placeholder="e.g. 115"
+                    step="0.1"
+                    min="1.0"
+                    max="35.0"
+                    placeholder="e.g. 6.4"
                     value={bloodSugar}
                     onChange={(e) => setBloodSugar(e.target.value)}
                     className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                   />
                   <span className="absolute end-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
-                    mg/dL
+                    mmol/L
                   </span>
                 </div>
 
                 {/* Quick Presets */}
                 <div className="flex items-center gap-1">
-                  {["90", "110", "130", "160"].map((preset) => (
+                  {["5.5", "6.8", "7.5", "9.0", "11.0"].map((preset) => (
                     <button
                       type="button"
                       key={preset}
