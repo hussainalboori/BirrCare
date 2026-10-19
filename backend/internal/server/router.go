@@ -126,6 +126,7 @@ func NewRouter(o Options) http.Handler {
 				api.Use(auth.RequireAuth)
 
 				api.Get("/auth/me", authHandler.GetMe)
+				api.Post("/auth/change-pin", authHandler.ChangePIN)
 
 				// User Management (Super Admin only - enforced in handlers)
 				api.Get("/users", usersHandler.ListUsers)

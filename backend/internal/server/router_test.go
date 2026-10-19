@@ -211,3 +211,54 @@ func TestContactsArePublic(t *testing.T) {
 		t.Fatalf("unexpected contacts: %+v", got)
 	}
 }
+
+func TestChangeOwnPIN(t *testing.T) {
+	srv, database, _ := setup(t, prodCfg, time.Minute)
+	login := func(pin string) (*http.Response, *http.Cookie) {
+		r := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_fatima", "pin": pin}, nil)
+		for _, c := range r.Cookies() {
+			if c.Name == auth.SessionCookieName {
+				return r, c
+			}
+		}
+		return r, nil
+	}
+	change := func(cur, next string, cookies ...*http.Cookie) int {
+		return do(t, "POST", srv.URL+"/api/v1/auth/change-pin", map[string]string{"current_pin": cur, "new_pin": next}, nil, cookies...).StatusCode
+	}
+
+	if code := change("1234", "4826"); code != http.StatusUnauthorized {
+		t.Fatalf("signed out: want 401, got %d", code)
+	}
+	_, session := login("1234")
+	if session == nil {
+		t.Fatal("login failed")
+	}
+	for _, c := range []struct {
+		cur, next string
+		want      int
+	}{
+		{"1234", "12a4", http.StatusBadRequest}, // not 4 digits
+		{"1234", "7777", http.StatusBadRequest}, // repeated digit
+		{"1234", "1234", http.StatusBadRequest}, // default PIN
+		{"0000", "4826", http.StatusForbidden},  // wrong current PIN (403 so the UI stays signed in)
+	} {
+		if code := change(c.cur, c.next, session); code != c.want {
+			t.Fatalf("%s -> %s: want %d, got %d", c.cur, c.next, c.want, code)
+		}
+	}
+	if code := change("1234", "4826", session); code != http.StatusOK {
+		t.Fatalf("valid change: want 200, got %d", code)
+	}
+	if r, _ := login("1234"); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old PIN must stop working, got %d", r.StatusCode)
+	}
+	if r, _ := login("4826"); r.StatusCode != http.StatusOK {
+		t.Fatalf("new PIN must work, got %d", r.StatusCode)
+	}
+	var n int
+	database.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action='PIN_CHANGED' AND caregiver_id='cg_fatima' AND details NOT LIKE '%4826%'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("expected one PIN_CHANGED audit row without the PIN in it, got %d", n)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"birrcare/backend/internal/audit"
@@ -183,4 +184,88 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"logged_out"}`))
+}
+
+type ChangePinRequest struct {
+	CurrentPIN string `json:"current_pin"`
+	NewPIN     string `json:"new_pin"`
+}
+
+// weakPIN rejects the seeded default and repeated digits ("1111"), the first
+// guesses anyone holding a sibling's unlocked phone would try.
+func weakPIN(pin string) bool {
+	return pin == "1234" || strings.Count(pin, pin[:1]) == len(pin)
+}
+
+// ChangePIN lets the signed-in caregiver change their own PIN. The current PIN is
+// verified under the same brute-force limiter as the login keypad, so a session
+// left open on a shared phone can't be used to guess it.
+func (h *AuthHandler) ChangePIN(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "Select your profile and enter your PIN")
+		return
+	}
+
+	var req ChangePinRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
+		return
+	}
+	if !pinRegex.MatchString(req.NewPIN) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PIN", "new PIN must be exactly 4 digits")
+		return
+	}
+	if weakPIN(req.NewPIN) {
+		writeJSONError(w, http.StatusBadRequest, "WEAK_PIN", "choose a PIN that is not 1234 or one repeated digit")
+		return
+	}
+
+	var pinHash string
+	if err := h.DB.QueryRow("SELECT pin_hash FROM caregivers WHERE id = ? AND is_active = 1", caregiver.ID).Scan(&pinHash); err != nil {
+		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
+		return
+	}
+
+	lim := h.limiter()
+	ok, retryAfter := lim.Begin(caregiver.ID)
+	if !ok {
+		secs := int(math.Ceil(retryAfter.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":               "TOO_MANY_ATTEMPTS",
+			"message":             "Too many incorrect PIN attempts. Try again later.",
+			"retry_after_seconds": secs,
+		})
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.CurrentPIN)); err != nil {
+		lim.Done(caregiver.ID, false)
+		audit.Log(h.DB, caregiver.ID, "PIN_FAILED", "caregiver", caregiver.ID, "Incorrect current PIN on change-PIN")
+		// 403, not 401: the session is valid, so the frontend must not treat this as "signed out".
+		writeJSONError(w, http.StatusForbidden, "INCORRECT_PIN", "current PIN is incorrect")
+		return
+	}
+	lim.Done(caregiver.ID, true)
+
+	if req.NewPIN == req.CurrentPIN {
+		writeJSONError(w, http.StatusBadRequest, "SAME_PIN", "the new PIN is the same as the current one")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPIN), bcrypt.DefaultCost)
+	if err != nil {
+		internalError(w, "failed to hash PIN", err)
+		return
+	}
+	if _, err := h.DB.Exec("UPDATE caregivers SET pin_hash = ? WHERE id = ?", string(hash), caregiver.ID); err != nil {
+		internalError(w, "failed to change PIN", err)
+		return
+	}
+	audit.Log(h.DB, caregiver.ID, "PIN_CHANGED", "caregiver", caregiver.ID, "Changed own 4-digit PIN")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }

@@ -4,12 +4,13 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
 import { ScheduleManagementModal } from "./ScheduleManagementModal";
 import { ShiftManagementModal } from "./ShiftManagementModal";
+import { ChangePinModal } from "./ChangePinModal";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -24,6 +25,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [isChangePinOpen, setIsChangePinOpen] = useState(false);
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
@@ -156,6 +158,20 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               </button>
             )}
 
+            {/* Change own PIN */}
+            {currentCaregiver && (
+              <button
+                type="button"
+                onClick={() => setIsChangePinOpen(true)}
+                aria-label={locale === "ar" ? "تغيير رمز PIN" : "Change PIN"}
+                title={locale === "ar" ? "تغيير رمز PIN" : "Change PIN"}
+                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <KeyRound className="h-4 w-4" />
+                <span className="hidden md:inline">{locale === "ar" ? "تغيير الرمز" : "Change PIN"}</span>
+              </button>
+            )}
+
             {/* Switch Profile Button */}
             <button
                 type="button"
@@ -207,6 +223,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
         onClose={() => setIsMedModalOpen(false)}
         onUpdated={onMedicationsUpdated}
       />
+
+      <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
 
       <ShiftManagementModal
         isOpen={isShiftModalOpen}
