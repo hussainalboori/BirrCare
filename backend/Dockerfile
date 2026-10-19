@@ -1,9 +1,8 @@
 # Multi-stage Dockerfile for Birrcare Go Backend (Zero CGO)
-FROM golang:1.24-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
 
-# Install ca-certificates for external webhooks/tunnels
 RUN apk --no-cache add ca-certificates
 
 COPY go.mod go.sum ./
