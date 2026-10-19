@@ -1,0 +1,26 @@
+# Birrcare Environment & Data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Backend
+backend/bin/
+backend/tmp/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+.next/
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
