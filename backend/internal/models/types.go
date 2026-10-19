@@ -21,6 +21,10 @@ type Caregiver struct {
 	Phone         string    `json:"phone,omitempty"`
 	IsActive      bool      `json:"is_active"`
 	CreatedAt     time.Time `json:"created_at"`
+	// TOTPEnabled: signing in needs the PIN AND an authenticator code.
+	TOTPEnabled bool `json:"totp_enabled,omitempty"`
+	// SessionsValidAfter (unix seconds): session cookies issued earlier are refused.
+	SessionsValidAfter int64 `json:"-"`
 }
 
 type CreateUserRequest struct {

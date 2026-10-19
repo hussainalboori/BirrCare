@@ -87,11 +87,10 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pinHash string
-	var name, avatarColor, role, preferredLang string
+	var totpEnabled bool
 	err := h.DB.QueryRow(`
-		SELECT pin_hash, name, avatar_color, role, preferred_lang
-		FROM caregivers WHERE id = ? AND is_active = 1
-	`, req.CaregiverID).Scan(&pinHash, &name, &avatarColor, &role, &preferredLang)
+		SELECT pin_hash, totp_enabled FROM caregivers WHERE id = ? AND is_active = 1
+	`, req.CaregiverID).Scan(&pinHash, &totpEnabled)
 
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
@@ -125,12 +124,26 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	}
 	lim.Done(req.CaregiverID, true)
 
-	// Issue session token
-	token := auth.GenerateSessionToken(req.CaregiverID)
+	// Two-factor: a correct PIN alone never signs this account in. Hand back a
+	// short-lived challenge that must be paired with an authenticator code.
+	if totpEnabled {
+		audit.Log(h.DB, req.CaregiverID, "PIN_OK_2FA_PENDING", "caregiver", req.CaregiverID, "PIN accepted, waiting for authenticator code")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":       "2fa_required",
+			"challenge":    auth.NewChallenge(req.CaregiverID),
+			"caregiver_id": req.CaregiverID,
+		})
+		return
+	}
 
+	h.completeLogin(w, req.CaregiverID, "Switched profile via PIN keypad")
+}
+
+func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, caregiverID string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
-		Value:    token,
+		Value:    auth.GenerateSessionToken(caregiverID),
 		Path:     "/",
 		Expires:  time.Now().Add(auth.SessionTTL),
 		MaxAge:   int(auth.SessionTTL.Seconds()),
@@ -138,16 +151,39 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 		Secure:   secureCookies(),
 		SameSite: http.SameSiteStrictMode,
 	})
+}
 
-	audit.Log(h.DB, req.CaregiverID, "CAREGIVER_SWITCH", "caregiver", req.CaregiverID, "Switched profile via PIN keypad")
+// revokeOtherSessions invalidates every session cookie issued before now (other
+// phones, a stolen cookie) and gives the current device a fresh one.
+func (h *AuthHandler) revokeOtherSessions(w http.ResponseWriter, caregiverID string) error {
+	if _, err := h.DB.Exec("UPDATE caregivers SET sessions_valid_after = ? WHERE id = ?", time.Now().Unix(), caregiverID); err != nil {
+		return err
+	}
+	h.setSessionCookie(w, caregiverID)
+	return nil
+}
 
-	// Broadcast SSE
+// completeLogin issues the session, audits and broadcasts the switch, and returns
+// the caregiver. Shared by the PIN step and the authenticator step.
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, caregiverID, auditDetail string) {
+	var name, avatarColor, role, preferredLang string
+	var totpEnabled bool
+	if err := h.DB.QueryRow(`
+		SELECT name, avatar_color, role, preferred_lang, totp_enabled FROM caregivers WHERE id = ? AND is_active = 1
+	`, caregiverID).Scan(&name, &avatarColor, &role, &preferredLang, &totpEnabled); err != nil {
+		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
+		return
+	}
+
+	h.setSessionCookie(w, caregiverID)
+	audit.Log(h.DB, caregiverID, "CAREGIVER_SWITCH", "caregiver", caregiverID, auditDetail)
+
 	h.Broker.Broadcast("CAREGIVER_SWITCHED", models.ActorInfo{
-		ID:          req.CaregiverID,
+		ID:          caregiverID,
 		Name:        name,
 		AvatarColor: avatarColor,
 	}, map[string]interface{}{
-		"caregiver_id":   req.CaregiverID,
+		"caregiver_id":   caregiverID,
 		"name":           name,
 		"avatar_color":   avatarColor,
 		"role":           role,
@@ -158,11 +194,12 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",
 		"caregiver": map[string]interface{}{
-			"id":             req.CaregiverID,
+			"id":             caregiverID,
 			"name":           name,
 			"avatar_color":   avatarColor,
 			"role":           role,
 			"preferred_lang": preferredLang,
+			"totp_enabled":   totpEnabled,
 		},
 	})
 }
@@ -230,15 +267,7 @@ func (h *AuthHandler) ChangePIN(w http.ResponseWriter, r *http.Request) {
 	lim := h.limiter()
 	ok, retryAfter := lim.Begin(caregiver.ID)
 	if !ok {
-		secs := int(math.Ceil(retryAfter.Seconds()))
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":               "TOO_MANY_ATTEMPTS",
-			"message":             "Too many incorrect PIN attempts. Try again later.",
-			"retry_after_seconds": secs,
-		})
+		writeTooManyAttempts(w, retryAfter)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.CurrentPIN)); err != nil {
@@ -265,6 +294,11 @@ func (h *AuthHandler) ChangePIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audit.Log(h.DB, caregiver.ID, "PIN_CHANGED", "caregiver", caregiver.ID, "Changed own 4-digit PIN")
+	// A PIN change usually means the old one leaked: sign every other device out.
+	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+		internalError(w, "failed to revoke sessions", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})

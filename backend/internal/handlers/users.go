@@ -295,7 +295,8 @@ func (h *UsersHandler) ResetUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.DB.Exec("UPDATE caregivers SET pin_hash = ? WHERE id = ?", string(hash), userID)
+	// Reset also signs that user out everywhere: a reset usually means the old PIN leaked.
+	_, err = h.DB.Exec("UPDATE caregivers SET pin_hash = ?, sessions_valid_after = ? WHERE id = ?", string(hash), time.Now().Unix(), userID)
 	if err != nil {
 		internalError(w, "failed to reset PIN", err)
 		return

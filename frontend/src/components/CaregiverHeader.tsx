@@ -4,13 +4,14 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
 import { ScheduleManagementModal } from "./ScheduleManagementModal";
 import { ShiftManagementModal } from "./ShiftManagementModal";
 import { ChangePinModal } from "./ChangePinModal";
+import { TwoFactorModal } from "./TwoFactorModal";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -26,9 +27,12 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
+  const [isSecurityMenuOpen, setIsSecurityMenuOpen] = useState(false);
+  const [isTwoFactorOpen, setIsTwoFactorOpen] = useState(false);
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
+  const needs2FA = isSuperAdmin(role) && !!currentCaregiver && !currentCaregiver.totp_enabled;
 
   return (
     <>
@@ -162,13 +166,13 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             {currentCaregiver && (
               <button
                 type="button"
-                onClick={() => setIsChangePinOpen(true)}
-                aria-label={locale === "ar" ? "تغيير رمز PIN" : "Change PIN"}
-                title={locale === "ar" ? "تغيير رمز PIN" : "Change PIN"}
+                onClick={() => (isSuperAdmin(role) ? setIsSecurityMenuOpen(true) : setIsChangePinOpen(true))}
+                aria-label={locale === "ar" ? "الأمان" : "Security"}
+                title={locale === "ar" ? "الأمان" : "Security"}
                 className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               >
                 <KeyRound className="h-4 w-4" />
-                <span className="hidden md:inline">{locale === "ar" ? "تغيير الرمز" : "Change PIN"}</span>
+                <span className="hidden md:inline">{locale === "ar" ? "الأمان" : "Security"}</span>
               </button>
             )}
 
@@ -196,6 +200,18 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </button>
           </div>
         </div>
+
+        {/* Super Admin without an authenticator: one leaked PIN = full access */}
+        {needs2FA && (
+          <button
+            type="button"
+            onClick={() => setIsTwoFactorOpen(true)}
+            className="flex min-h-12 w-full items-center justify-center gap-2 border-t border-amber-300 bg-amber-50 px-4 text-xs font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+          >
+            <ShieldOff className="h-4 w-4 shrink-0" />
+            <span>{locale === "ar" ? "حساب المشرف العام محمي برمز سري فقط — فعّل تطبيق المصادقة" : "Super Admin is protected by a PIN only — turn on an authenticator app"}</span>
+          </button>
+        )}
 
         {/* Read-Only Notice Banner for Viewer */}
         {isViewer(role) && (
@@ -225,6 +241,45 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       />
 
       <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
+      <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
+
+      {isSecurityMenuOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-xs p-0 sm:p-4" onClick={() => setIsSecurityMenuOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={locale === "ar" ? "الأمان" : "Security"}
+            className="w-full max-w-sm space-y-2 rounded-t-3xl sm:rounded-3xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setIsSecurityMenuOpen(false);
+                setIsChangePinOpen(true);
+              }}
+              className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-200 px-4 text-sm font-bold text-slate-800 dark:border-slate-700 dark:text-slate-100"
+            >
+              <KeyRound className="h-5 w-5 text-slate-500" />
+              {locale === "ar" ? "تغيير الرمز السري" : "Change PIN"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSecurityMenuOpen(false);
+                setIsTwoFactorOpen(true);
+              }}
+              className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-200 px-4 text-sm font-bold text-slate-800 dark:border-slate-700 dark:text-slate-100"
+            >
+              {currentCaregiver?.totp_enabled ? <ShieldCheck className="h-5 w-5 text-emerald-600" /> : <ShieldOff className="h-5 w-5 text-amber-600" />}
+              <span className="flex-1 text-start">{locale === "ar" ? "تطبيق المصادقة (2FA)" : "Authenticator app (2FA)"}</span>
+              <span className={`text-xs ${currentCaregiver?.totp_enabled ? "text-emerald-600" : "text-amber-600"}`}>
+                {currentCaregiver?.totp_enabled ? (locale === "ar" ? "مفعّل" : "On") : locale === "ar" ? "غير مفعّل" : "Off"}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       <ShiftManagementModal
         isOpen={isShiftModalOpen}

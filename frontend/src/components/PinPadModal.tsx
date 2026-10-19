@@ -5,6 +5,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { X, Lock, CheckCircle2 } from "lucide-react";
 import { PinKeypad } from "./PinKeypad";
+import { TwoFactorCodeStep } from "./TwoFactorCodeStep";
 
 export function PinPadModal() {
   const { isPinModalOpen, closePinModal, allCaregivers, targetCaregiverId, verifyPin } = useCaregiver();
@@ -14,6 +15,8 @@ export function PinPadModal() {
   const [pin, setPin] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set after a correct PIN on an account with an authenticator app.
+  const [challenge, setChallenge] = useState<string | null>(null);
 
   // Reset only when the modal opens (or its target changes) — NOT whenever the caregivers
   // list is refreshed, which previously wiped a half-entered PIN mid-typing.
@@ -21,6 +24,7 @@ export function PinPadModal() {
     if (isPinModalOpen) {
       setPin("");
       setError("");
+      setChallenge(null);
       if (targetCaregiverId) setSelectedId(targetCaregiverId);
     }
   }, [isPinModalOpen, targetCaregiverId]);
@@ -68,6 +72,11 @@ export function PinPadModal() {
     const res = await verifyPin(selectedId, pinToVerify);
     setIsSubmitting(false);
 
+    if (res.twoFactorChallenge) {
+      setChallenge(res.twoFactorChallenge);
+      setPin("");
+      return;
+    }
     if (!res.success) {
       if (res.status === 429) {
         // Backend lockout after 5 failed attempts (Retry-After in seconds)
@@ -108,90 +117,103 @@ export function PinPadModal() {
           <X className="h-5 w-5" />
         </button>
 
-        {/* Modal Header */}
-        <div className="text-center mb-4">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400 mb-2">
-            <Lock className="h-6 w-6" />
+        {challenge ? (
+          <TwoFactorCodeStep
+            challenge={challenge}
+            onBack={(message) => {
+              setChallenge(null);
+              setPin("");
+              setError(message || "");
+            }}
+          />
+        ) : (
+          <>
+          {/* Modal Header */}
+          <div className="text-center mb-4">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400 mb-2">
+              <Lock className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+              {t.switchCaregiver}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {t.enterPin}
+            </p>
           </div>
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-            {t.switchCaregiver}
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            {t.enterPin}
-          </p>
-        </div>
 
-        {/* Sibling Profile Selection Row */}
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 text-center">
-            {t.selectProfile}
-          </label>
-          <div className="grid grid-cols-4 gap-2">
-            {allCaregivers.map((c) => {
-              const isSelected = c.id === selectedId;
-              return (
-                <button
-                  type="button"
-                  key={c.id}
-                  aria-pressed={isSelected}
-                  onClick={() => {
-                    setSelectedId(c.id);
-                    setPin("");
-                    setError("");
-                  }}
-                  className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl border transition-all ${
-                    isSelected
-                      ? "border-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/30 ring-2 ring-emerald-500/30"
-                      : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
-                  }`}
-                >
-                  <div
-                    className="relative flex h-11 w-11 items-center justify-center rounded-full text-white font-bold text-sm shadow-xs"
-                    style={{ backgroundColor: c.avatar_color }}
+          {/* Sibling Profile Selection Row */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 text-center">
+              {t.selectProfile}
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {allCaregivers.map((c) => {
+                const isSelected = c.id === selectedId;
+                return (
+                  <button
+                    type="button"
+                    key={c.id}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      setSelectedId(c.id);
+                      setPin("");
+                      setError("");
+                    }}
+                    className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl border transition-all ${
+                      isSelected
+                        ? "border-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/30 ring-2 ring-emerald-500/30"
+                        : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
+                    }`}
                   >
-                    {c.name.slice(0, 1)}
-                    {isSelected && (
-                      <span className="absolute -top-1 -end-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white">
-                        <CheckCircle2 className="h-3 w-3" />
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate w-full text-center">
-                    {c.name.split(" ")[0]}
-                  </span>
-                  <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500">
-                    {c.role === "super_admin"
-                      ? (locale === "ar" ? "مشرف" : "Super")
-                      : c.role === "admin"
-                      ? (locale === "ar" ? "أدوية" : "Admin")
-                      : c.role === "viewer"
-                      ? (locale === "ar" ? "مشاهد" : "Viewer")
-                      : (locale === "ar" ? "رعاية" : "Care")}
-                  </span>
-                </button>
-              );
-            })}
+                    <div
+                      className="relative flex h-11 w-11 items-center justify-center rounded-full text-white font-bold text-sm shadow-xs"
+                      style={{ backgroundColor: c.avatar_color }}
+                    >
+                      {c.name.slice(0, 1)}
+                      {isSelected && (
+                        <span className="absolute -top-1 -end-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white">
+                          <CheckCircle2 className="h-3 w-3" />
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate w-full text-center">
+                      {c.name.split(" ")[0]}
+                    </span>
+                    <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500">
+                      {c.role === "super_admin"
+                        ? (locale === "ar" ? "مشرف" : "Super")
+                        : c.role === "admin"
+                        ? (locale === "ar" ? "أدوية" : "Admin")
+                        : c.role === "viewer"
+                        ? (locale === "ar" ? "مشاهد" : "Viewer")
+                        : (locale === "ar" ? "رعاية" : "Care")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        <PinKeypad
-          pin={pin}
-          disabled={isSubmitting}
-          onDigit={handleDigit}
-          onDelete={handleDelete}
-          onClear={handleClear}
-          message={
-            error ? (
-              <p role="alert" className="text-center text-xs font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
-                {error}
-              </p>
-            ) : (
-              <p className="text-center text-[11px] text-slate-400 mb-3">
-                {t.pinHint}
-              </p>
-            )
-          }
-        />
+          <PinKeypad
+            pin={pin}
+            disabled={isSubmitting}
+            onDigit={handleDigit}
+            onDelete={handleDelete}
+            onClear={handleClear}
+            message={
+              error ? (
+                <p role="alert" className="text-center text-xs font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
+                  {error}
+                </p>
+              ) : (
+                <p className="text-center text-[11px] text-slate-400 mb-3">
+                  {t.pinHint}
+                </p>
+              )
+            }
+          />
+          </>
+        )}
       </div>
     </div>
   );

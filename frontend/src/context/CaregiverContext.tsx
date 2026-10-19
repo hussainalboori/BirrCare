@@ -11,6 +11,8 @@ export interface VerifyPinResult {
   status?: number;
   /** Seconds until another attempt is allowed (from Retry-After on 429). */
   retryAfter?: number;
+  /** PIN was correct but the account has 2FA: pass this to verifyTwoFactor with a code. */
+  twoFactorChallenge?: string;
 }
 
 interface CaregiverContextType {
@@ -21,6 +23,7 @@ interface CaregiverContextType {
   closePinModal: () => void;
   targetCaregiverId: string | null;
   verifyPin: (caregiverId: string, pin: string) => Promise<VerifyPinResult>;
+  verifyTwoFactor: (challenge: string, code: string) => Promise<VerifyPinResult>;
   refreshCaregiver: () => Promise<void>;
   refreshCaregivers: () => Promise<void>;
   setCurrentCaregiver: (c: Caregiver) => void;
@@ -85,12 +88,16 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
     setTargetCaregiverId(null);
   };
 
-  const verifyPin = async (caregiverId: string, pin: string) => {
+  // Shared by the PIN step and the authenticator step.
+  const signIn = async (endpoint: string, body: object): Promise<VerifyPinResult> => {
     try {
-      const res = await fetchApi<{ status: string; caregiver: Caregiver }>("/auth/verify-pin", {
+      const res = await fetchApi<{ status: string; caregiver?: Caregiver; challenge?: string }>(endpoint, {
         method: "POST",
-        body: JSON.stringify({ caregiver_id: caregiverId, pin }),
+        body: JSON.stringify(body),
       });
+      if (res?.status === "2fa_required" && res.challenge) {
+        return { success: false, twoFactorChallenge: res.challenge };
+      }
       if (res && res.caregiver) {
         setCurrentCaregiver(res.caregiver);
         closePinModal();
@@ -110,6 +117,12 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const verifyPin = (caregiverId: string, pin: string) =>
+    signIn("/auth/verify-pin", { caregiver_id: caregiverId, pin });
+
+  const verifyTwoFactor = (challenge: string, code: string) =>
+    signIn("/auth/verify-2fa", { challenge, code });
+
   return (
     <CaregiverContext.Provider
       value={{
@@ -120,6 +133,7 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
         closePinModal,
         targetCaregiverId,
         verifyPin,
+        verifyTwoFactor,
         refreshCaregiver,
         refreshCaregivers: fetchCaregiversList,
         setCurrentCaregiver,

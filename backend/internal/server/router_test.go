@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"database/sql"
+	"encoding/base32"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -260,5 +261,123 @@ func TestChangeOwnPIN(t *testing.T) {
 	database.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action='PIN_CHANGED' AND caregiver_id='cg_fatima' AND details NOT LIKE '%4826%'`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("expected one PIN_CHANGED audit row without the PIN in it, got %d", n)
+	}
+}
+
+// A leaked PIN alone must never sign in a Super Admin who has 2FA on.
+func TestSuperAdminTwoFactor(t *testing.T) {
+	t.Setenv("SUPER_ADMIN_PIN", "2468")
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	const id = "cg_superadmin"
+	sessionOf := func(r *http.Response) *http.Cookie {
+		for _, c := range r.Cookies() {
+			if c.Name == auth.SessionCookieName && c.Value != "" {
+				return c
+			}
+		}
+		return nil
+	}
+	decode := func(r *http.Response, v interface{}) {
+		defer r.Body.Close()
+		json.NewDecoder(r.Body).Decode(v)
+	}
+	codeAt := func(secret string, at time.Time) string {
+		key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return auth.TOTPCodeAt(key, at)
+	}
+	pinLogin := func() *http.Response {
+		return do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": id, "pin": "2468"}, nil)
+	}
+
+	r := pinLogin()
+	oldSession := sessionOf(r)
+	if r.StatusCode != http.StatusOK || oldSession == nil {
+		t.Fatalf("PIN login before 2FA: %d", r.StatusCode)
+	}
+
+	// Setup needs the PIN again; caregivers/admins cannot enrol.
+	if r := do(t, "POST", srv.URL+"/api/v1/auth/2fa/setup", map[string]string{"pin": "0000"}, nil, oldSession); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("setup with wrong PIN: want 403, got %d", r.StatusCode)
+	}
+	r = do(t, "POST", srv.URL+"/api/v1/auth/2fa/setup", map[string]string{"pin": "2468"}, nil, oldSession)
+	var setupRes struct{ Secret, URI string }
+	decode(r, &setupRes)
+	if r.StatusCode != http.StatusOK || setupRes.Secret == "" || !strings.HasPrefix(setupRes.URI, "otpauth://totp/") {
+		t.Fatalf("setup: %d %+v", r.StatusCode, setupRes)
+	}
+
+	time.Sleep(1100 * time.Millisecond) // session timestamps have 1s resolution: make oldSession strictly older
+	now := time.Now()
+	if r := do(t, "POST", srv.URL+"/api/v1/auth/2fa/enable", map[string]string{"code": "000000"}, nil, oldSession); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("enable with wrong code: want 403, got %d", r.StatusCode)
+	}
+	r = do(t, "POST", srv.URL+"/api/v1/auth/2fa/enable", map[string]string{"code": codeAt(setupRes.Secret, now)}, nil, oldSession)
+	var enableRes struct {
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	enabledSession := sessionOf(r)
+	decode(r, &enableRes)
+	if r.StatusCode != http.StatusOK || len(enableRes.RecoveryCodes) != auth.RecoveryCodeCount || enabledSession == nil {
+		t.Fatalf("enable: %d, %d codes", r.StatusCode, len(enableRes.RecoveryCodes))
+	}
+
+	// Enabling 2FA signs other devices out; the enabling device keeps working.
+	if r := do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, oldSession); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("pre-2FA session must be revoked, got %d", r.StatusCode)
+	}
+	if r := do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, enabledSession); r.StatusCode != http.StatusOK {
+		t.Fatalf("enabling device must stay signed in, got %d", r.StatusCode)
+	}
+
+	// The leaked-PIN scenario: correct PIN, no session.
+	r = pinLogin()
+	var challengeRes struct{ Status, Challenge string }
+	if sessionOf(r) != nil {
+		t.Fatal("PIN alone must not set a session cookie when 2FA is on")
+	}
+	decode(r, &challengeRes)
+	if challengeRes.Status != "2fa_required" || challengeRes.Challenge == "" {
+		t.Fatalf("want 2fa_required challenge, got %+v", challengeRes)
+	}
+	// The challenge is not a session.
+	if r := do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, &http.Cookie{Name: auth.SessionCookieName, Value: challengeRes.Challenge}); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("challenge used as cookie: want 401, got %d", r.StatusCode)
+	}
+	verify := func(code string) *http.Response {
+		return do(t, "POST", srv.URL+"/api/v1/auth/verify-2fa", map[string]string{"challenge": challengeRes.Challenge, "code": code}, nil)
+	}
+	if r := verify("123456"); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong code: want 403, got %d", r.StatusCode)
+	}
+	// The code used to enable is spent (replay); the next step's code works.
+	if r := verify(codeAt(setupRes.Secret, now)); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("replayed code: want 403, got %d", r.StatusCode)
+	}
+	r = verify(codeAt(setupRes.Secret, now.Add(30*time.Second)))
+	if r.StatusCode != http.StatusOK || sessionOf(r) == nil {
+		t.Fatalf("PIN + code must sign in, got %d", r.StatusCode)
+	}
+
+	// Recovery code works exactly once (case/dash-insensitive).
+	rc := strings.ToUpper(strings.ReplaceAll(enableRes.RecoveryCodes[0], "-", ""))
+	if r := verify(rc); r.StatusCode != http.StatusOK {
+		t.Fatalf("recovery code: want 200, got %d", r.StatusCode)
+	}
+	if r := verify(rc); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("reused recovery code: want 403, got %d", r.StatusCode)
+	}
+
+	// Disabling needs PIN and a code.
+	if r := do(t, "POST", srv.URL+"/api/v1/auth/2fa/disable", map[string]string{"pin": "2468", "code": "000000"}, nil, enabledSession); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("disable with wrong code: want 403, got %d", r.StatusCode)
+	}
+	if r := do(t, "POST", srv.URL+"/api/v1/auth/2fa/disable", map[string]string{"pin": "2468", "code": enableRes.RecoveryCodes[1]}, nil, enabledSession); r.StatusCode != http.StatusOK {
+		t.Fatalf("disable: want 200, got %d", r.StatusCode)
+	}
+	if r := pinLogin(); r.StatusCode != http.StatusOK || sessionOf(r) == nil {
+		t.Fatalf("after disabling, PIN login works again: %d", r.StatusCode)
 	}
 }

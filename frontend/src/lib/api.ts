@@ -38,7 +38,7 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
     if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfter = retryAfter;
 
     // Surface auth failures globally (except the PIN endpoint itself, which handles its own errors).
-    if (response.status === 401 && typeof window !== "undefined" && !url.includes("/auth/verify-pin")) {
+    if (response.status === 401 && typeof window !== "undefined" && !url.includes("/auth/verify-pin") && !url.includes("/auth/verify-2fa")) {
       window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, { detail: { url } }));
     }
     throw error;

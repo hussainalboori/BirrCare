@@ -111,27 +111,34 @@ func GenerateSessionToken(caregiverID string) string {
 
 // ParseSessionToken verifies signature and age, and returns caregiverID
 func ParseSessionToken(token string) (string, error) {
+	id, _, err := ParseSessionTokenIssued(token)
+	return id, err
+}
+
+// ParseSessionTokenIssued is ParseSessionToken plus the token's issue time, so the
+// middleware can refuse sessions issued before the caregiver revoked them.
+func ParseSessionTokenIssued(token string) (string, int64, error) {
 	parts := strings.Split(token, ":")
 	if len(parts) != 3 {
-		return "", errors.New("invalid session token format")
+		return "", 0, errors.New("invalid session token format")
 	}
 	caregiverID, ts, providedSig := parts[0], parts[1], parts[2]
 
 	expectedSig := sign(caregiverID + ":" + ts)
 	if !hmac.Equal([]byte(providedSig), []byte(expectedSig)) {
-		return "", errors.New("invalid signature")
+		return "", 0, errors.New("invalid signature")
 	}
 
 	issued, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
-		return "", errors.New("invalid session timestamp")
+		return "", 0, errors.New("invalid session timestamp")
 	}
 	age := time.Since(time.Unix(issued, 0))
 	if age > SessionTTL || age < -5*time.Minute {
-		return "", errors.New("session expired")
+		return "", 0, errors.New("session expired")
 	}
 
-	return caregiverID, nil
+	return caregiverID, issued, nil
 }
 
 // Config controls which identity sources the middleware trusts.
@@ -202,8 +209,12 @@ func MiddlewareWithConfig(database *sql.DB, cfg Config) func(http.Handler) http.
 
 			// 1. Check Session Cookie
 			if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
-				if caregiverID, err := ParseSessionToken(cookie.Value); err == nil {
+				if caregiverID, issued, err := ParseSessionTokenIssued(cookie.Value); err == nil {
 					caregiver = getCaregiverByID(database, caregiverID)
+					// Revoked: PIN changed or 2FA turned on/off after this cookie was issued.
+					if caregiver != nil && issued < caregiver.SessionsValidAfter {
+						caregiver = nil
+					}
 				}
 			}
 
@@ -267,13 +278,13 @@ func GetCaregiverFromContext(ctx context.Context) *models.Caregiver {
 	return c
 }
 
-const caregiverCols = `id, name, email, role, avatar_color, preferred_lang, is_active, created_at`
+const caregiverCols = `id, name, email, role, avatar_color, preferred_lang, is_active, created_at, totp_enabled, sessions_valid_after`
 
 func scanCaregiver(row *sql.Row) *models.Caregiver {
 	var c models.Caregiver
 	var email sql.NullString
 	var createdAtStr string
-	if err := row.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr, &c.TOTPEnabled, &c.SessionsValidAfter); err != nil {
 		return nil
 	}
 	if email.Valid {

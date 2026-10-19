@@ -56,6 +56,8 @@ export interface Caregiver {
   phone?: string;
   is_active: boolean;
   created_at: string;
+  /** Sign-in needs the PIN and an authenticator-app code. */
+  totp_enabled?: boolean;
 }
 
 export interface Medication {

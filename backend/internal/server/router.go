@@ -118,6 +118,8 @@ func NewRouter(o Options) http.Handler {
 			api.Get("/caregivers", authHandler.ListCaregivers)
 			api.Post("/auth/verify-pin", authHandler.VerifyPIN)
 			api.Post("/auth/logout", authHandler.Logout)
+			// Second login step after a PIN for accounts with an authenticator app.
+			api.Post("/auth/verify-2fa", authHandler.VerifyTwoFactor)
 			// Public: a crisis screen must show the doctor's number even if the PIN
 			// session has expired. The whole site is already behind Cloudflare Access.
 			api.Get("/contacts", contactsHandler.GetContacts)
@@ -127,6 +129,9 @@ func NewRouter(o Options) http.Handler {
 
 				api.Get("/auth/me", authHandler.GetMe)
 				api.Post("/auth/change-pin", authHandler.ChangePIN)
+				api.Post("/auth/2fa/setup", authHandler.SetupTwoFactor)
+				api.Post("/auth/2fa/enable", authHandler.EnableTwoFactor)
+				api.Post("/auth/2fa/disable", authHandler.DisableTwoFactor)
 
 				// User Management (Super Admin only - enforced in handlers)
 				api.Get("/users", usersHandler.ListUsers)

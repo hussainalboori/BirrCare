@@ -245,6 +245,37 @@ func Migrate(database *sql.DB) error {
 		_, _ = database.Exec(`UPDATE medications SET slot_times = '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}' WHERE slot_times IS NULL OR slot_times = ''`)
 	}
 
+	// Two-factor authentication (authenticator app) and session revocation.
+	for _, col := range []struct{ name, def string }{
+		{"totp_secret", "TEXT"},                         // base32, set once 2FA is enabled
+		{"totp_pending_secret", "TEXT"},                 // during setup, until the first code is confirmed
+		{"totp_enabled", "INTEGER NOT NULL DEFAULT 0"},  // 1 = PIN alone never signs in
+		{"totp_last_step", "INTEGER NOT NULL DEFAULT 0"}, // last accepted time step (replay guard)
+		{"recovery_codes", "TEXT"},                      // JSON array of SHA-256 hashes, removed when used
+		{"sessions_valid_after", "INTEGER NOT NULL DEFAULT 0"}, // unix time; older session cookies are refused
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('caregivers') WHERE name = ?", col.name).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE caregivers ADD COLUMN " + col.name + " " + col.def); err != nil {
+				return fmt.Errorf("failed adding caregivers.%s: %w", col.name, err)
+			}
+		}
+	}
+
+	// Break-glass: an operator with server access can clear 2FA for a caregiver who
+	// lost both their phone and recovery codes (DISABLE_2FA_FOR=<caregiver id>).
+	if id := strings.TrimSpace(os.Getenv("DISABLE_2FA_FOR")); id != "" {
+		res, err := database.Exec(`UPDATE caregivers SET totp_enabled = 0, totp_secret = NULL, totp_pending_secret = NULL,
+			recovery_codes = NULL, totp_last_step = 0, sessions_valid_after = CAST(strftime('%s','now') AS INTEGER) WHERE id = ?`, id)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				log.Printf("[SECURITY] Two-factor authentication DISABLED for %s via DISABLE_2FA_FOR. Remove the variable and restart.", id)
+				_, _ = database.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details) VALUES (lower(hex(randomblob(16))), NULL, '2FA_RESET_BY_OPERATOR', 'caregiver', ?, 'DISABLE_2FA_FOR')`, id)
+			}
+		}
+	}
+
 
 	// 4. Migrate vitals_logs table to allow selective metrics (systolic/diastolic/pulse can be NULL when logging only sugar or alertness)
 	var notNullSystolic int
