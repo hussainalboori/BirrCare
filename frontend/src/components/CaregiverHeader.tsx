@@ -111,11 +111,11 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
 
             <div className="flex min-w-0 flex-col">
-              <span className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              <span className="hidden truncate text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:block">
                 {t.activeCaregiver}
               </span>
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate text-sm font-bold text-slate-900 dark:text-white">
+              <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-1.5">
+                <span className="max-w-full truncate text-sm font-bold text-slate-900 dark:text-white">
                   {currentCaregiver?.name || "..."}
                 </span>
 
@@ -138,9 +138,24 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
           </div>
 
-          {/* Phones: Switch + Menu (bottom sheet). From lg the actions get their own
-              labelled row below, so words never compete with the name for space. */}
+          {/* One row: name, then (from xl, where they fit) every labelled action and
+              Switch. Below xl the actions live in the labelled Menu sheet. */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <div className="hidden xl:flex items-center gap-1.5">
+              {actions.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={a.onClick}
+                  title={a.label}
+                  className={`flex min-h-12 items-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
+                >
+                  <a.icon className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">{a.short}</span>
+                </button>
+              ))}
+            </div>
+
             {/* Switch Profile Button: always visible, it's the most used action */}
             <button
               type="button"
@@ -158,28 +173,13 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               onClick={() => setIsMenuOpen(true)}
               aria-label={locale === "ar" ? "القائمة" : "Menu"}
               aria-expanded={isMenuOpen}
-              className="relative flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 lg:hidden"
+              className="relative flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 xl:hidden"
             >
               <Menu className="h-5 w-5 shrink-0" />
               <span>{ar ? "القائمة" : "Menu"}</span>
               {needs2FA && <span className="absolute top-2 end-2 h-2 w-2 rounded-full bg-amber-500" />}
             </button>
           </div>
-        </div>
-
-        <div className="mx-auto hidden max-w-3xl flex-wrap items-center gap-1.5 px-4 pb-2.5 sm:px-6 lg:flex lg:max-w-none lg:px-8">
-          {actions.map((a) => (
-            <button
-              key={a.key}
-              type="button"
-              onClick={a.onClick}
-              title={a.label}
-              className={`flex min-h-12 flex-auto items-center justify-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
-            >
-              <a.icon className="h-4 w-4 shrink-0" />
-              <span className="whitespace-nowrap">{a.short}</span>
-            </button>
-          ))}
         </div>
 
         {/* Super Admin without an authenticator: one leaked PIN = full access */}
@@ -226,7 +226,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs lg:hidden" onClick={() => setIsMenuOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs xl:hidden" onClick={() => setIsMenuOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"
