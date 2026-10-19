@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <rect width="100" height="100" rx="24" fill="#059669"/>
+  <!-- Heart and caring hands motif -->
+  <path d="M50 30 C40 18, 20 22, 20 40 C20 58, 48 78, 50 80 C52 78, 80 58, 80 40 C80 22, 60 18, 50 30 Z" fill="#ffffff" opacity="0.95"/>
+  <path d="M42 45 L58 45 M50 37 L50 53" stroke="#059669" stroke-width="4" stroke-linecap="round"/>
+</svg>

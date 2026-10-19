@@ -1,0 +1,16 @@
+{
+  "name": "رعاية بر — Birrcare",
+  "short_name": "Birrcare",
+  "description": "Family Care Coordination Platform for Stroke Recovery",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

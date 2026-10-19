@@ -1,0 +1,155 @@
+"use client";
+
+import React, { useState, useEffect, useCallback } from "react";
+import { CaregiverHeader } from "@/components/CaregiverHeader";
+import { MedicationSlotCard } from "@/components/MedicationSlotCard";
+import { useLanguage } from "@/context/LanguageContext";
+import { useLiveSync } from "@/hooks/useLiveSync";
+import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
+import { fetchApi } from "@/lib/api";
+import { Calendar, CheckCircle2, Clock, Sparkles } from "lucide-react";
+
+export default function MedicationsPage() {
+  const { t, locale } = useLanguage();
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split("T")[0]
+  );
+  const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadSchedule = useCallback(async (date: string) => {
+    try {
+      const res = await fetchApi<DailyScheduleResponse>(`/medications/schedule?date=${date}`);
+      if (res && res.schedule) {
+        setScheduleData(res.schedule);
+      }
+    } catch (err) {
+      console.warn("Failed fetching schedule:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSchedule(selectedDate);
+  }, [selectedDate, loadSchedule]);
+
+  // Real-time SSE listener: instantly refresh schedule when any sibling logs a dose
+  const { status: connectionStatus } = useLiveSync({
+    onMedLogged: () => {
+      loadSchedule(selectedDate);
+    },
+  });
+
+  // Calculate statistics
+  const totalDoses = scheduleData.length;
+  const takenDoses = scheduleData.filter((d) => d.log?.status === "taken").length;
+  const progressPercent = totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 0;
+
+  // Group by slots: morning, afternoon, evening, bedtime
+  const slotOrder = ["morning", "afternoon", "evening", "bedtime"];
+  const groupedBySlot = slotOrder.map((slot) => ({
+    slot,
+    doses: scheduleData.filter((d) => d.slot === slot),
+  }));
+
+  return (
+    <div className="min-h-screen">
+      <CaregiverHeader connectionStatus={connectionStatus} />
+
+      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
+        {/* Header & Date Selector */}
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                {t.todayMedications}
+              </h1>
+              <Sparkles className="h-5 w-5 text-emerald-500" />
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {t.birrDescription}
+            </p>
+          </div>
+
+          {/* Date Picker Input */}
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-1.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+            <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Adherence Progress Bar */}
+        <div className="mb-6 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between text-xs font-bold mb-2">
+            <span className="text-slate-700 dark:text-slate-300">
+              {locale === "ar" ? "نسبة إنجاز جرعات اليوم" : "Today's Adherence Rate"}
+            </span>
+            <span className="text-emerald-600 dark:text-emerald-400">
+              {takenDoses} / {totalDoses} ({progressPercent}%)
+            </span>
+          </div>
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-500 ease-out"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Schedule List Grouped by Slots */}
+        {loading ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="h-24 w-full animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800"
+              />
+            ))}
+          </div>
+        ) : scheduleData.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-800">
+            <Clock className="mx-auto h-8 w-8 text-slate-400 mb-2" />
+            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+              {locale === "ar" ? "لا توجد أدوية مجدولة لهذا التاريخ" : "No medications scheduled for this date"}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {groupedBySlot.map(({ slot, doses }) => {
+              if (doses.length === 0) return null;
+              return (
+                <section key={slot} className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold">
+                      {doses.filter((d) => d.log?.status === "taken").length}/{doses.length}
+                    </span>
+                    <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                      {t.slots[slot as keyof typeof t.slots] || slot}
+                    </h2>
+                  </div>
+
+                  <div className="grid gap-3">
+                    {doses.map((dose) => (
+                      <MedicationSlotCard
+                        key={`${dose.medication.id}:${dose.slot}`}
+                        dose={dose}
+                        scheduledDate={selectedDate}
+                        onLoggedSuccess={() => loadSchedule(selectedDate)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

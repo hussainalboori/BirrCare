@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  font-family: var(--font-tajawal), var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+[dir="ltr"] {
+  font-family: var(--font-inter), var(--font-tajawal), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Touch-optimized active states */
+button, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Print styling for doctor consultation reports */
+@media print {
+  header, nav, button, .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+    padding-bottom: 0 !important;
+  }
+}
