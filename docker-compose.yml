@@ -24,6 +24,7 @@ services:
       - EMERGENCY_NUMBER=${EMERGENCY_NUMBER:-}
       - DOCTOR_NAME=${DOCTOR_NAME:-}
       - DOCTOR_PHONE=${DOCTOR_PHONE:-}
+      - DISABLE_2FA_FOR=${DISABLE_2FA_FOR:-}
     volumes:
       - ./data:/data
 
