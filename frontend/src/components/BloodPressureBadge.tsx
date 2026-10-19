@@ -4,6 +4,7 @@ import React from "react";
 import { classifyBloodPressure } from "@/lib/clinical";
 import { useLanguage } from "@/context/LanguageContext";
 import { AlertTriangle, CheckCircle, AlertCircle } from "lucide-react";
+import { Ltr } from "./Ltr";
 
 interface BloodPressureBadgeProps {
   systolic: number;
@@ -20,13 +21,17 @@ export function BloodPressureBadge({ systolic, diastolic, showDetails = false }:
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-          {systolic}/{diastolic}
-        </span>
-        <span className="text-xs text-slate-500 dark:text-slate-400">mmHg</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Reading + unit isolated as one LTR, unbreakable run: never "80/120" or "mmHg" on its own line */}
+        <Ltr className="inline-flex items-baseline gap-1" data-testid="bp-reading">
+          <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+            {systolic}/{diastolic}
+          </span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">mmHg</span>
+        </Ltr>
 
         <span
+          role={isCrisis ? "alert" : undefined}
           className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${meta.badgeClass}`}
         >
           {isCrisis ? (

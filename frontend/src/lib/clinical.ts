@@ -26,8 +26,9 @@ export function classifyBloodPressure(systolic: number, diastolic: number): BPCl
   if (systolic >= 140 || diastolic >= 90) {
     return {
       status: "STAGE_2",
-      badgeClass: "bg-amber-600 text-white shadow-amber-500/30 shadow-md",
-      bgLightClass: "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400",
+      // Orange per AGENTS.md §4.3 (distinct from the yellow "Elevated" badge)
+      badgeClass: "bg-orange-600 text-white shadow-orange-500/30 shadow-md",
+      bgLightClass: "bg-orange-500/10 border-orange-500/30 text-orange-700 dark:text-orange-400",
       labelAr: "ارتفاع ملحوظ (المرحلة الثانية)",
       labelEn: "Hypertension Stage 2",
       actionAr: "تأكد من إعطاء أدوية الضغط في موعدها واسترح 15 دقيقة وأعد القياس",

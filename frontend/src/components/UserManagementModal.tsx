@@ -219,7 +219,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div role="dialog" aria-modal="true" className="relative w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-3">
@@ -239,8 +239,10 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+            aria-label={locale === "ar" ? "إغلاق" : "Close"}
+            className="flex min-h-12 min-w-12 shrink-0 items-center justify-center rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
           >
             <X className="h-5 w-5" />
           </button>
@@ -313,7 +315,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                     placeholder={locale === "ar" ? "مثال: مريم (Maryam)" : "e.g. Maryam"}
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
 
@@ -326,7 +328,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                     placeholder="name@family.local"
                     value={formEmail}
                     onChange={(e) => setFormEmail(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-semibold text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
@@ -375,12 +377,14 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                   </label>
                   <input
                     type="password"
+                    inputMode="numeric"
+                    autoComplete="new-password"
                     maxLength={4}
                     pattern="\d{4}"
                     required
                     value={formPin}
                     onChange={(e) => setFormPin(e.target.value)}
-                    className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm font-black tracking-widest text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-base font-black tracking-widest text-slate-900 focus:border-purple-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               )}
@@ -452,6 +456,9 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
               <div className="flex items-center gap-3 mb-2">
                 <input
                   type="password"
+                  inputMode="numeric"
+                  pattern="\d{4}"
+                  autoComplete="new-password"
                   maxLength={4}
                   autoFocus
                   placeholder="••••"
@@ -559,7 +566,8 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                           setPinError("");
                         }}
                         title={locale === "ar" ? "إعادة تعيين رمز PIN" : "Reset 4-Digit PIN"}
-                        className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-amber-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+                        aria-label={locale === "ar" ? "إعادة تعيين رمز PIN" : "Reset 4-Digit PIN"}
+                        className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-amber-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
                       >
                         <KeyRound className="h-4 w-4" />
                       </button>
@@ -568,7 +576,8 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                       <button
                         onClick={() => handleOpenEdit(user)}
                         title={locale === "ar" ? "تعديل البيانات والدور" : "Edit Details & Role"}
-                        className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-purple-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+                        aria-label={locale === "ar" ? "تعديل البيانات والدور" : "Edit Details & Role"}
+                        className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-purple-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
@@ -586,7 +595,16 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                               ? "إعادة تفعيل الحساب"
                               : "Re-activate Profile"
                           }
-                          className={`rounded-xl border p-2 transition-colors ${
+                          aria-label={
+                            user.is_active
+                              ? locale === "ar"
+                                ? "تعطيل الحساب"
+                                : "Deactivate Profile"
+                              : locale === "ar"
+                              ? "إعادة تفعيل الحساب"
+                              : "Re-activate Profile"
+                          }
+                          className={`flex min-h-12 min-w-12 items-center justify-center rounded-xl border p-2 transition-colors ${
                             user.is_active
                               ? "border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600 dark:border-slate-700 dark:hover:text-rose-400"
                               : "border-emerald-300 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40"

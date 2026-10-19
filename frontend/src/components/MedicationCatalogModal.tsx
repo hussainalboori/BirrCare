@@ -180,7 +180,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div role="dialog" aria-modal="true" className="relative w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-3">
@@ -200,8 +200,10 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+            aria-label={locale === "ar" ? "إغلاق" : "Close"}
+            className="flex min-h-12 min-w-12 shrink-0 items-center justify-center rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
           >
             <X className="h-5 w-5" />
           </button>
@@ -274,7 +276,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder="مثال: كلوبيدوغريل (بلافيكس)"
                     value={nameAr}
                     onChange={(e) => setNameAr(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
 
@@ -287,7 +289,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder="e.g. Clopidogrel (Plavix)"
                     value={nameEn}
                     onChange={(e) => setNameEn(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
 
@@ -301,7 +303,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder="مثال: 75mg قرص واحد"
                     value={dosage}
                     onChange={(e) => setDosage(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
@@ -347,7 +349,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder="مثال: يؤخذ بعد الإفطار مع كوب ماء"
                     value={instAr}
                     onChange={(e) => setInstAr(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
 
@@ -360,7 +362,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder="e.g. Take after breakfast with water"
                     value={instEn}
                     onChange={(e) => setInstEn(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
@@ -414,7 +416,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     placeholder={locale === "ar" ? "أو أدخل رابط صورة مخصص (URL)" : "Or enter custom image URL"}
                     value={imageUrl}
                     onChange={(e) => setImageUrl(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-base text-slate-800 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
               </div>
@@ -517,14 +519,16 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                       <button
                         onClick={() => handleOpenEdit(med)}
                         title={locale === "ar" ? "تعديل الدواء والجرعة" : "Edit Medication"}
-                        className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-amber-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+                        aria-label={locale === "ar" ? "تعديل الدواء والجرعة" : "Edit Medication"}
+                        className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 hover:text-amber-600 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => handleDeleteMedication(med)}
                         title={locale === "ar" ? "تعطيل الدواء" : "Deactivate Prescription"}
-                        className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-300 hover:text-rose-600 dark:border-slate-700 dark:hover:text-rose-400 transition-colors"
+                        aria-label={locale === "ar" ? "تعطيل الدواء" : "Deactivate Prescription"}
+                        className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-300 hover:text-rose-600 dark:border-slate-700 dark:hover:text-rose-400 transition-colors"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

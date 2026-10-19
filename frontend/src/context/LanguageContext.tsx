@@ -1,7 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { Locale, translations } from "@/lib/i18n";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { Locale, LOCALE_COOKIE, translations } from "@/lib/i18n";
 
 interface LanguageContextType {
   locale: Locale;
@@ -13,33 +13,58 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
-export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("ar");
+function persistLocale(loc: Locale) {
+  document.cookie = `${LOCALE_COOKIE}=${loc}; path=/; max-age=31536000; SameSite=Lax`;
+  try {
+    localStorage.setItem(LOCALE_COOKIE, loc);
+  } catch {
+    // storage may be unavailable (private mode)
+  }
+}
 
+function applyToDocument(loc: Locale) {
+  document.documentElement.setAttribute("dir", loc === "ar" ? "rtl" : "ltr");
+  document.documentElement.setAttribute("lang", loc);
+}
+
+/**
+ * `initialLocale` comes from the server (cookie), so the first client render
+ * matches the SSR markup and the <html dir> set by the root layout.
+ */
+export function LanguageProvider({
+  children,
+  initialLocale = "ar",
+}: {
+  children: React.ReactNode;
+  initialLocale?: Locale;
+}) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
+
+  // One-time migration: older clients stored the choice only in localStorage.
   useEffect(() => {
-    // Check cookie or localStorage
-    const saved = localStorage.getItem("birrcare_lang") as Locale;
-    if (saved === "ar" || saved === "en") {
-      setLocaleState(saved);
-      document.documentElement.setAttribute("dir", saved === "ar" ? "rtl" : "ltr");
-      document.documentElement.setAttribute("lang", saved);
-    } else {
-      document.documentElement.setAttribute("dir", "rtl");
-      document.documentElement.setAttribute("lang", "ar");
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(LOCALE_COOKIE);
+    } catch {
+      return;
     }
+    const hasCookie = document.cookie.split("; ").some((c) => c.startsWith(`${LOCALE_COOKIE}=`));
+    if (!hasCookie && (saved === "ar" || saved === "en") && saved !== initialLocale) {
+      persistLocale(saved);
+      applyToDocument(saved);
+      setLocaleState(saved);
+    }
+  }, [initialLocale]);
+
+  const setLocale = useCallback((newLoc: Locale) => {
+    setLocaleState(newLoc);
+    persistLocale(newLoc);
+    applyToDocument(newLoc);
   }, []);
 
-  const setLocale = (newLoc: Locale) => {
-    setLocaleState(newLoc);
-    localStorage.setItem("birrcare_lang", newLoc);
-    document.cookie = `birrcare_lang=${newLoc}; path=/; max-age=31536000; SameSite=Lax`;
-    document.documentElement.setAttribute("dir", newLoc === "ar" ? "rtl" : "ltr");
-    document.documentElement.setAttribute("lang", newLoc);
-  };
-
-  const toggleLocale = () => {
+  const toggleLocale = useCallback(() => {
     setLocale(locale === "ar" ? "en" : "ar");
-  };
+  }, [locale, setLocale]);
 
   const dir = locale === "ar" ? "rtl" : "ltr";
   const t = translations[locale];

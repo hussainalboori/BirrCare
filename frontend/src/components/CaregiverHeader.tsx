@@ -48,6 +48,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                     ? "bg-amber-500 animate-ping"
                     : "bg-rose-500"
                 }`}
+                role="img"
+                aria-label={
+                  connectionStatus === "connected"
+                    ? t.liveConnected
+                    : connectionStatus === "connecting"
+                    ? t.liveReconnecting
+                    : t.liveOffline
+                }
                 title={
                   connectionStatus === "connected"
                     ? t.liveConnected
@@ -91,8 +99,10 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             {/* Super Admin: User Management */}
             {isSuperAdmin(role) && (
               <button
+                type="button"
                 onClick={() => setIsUserModalOpen(true)}
-                className="flex items-center gap-1 rounded-xl bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 text-xs font-bold text-purple-700 transition-colors active:scale-95 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60"
+                aria-label={t.userManagement}
+                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 text-xs font-bold text-purple-700 transition-colors active:scale-95 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60"
                 title={locale === "ar" ? "إدارة المستخدمين والأدوار" : "Manage Users & Roles"}
               >
                 <ShieldAlert className="h-4 w-4" />
@@ -103,8 +113,10 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             {/* Admin or Super Admin: Medications Catalog */}
             {canManageMedications(role) && (
               <button
+                type="button"
                 onClick={() => setIsMedModalOpen(true)}
-                className="flex items-center gap-1 rounded-xl bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-800 transition-colors active:scale-95 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60"
+                aria-label={t.manageMedications}
+                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-800 transition-colors active:scale-95 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60"
                 title={locale === "ar" ? "إدارة الأدوية والجرعات" : "Prescriptions Catalog"}
               >
                 <Pill className="h-4 w-4" />
@@ -114,8 +126,9 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
             {/* Switch Profile Button */}
             <button
+                type="button"
               onClick={() => openPinModal()}
-              className="flex items-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              className="flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               aria-label={t.switchCaregiver}
             >
               <Users className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
@@ -124,8 +137,10 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
             {/* Language Switcher */}
             <button
+                type="button"
               onClick={toggleLocale}
-              className="flex items-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors active:scale-95 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              aria-label={locale === "ar" ? "Switch to English" : "التبديل إلى العربية"}
+              className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors active:scale-95 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               title="Switch Language"
             >
               <Globe className="h-3.5 w-3.5" />

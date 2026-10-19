@@ -14,17 +14,22 @@ export function PinPadModal() {
   const [error, setError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Reset only when the modal opens (or its target changes) — NOT whenever the caregivers
+  // list is refreshed, which previously wiped a half-entered PIN mid-typing.
   useEffect(() => {
     if (isPinModalOpen) {
       setPin("");
       setError("");
-      if (targetCaregiverId) {
-        setSelectedId(targetCaregiverId);
-      } else if (allCaregivers.length > 0) {
-        setSelectedId(allCaregivers[0].id);
-      }
+      if (targetCaregiverId) setSelectedId(targetCaregiverId);
     }
-  }, [isPinModalOpen, targetCaregiverId, allCaregivers]);
+  }, [isPinModalOpen, targetCaregiverId]);
+
+  // Default the selection to the first caregiver once the list is available.
+  useEffect(() => {
+    if (isPinModalOpen && allCaregivers.length > 0 && !allCaregivers.some((c) => c.id === selectedId)) {
+      setSelectedId(targetCaregiverId || allCaregivers[0].id);
+    }
+  }, [isPinModalOpen, allCaregivers, selectedId, targetCaregiverId]);
 
   if (!isPinModalOpen) return null;
 
@@ -63,7 +68,19 @@ export function PinPadModal() {
     setIsSubmitting(false);
 
     if (!res.success) {
-      setError(t.incorrectPin);
+      if (res.status === 429) {
+        // Backend lockout after 5 failed attempts (Retry-After in seconds)
+        const mins = res.retryAfter ? Math.max(1, Math.ceil(res.retryAfter / 60)) : null;
+        setError(
+          locale === "ar"
+            ? `تم إيقاف المحاولات مؤقتاً بسبب كثرة المحاولات الخاطئة.${mins ? ` حاول مجدداً بعد ${mins} دقيقة.` : " حاول لاحقاً."}`
+            : `Too many incorrect attempts.${mins ? ` Try again in ${mins} min.` : " Please try again later."}`
+        );
+      } else if (res.status && res.status !== 401 && res.status !== 403) {
+        setError(locale === "ar" ? "تعذر الاتصال بالخادم، حاول مجدداً" : "Could not reach the server, please retry");
+      } else {
+        setError(t.incorrectPin);
+      }
       if (typeof window !== "undefined" && "vibrate" in navigator) {
         navigator.vibrate?.([60, 50, 60]);
       }
@@ -75,11 +92,17 @@ export function PinPadModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t.switchCaregiver}
+        className="relative w-full max-w-md max-h-dvh overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
         {/* Close Button */}
         <button
+          type="button"
           onClick={closePinModal}
-          className="absolute top-4 end-4 rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+          aria-label={t.cancel}
+          className="absolute top-3 end-3 flex min-h-12 min-w-12 items-center justify-center rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
         >
           <X className="h-5 w-5" />
         </button>
@@ -107,7 +130,9 @@ export function PinPadModal() {
               const isSelected = c.id === selectedId;
               return (
                 <button
+                  type="button"
                   key={c.id}
+                  aria-pressed={isSelected}
                   onClick={() => {
                     setSelectedId(c.id);
                     setPin("");
@@ -167,7 +192,7 @@ export function PinPadModal() {
 
         {/* Error message */}
         {error ? (
-          <p className="text-center text-xs font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
+          <p role="alert" className="text-center text-xs font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
             {error}
           </p>
         ) : (
@@ -177,9 +202,11 @@ export function PinPadModal() {
         )}
 
         {/* Oversized Mobile Touch Keypad */}
-        <div className="grid grid-cols-3 gap-2.5 max-w-xs mx-auto">
+        {/* dir="ltr": phone keypads keep 1-2-3 left-to-right even in Arabic UIs */}
+        <div dir="ltr" className="grid grid-cols-3 gap-2.5 max-w-xs mx-auto">
           {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
             <button
+              type="button"
               key={digit}
               onClick={() => handleDigit(digit)}
               disabled={isSubmitting}
@@ -189,13 +216,16 @@ export function PinPadModal() {
             </button>
           ))}
           <button
+            type="button"
             onClick={handleClear}
             disabled={isSubmitting}
+            aria-label={locale === "ar" ? "مسح" : "Clear"}
             className="flex h-14 items-center justify-center rounded-2xl bg-slate-100/60 hover:bg-slate-100 text-xs font-semibold text-slate-500 dark:bg-slate-800/60 dark:hover:bg-slate-800 dark:text-slate-400 active:scale-95"
           >
             C
           </button>
           <button
+            type="button"
             onClick={() => handleDigit("0")}
             disabled={isSubmitting}
             className="flex h-14 items-center justify-center rounded-2xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-xl font-bold text-slate-900 dark:text-white transition-transform active:scale-90"
@@ -203,10 +233,11 @@ export function PinPadModal() {
             0
           </button>
           <button
+            type="button"
             onClick={handleDelete}
             disabled={isSubmitting}
             className="flex h-14 items-center justify-center rounded-2xl bg-slate-100/60 hover:bg-slate-100 text-slate-600 dark:bg-slate-800/60 dark:hover:bg-slate-800 dark:text-slate-300 active:scale-95"
-            aria-label="Delete"
+            aria-label={locale === "ar" ? "حذف رقم" : "Delete digit"}
           >
             <Delete className="h-5 w-5" />
           </button>

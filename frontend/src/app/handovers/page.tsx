@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
@@ -8,6 +8,8 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { HandoverNote, ShiftType } from "@/lib/types";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { formatShortDate, formatTime } from "@/lib/datetime";
+import { Ltr } from "@/components/Ltr";
 import { ClipboardList, Plus, AlertTriangle, Clock, Send, Loader2 } from "lucide-react";
 
 export default function HandoversPage() {
@@ -17,6 +19,7 @@ export default function HandoversPage() {
   const [notesList, setNotesList] = useState<HandoverNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const inFlightRef = useRef(false); // synchronous double-submit guard
   const [showForm, setShowForm] = useState(false);
 
   // Form state
@@ -44,6 +47,9 @@ export default function HandoversPage() {
     onNoteAdded: () => {
       loadHandovers();
     },
+    onResync: () => {
+      loadHandovers();
+    },
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,6 +66,8 @@ export default function HandoversPage() {
       return;
     }
 
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsSubmitting(true);
     try {
       await fetchApi("/handovers", {
@@ -78,6 +86,7 @@ export default function HandoversPage() {
     } catch (err: any) {
       alert(err.message || "Failed to post handover note");
     } finally {
+      inFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -88,7 +97,7 @@ export default function HandoversPage() {
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
@@ -105,8 +114,10 @@ export default function HandoversPage() {
 
           {!isViewer(currentCaregiver?.role) && (
             <button
+              type="button"
               onClick={() => setShowForm(!showForm)}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
+              aria-expanded={showForm}
+              className="flex min-h-12 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
             >
               <Plus className="h-4 w-4" />
               <span>{t.newHandover}</span>
@@ -135,7 +146,8 @@ export default function HandoversPage() {
                     type="button"
                     key={st}
                     onClick={() => setShiftType(st)}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                    aria-pressed={shiftType === st}
+                    className={`min-h-12 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
                       shiftType === st
                         ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 ring-2 ring-emerald-500/20"
                         : "border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:text-slate-400"
@@ -149,12 +161,12 @@ export default function HandoversPage() {
 
             {/* Urgent Notice Toggle */}
             <div className="mb-4">
-              <label className="flex items-center gap-2 p-3 rounded-xl border border-rose-200 bg-rose-50/50 dark:border-rose-900/60 dark:bg-rose-950/20 cursor-pointer">
+              <label className="flex min-h-12 items-center gap-2 p-3 rounded-xl border border-rose-200 bg-rose-50/50 dark:border-rose-900/60 dark:bg-rose-950/20 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={urgentFlag}
                   onChange={(e) => setUrgentFlag(e.target.checked)}
-                  className="h-4 w-4 rounded-sm text-rose-600 focus:ring-rose-500"
+                  className="h-5 w-5 shrink-0 rounded-sm text-rose-600 focus:ring-rose-500"
                 />
                 <span className="flex items-center gap-1.5 text-xs font-bold text-rose-700 dark:text-rose-400">
                   <AlertTriangle className="h-4 w-4" />
@@ -171,7 +183,8 @@ export default function HandoversPage() {
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 placeholder={t.summaryPlaceholder}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                aria-label={t.newHandover}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
 
@@ -180,14 +193,15 @@ export default function HandoversPage() {
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
-                className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="min-h-12 rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 {t.cancel}
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                aria-busy={isSubmitting}
+                className="flex min-h-12 items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-5 py-2 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95 disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>
@@ -225,14 +239,8 @@ export default function HandoversPage() {
             </div>
           ) : (
             notesList.map((note) => {
-              const dateStr = new Date(note.created_at).toLocaleDateString(
-                locale === "ar" ? "ar-SA" : "en-US",
-                { month: "short", day: "numeric" }
-              );
-              const timeStr = new Date(note.created_at).toLocaleTimeString(
-                locale === "ar" ? "ar-SA" : "en-US",
-                { hour: "numeric", minute: "2-digit", hour12: true }
-              );
+              const dateStr = formatShortDate(note.created_at, locale);
+              const timeStr = formatTime(note.created_at, locale);
 
               return (
                 <div
@@ -261,7 +269,7 @@ export default function HandoversPage() {
 
                     <div className="flex items-center gap-1 text-[11px] text-slate-400">
                       <Clock className="h-3 w-3" />
-                      <span>{dateStr} • {timeStr}</span>
+                      <Ltr>{dateStr} • {timeStr}</Ltr>
                     </div>
                   </div>
 

@@ -1,32 +1,39 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
+import { localDateString } from "@/lib/datetime";
+import { Ltr } from "@/components/Ltr";
 import { Calendar, CheckCircle2, Clock, Sparkles } from "lucide-react";
 
 export default function MedicationsPage() {
   const { t, locale } = useLanguage();
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
+  // Local calendar date (NOT toISOString(), which is the UTC date and is "yesterday"
+  // between 00:00–03:00 in UTC+3).
+  const [selectedDate, setSelectedDate] = useState<string>(() => localDateString());
+  // Whether the user is looking at "today" (so we can roll over at midnight on wake).
+  const followsTodayRef = useRef(true);
   const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
   const [loading, setLoading] = useState(true);
+  // Monotonic request id: responses for an older date/request are discarded, so a slow
+  // response can never render one day's doses under another day's date picker.
+  const requestSeqRef = useRef(0);
 
   const loadSchedule = useCallback(async (date: string) => {
+    const seq = ++requestSeqRef.current;
     try {
-      const res = await fetchApi<DailyScheduleResponse>(`/medications/schedule?date=${date}`);
-      if (res && res.schedule) {
-        setScheduleData(res.schedule);
-      }
+      const res = await fetchApi<DailyScheduleResponse>(`/medications/schedule?date=${encodeURIComponent(date)}`);
+      if (seq !== requestSeqRef.current) return;
+      setScheduleData(res?.schedule || []);
     } catch (err) {
       console.warn("Failed fetching schedule:", err);
     } finally {
-      setLoading(false);
+      if (seq === requestSeqRef.current) setLoading(false);
     }
   }, []);
 
@@ -34,10 +41,27 @@ export default function MedicationsPage() {
     loadSchedule(selectedDate);
   }, [selectedDate, loadSchedule]);
 
+  const handleDateChange = (value: string) => {
+    if (!value) return;
+    followsTodayRef.current = value === localDateString();
+    setLoading(true);
+    setSelectedDate(value);
+  };
+
   // Real-time SSE listener: instantly refresh schedule when any sibling logs a dose
   const { status: connectionStatus } = useLiveSync({
-    onMedLogged: () => {
-      loadSchedule(selectedDate);
+    onMedLogged: (event) => {
+      const date = (event.payload as { scheduled_date?: string } | undefined)?.scheduled_date;
+      if (!date || date === selectedDate) loadSchedule(selectedDate);
+    },
+    // After reconnect / returning from background: re-hydrate (and roll over to the new day).
+    onResync: () => {
+      const today = localDateString();
+      if (followsTodayRef.current && today !== selectedDate) {
+        setSelectedDate(today);
+      } else {
+        loadSchedule(selectedDate);
+      }
     },
   });
 
@@ -81,8 +105,9 @@ export default function MedicationsPage() {
             <input
               type="date"
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
+              onChange={(e) => handleDateChange(e.target.value)}
+              aria-label={locale === "ar" ? "تاريخ الجدول" : "Schedule date"}
+              className="min-h-11 bg-transparent text-base font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
             />
           </div>
         </div>
@@ -94,7 +119,7 @@ export default function MedicationsPage() {
               {locale === "ar" ? "نسبة إنجاز جرعات اليوم" : "Today's Adherence Rate"}
             </span>
             <span className="text-emerald-600 dark:text-emerald-400">
-              {takenDoses} / {totalDoses} ({progressPercent}%)
+              <Ltr>{takenDoses} / {totalDoses} ({progressPercent}%)</Ltr>
             </span>
           </div>
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
@@ -129,8 +154,8 @@ export default function MedicationsPage() {
               return (
                 <section key={slot} className="space-y-3">
                   <div className="flex items-center gap-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold">
-                      {doses.filter((d) => d.log?.status === "taken").length}/{doses.length}
+                    <span className="flex h-6 min-w-6 px-1 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold">
+                      <Ltr>{doses.filter((d) => d.log?.status === "taken").length}/{doses.length}</Ltr>
                     </span>
                     <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                       {t.slots[slot as keyof typeof t.slots] || slot}
@@ -140,7 +165,7 @@ export default function MedicationsPage() {
                   <div className="grid gap-3">
                     {doses.map((dose) => (
                       <MedicationSlotCard
-                        key={`${dose.medication.id}:${dose.slot}`}
+                        key={`${selectedDate}:${dose.medication.id}:${dose.slot}`}
                         dose={dose}
                         scheduledDate={selectedDate}
                         onLoggedSuccess={() => loadSchedule(selectedDate)}

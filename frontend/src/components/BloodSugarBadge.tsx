@@ -4,6 +4,7 @@ import React from "react";
 import { classifyBloodSugar, BloodSugarTiming } from "@/lib/clinical";
 import { useLanguage } from "@/context/LanguageContext";
 import { Droplet, AlertTriangle, CheckCircle, AlertCircle } from "lucide-react";
+import { Ltr } from "./Ltr";
 
 interface BloodSugarBadgeProps {
   sugar: number;
@@ -26,13 +27,15 @@ export function BloodSugarBadge({ sugar, timing = "random", showDetails = false 
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
           <Droplet className={`h-4 w-4 ${isAlert ? "text-rose-500 fill-rose-500" : "text-blue-500 fill-blue-500"}`} />
-          <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-            {typeof sugar === "number" ? Number(sugar.toFixed(1)) : sugar}
-          </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">mmol/L</span>
+          <Ltr className="inline-flex items-baseline gap-1">
+            <span className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+              {typeof sugar === "number" ? Number(sugar.toFixed(1)) : sugar}
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">mmol/L</span>
+          </Ltr>
         </div>
 
         {timing && (

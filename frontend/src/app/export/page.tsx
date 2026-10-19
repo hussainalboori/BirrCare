@@ -7,6 +7,8 @@ import { useLanguage } from "@/context/LanguageContext";
 import { DoctorSummary } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { ALERTNESS_METAS } from "@/lib/clinical";
+import { formatDateTime } from "@/lib/datetime";
+import { Ltr } from "@/components/Ltr";
 import { FileSpreadsheet, Printer, Activity, Heart, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function DoctorExportPage() {
@@ -62,7 +64,8 @@ export default function DoctorExportPage() {
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+              aria-label={t.coveredPeriod}
+              className="min-h-12 rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
             >
               <option value={7}>{locale === "ar" ? "آخر 7 أيام" : "Last 7 Days"}</option>
               <option value={14}>{locale === "ar" ? "آخر 14 يوماً" : "Last 14 Days"}</option>
@@ -70,8 +73,9 @@ export default function DoctorExportPage() {
             </select>
 
             <button
+              type="button"
               onClick={handlePrint}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-sm transition-all active:scale-95"
+              className="flex min-h-12 items-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-sm transition-all active:scale-95"
             >
               <Printer className="h-4 w-4" />
               <span>{t.printReport}</span>
@@ -92,7 +96,7 @@ export default function DoctorExportPage() {
                     {locale === "ar" ? "تقرير المتابعة العائلية لمريض الجلطة الدماغية" : "Post-Stroke Family Care Recovery Report"}
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    {t.coveredPeriod}: {summary.start_date} → {summary.end_date} ({summary.days_covered} {locale === "ar" ? "أيام" : "days"})
+                    {t.coveredPeriod}: <Ltr>{summary.start_date} → {summary.end_date}</Ltr> ({summary.days_covered} {locale === "ar" ? "أيام" : "days"})
                   </p>
                 </div>
                 <div className="text-end">
@@ -100,7 +104,7 @@ export default function DoctorExportPage() {
                     Birrcare (رعاية بر)
                   </span>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    {new Date(summary.generated_at).toLocaleString()}
+                    <Ltr>{formatDateTime(summary.generated_at, locale)}</Ltr>
                   </p>
                 </div>
               </div>
@@ -114,10 +118,12 @@ export default function DoctorExportPage() {
                   {locale === "ar" ? "متوسط ضغط الدم" : "Avg Blood Pressure"}
                 </span>
                 <span className="text-lg font-black text-slate-900 dark:text-white">
-                  {Math.round(summary.vitals_stats.avg_systolic)} / {Math.round(summary.vitals_stats.avg_diastolic)}
+                  {/* Spaced slash inside RTL text reorders to "80 / 120" unless isolated */}
+                  <Ltr>{Math.round(summary.vitals_stats.avg_systolic)} / {Math.round(summary.vitals_stats.avg_diastolic)}</Ltr>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
-                  {locale === "ar" ? `المدى: ${summary.vitals_stats.min_systolic}-${summary.vitals_stats.max_systolic}` : `Range: ${summary.vitals_stats.min_systolic}-${summary.vitals_stats.max_systolic}`}
+                  {locale === "ar" ? "المدى: " : "Range: "}
+                  <Ltr>{summary.vitals_stats.min_systolic}–{summary.vitals_stats.max_systolic}</Ltr>
                 </span>
               </div>
 
@@ -128,8 +134,10 @@ export default function DoctorExportPage() {
                   {locale === "ar" ? "متوسط السكر" : "Avg Glucose"}
                 </span>
                 <span className="text-lg font-black text-blue-900 dark:text-blue-100">
-                  {summary.vitals_stats.avg_blood_sugar ? summary.vitals_stats.avg_blood_sugar.toFixed(1) : "--"}{" "}
-                  <span className="text-xs font-normal">mmol/L</span>
+                  <Ltr>
+                    {summary.vitals_stats.avg_blood_sugar ? summary.vitals_stats.avg_blood_sugar.toFixed(1) : "--"}{" "}
+                    <span className="text-xs font-normal">mmol/L</span>
+                  </Ltr>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {locale === "ar" ? "سكر الدم" : "Blood Sugar"}
@@ -143,7 +151,7 @@ export default function DoctorExportPage() {
                   {t.adherenceRate}
                 </span>
                 <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">
-                  {Math.round(summary.adherence.adherence_rate)}%
+                  <Ltr>{Math.round(summary.adherence.adherence_rate)}%</Ltr>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {summary.adherence.total_taken} {locale === "ar" ? "جرعة أُعطيت" : "doses taken"}
@@ -157,7 +165,9 @@ export default function DoctorExportPage() {
                   {locale === "ar" ? "متوسط النبض" : "Average Pulse"}
                 </span>
                 <span className="text-lg font-black text-slate-900 dark:text-white">
-                  {Math.round(summary.vitals_stats.avg_pulse)} <span className="text-xs font-normal">bpm</span>
+                  <Ltr>
+                    {Math.round(summary.vitals_stats.avg_pulse)} <span className="text-xs font-normal">bpm</span>
+                  </Ltr>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {summary.vitals_stats.total_readings} {locale === "ar" ? "قراءة" : "readings"}
@@ -221,16 +231,19 @@ export default function DoctorExportPage() {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {summary.recent_vitals.slice(0, 10).map((v) => (
                       <tr key={v.id}>
-                        <td className="py-2 font-mono text-slate-600 dark:text-slate-400">
-                          {new Date(v.recorded_at).toLocaleDateString()} {new Date(v.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        <td className="py-2 pe-3 font-mono text-slate-600 dark:text-slate-400">
+                          <Ltr>{formatDateTime(v.recorded_at, locale)}</Ltr>
                         </td>
-                        <td className="py-2 font-bold text-slate-900 dark:text-white">
-                          {v.systolic}/{v.diastolic} mmHg
+                        <td className="py-2 pe-3 font-bold text-slate-900 dark:text-white">
+                          {/* sugar/alertness-only rows have no BP: previously rendered "undefined/undefined mmHg" */}
+                          {v.systolic != null && v.diastolic != null ? <Ltr>{v.systolic}/{v.diastolic} mmHg</Ltr> : "--"}
                         </td>
-                        <td className="py-2 font-semibold text-blue-700 dark:text-blue-300">
-                          {v.blood_sugar ? `${Number(v.blood_sugar.toFixed(1))} mmol/L` : "--"}
+                        <td className="py-2 pe-3 font-semibold text-blue-700 dark:text-blue-300">
+                          {v.blood_sugar ? <Ltr>{Number(v.blood_sugar.toFixed(1))} mmol/L</Ltr> : "--"}
                         </td>
-                        <td className="py-2 text-slate-700 dark:text-slate-300">{v.pulse} bpm</td>
+                        <td className="py-2 pe-3 text-slate-700 dark:text-slate-300">
+                          {v.pulse != null ? <Ltr>{v.pulse} bpm</Ltr> : "--"}
+                        </td>
                         <td className="py-2">
                           <span className="px-2 py-0.5 rounded-sm bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold">
                             {locale === "ar" ? ALERTNESS_METAS[v.alertness_level]?.labelAr : ALERTNESS_METAS[v.alertness_level]?.labelEn}

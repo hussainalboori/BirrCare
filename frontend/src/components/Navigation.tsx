@@ -46,7 +46,8 @@ export function Navigation() {
             <Link
               key={link.href}
               href={link.href}
-              className={`flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-1.5 transition-all active:scale-95 ${
+              aria-current={link.active ? "page" : undefined}
+              className={`flex min-h-12 min-w-12 flex-col items-center justify-center gap-1 rounded-2xl px-3 py-1.5 transition-all active:scale-95 ${
                 link.active
                   ? "text-emerald-600 dark:text-emerald-400 font-bold"
                   : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 font-medium"

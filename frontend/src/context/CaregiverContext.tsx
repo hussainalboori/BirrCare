@@ -2,7 +2,16 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { Caregiver } from "@/lib/types";
-import { fetchApi } from "@/lib/api";
+import { fetchApi, AUTH_CHANGED_EVENT, AUTH_REQUIRED_EVENT } from "@/lib/api";
+
+export interface VerifyPinResult {
+  success: boolean;
+  error?: string;
+  /** HTTP status of a failure (401 wrong PIN, 429 locked out, ...). */
+  status?: number;
+  /** Seconds until another attempt is allowed (from Retry-After on 429). */
+  retryAfter?: number;
+}
 
 interface CaregiverContextType {
   currentCaregiver: Caregiver | null;
@@ -11,7 +20,7 @@ interface CaregiverContextType {
   openPinModal: (targetCaregiverId?: string) => void;
   closePinModal: () => void;
   targetCaregiverId: string | null;
-  verifyPin: (caregiverId: string, pin: string) => Promise<{ success: boolean; error?: string }>;
+  verifyPin: (caregiverId: string, pin: string) => Promise<VerifyPinResult>;
   refreshCaregiver: () => Promise<void>;
   refreshCaregivers: () => Promise<void>;
   setCurrentCaregiver: (c: Caregiver) => void;
@@ -40,8 +49,13 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
       if (me && me.id) {
         setCurrentCaregiver(me);
       }
-    } catch {
-      // If unauthenticated or dev fallback not set, we can select first caregiver once list loads
+    } catch (err: any) {
+      // No silent default caregiver: an unauthenticated device must identify via PIN.
+      // (fetchApi also dispatches AUTH_REQUIRED_EVENT on 401, handled below.)
+      if (err?.status === 401) {
+        setCurrentCaregiver(null);
+        setIsPinModalOpen(true);
+      }
     }
   }, []);
 
@@ -50,12 +64,16 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
     refreshCaregiver();
   }, [fetchCaregiversList, refreshCaregiver]);
 
-  // If currentCaregiver is null after caregivers load, fallback to first
+  // Any 401 (expired session, write without session) → prompt for PIN instead of failing silently.
+  // The previous fallback to allCaregivers[0] attributed actions/UI to the wrong sibling.
   useEffect(() => {
-    if (!currentCaregiver && allCaregivers.length > 0) {
-      setCurrentCaregiver(allCaregivers[0]);
-    }
-  }, [currentCaregiver, allCaregivers]);
+    const onAuthRequired = () => {
+      setCurrentCaregiver(null);
+      setIsPinModalOpen(true);
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+  }, []);
 
   const openPinModal = (targetId?: string) => {
     setTargetCaregiverId(targetId || null);
@@ -76,11 +94,19 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
       if (res && res.caregiver) {
         setCurrentCaregiver(res.caregiver);
         closePinModal();
+        // New session cookie: let SSE (paused on 401) reconnect, and lists refresh.
+        window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+        fetchCaregiversList();
         return { success: true };
       }
       return { success: false, error: "Authentication failed" };
     } catch (err: any) {
-      return { success: false, error: err.data?.error || err.message || "Invalid PIN" };
+      return {
+        success: false,
+        status: err?.status,
+        retryAfter: err?.retryAfter,
+        error: err.data?.error || err.message || "Invalid PIN",
+      };
     }
   };
 

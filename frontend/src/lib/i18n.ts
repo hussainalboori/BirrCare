@@ -1,5 +1,8 @@
 export type Locale = "ar" | "en";
 
+/** Cookie read server-side by the root layout to set <html dir/lang>. */
+export const LOCALE_COOKIE = "birrcare_lang";
+
 export const translations = {
   ar: {
     appName: "رعاية بر",

@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import { Tajawal, Inter } from "next/font/google";
 import "./globals.css";
 import { LanguageProvider } from "@/context/LanguageContext";
+import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { CaregiverProvider } from "@/context/CaregiverContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
@@ -35,20 +37,27 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // Pinch-zoom stays enabled (WCAG 1.4.4); iOS focus-zoom is avoided by >=16px form controls.
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
   themeColor: "#059669",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Resolve language server-side from the cookie so <html dir/lang> is correct in the
+  // first paint (no RTL→LTR flash, no hydration mismatch).
+  const cookieStore = await cookies();
+  const locale: Locale = cookieStore.get(LOCALE_COOKIE)?.value === "en" ? "en" : "ar";
+  const dir = locale === "ar" ? "rtl" : "ltr";
+
   return (
-    <html lang="ar" dir="rtl" className={`${tajawal.variable} ${inter.variable}`}>
-      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-20">
-        <LanguageProvider>
+    <html lang={locale} dir={dir} className={`${tajawal.variable} ${inter.variable}`}>
+      <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+env(safe-area-inset-bottom))]">
+        <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
             <SseToast />
             <PinPadModal />

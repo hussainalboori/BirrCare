@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
@@ -11,6 +11,8 @@ import { VitalsLog, AlertnessLevel, VitalKind } from "@/lib/types";
 import { ALERTNESS_METAS, classifyBloodPressure, classifyBloodSugar, BloodSugarTiming } from "@/lib/clinical";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { formatShortDate, formatTime } from "@/lib/datetime";
+import { Ltr } from "@/components/Ltr";
 import {
   Activity,
   Plus,
@@ -22,7 +24,6 @@ import {
   Filter,
   AlertTriangle,
   X,
-  ArrowRight,
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
@@ -36,6 +37,8 @@ export default function VitalsPage() {
   const [vitalsList, setVitalsList] = useState<VitalsLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Synchronous double-submit guard (vitals have no server-side uniqueness constraint).
+  const inFlightRef = useRef(false);
 
   // Modal & Selection State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,10 +47,12 @@ export default function VitalsPage() {
   // Filters
   const [filterMode, setFilterMode] = useState<"all" | "bp" | "sugar" | "alerts">("all");
 
-  // Form state
-  const [systolic, setSystolic] = useState<number>(120);
-  const [diastolic, setDiastolic] = useState<number>(80);
-  const [pulse, setPulse] = useState<number>(75);
+  // Form state — kept as strings so a field can be cleared while typing on mobile
+  // (Number("") === 0 used to snap the field to "0"). Start empty: a pre-filled
+  // "120/80" could be saved as a reading that was never actually measured.
+  const [systolic, setSystolic] = useState<string>("");
+  const [diastolic, setDiastolic] = useState<string>("");
+  const [pulse, setPulse] = useState<string>("");
   const [bloodSugar, setBloodSugar] = useState<string>("6.4");
   const [sugarTiming, setSugarTiming] = useState<BloodSugarTiming>("random");
   const [alertness, setAlertness] = useState<AlertnessLevel>("alert");
@@ -71,6 +76,9 @@ export default function VitalsPage() {
   // Live SSE listener
   const { status: connectionStatus } = useLiveSync({
     onVitalLogged: () => {
+      loadVitals();
+    },
+    onResync: () => {
       loadVitals();
     },
   });
@@ -106,7 +114,23 @@ export default function VitalsPage() {
       return;
     }
 
+    if (inFlightRef.current) return;
     const kind = selectedKind || "full";
+
+    if (kind === "bp" || kind === "full") {
+      const sys = Number(systolic), dia = Number(diastolic), pul = Number(pulse);
+      const inRange = (v: number, lo: number, hi: number) => Number.isInteger(v) && v >= lo && v <= hi;
+      if (!inRange(sys, 50, 300) || !inRange(dia, 30, 200) || !inRange(pul, 30, 220) || dia >= sys) {
+        alert(
+          locale === "ar"
+            ? "يرجى التحقق من قيم الضغط والنبض (الانقباضي 50–300، الانبساطي 30–200 وأقل من الانقباضي، النبض 30–220)"
+            : "Please check BP/pulse values (systolic 50–300, diastolic 30–200 and below systolic, pulse 30–220)"
+        );
+        return;
+      }
+    }
+
+    inFlightRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -128,8 +152,7 @@ export default function VitalsPage() {
       } else if (kind === "sugar") {
         if (!sugarVal || isNaN(sugarVal)) {
           alert(locale === "ar" ? "يرجى إدخال قيمة صحيحة لسكر الدم" : "Please enter a valid blood sugar reading");
-          setIsSubmitting(false);
-          return;
+          return; // finally{} releases the submit guard
         }
         payload.blood_sugar = sugarVal;
       } else if (kind === "alertness") {
@@ -138,7 +161,7 @@ export default function VitalsPage() {
         payload.systolic = Number(systolic);
         payload.diastolic = Number(diastolic);
         payload.pulse = Number(pulse);
-        payload.blood_sugar = sugarVal;
+        payload.blood_sugar = sugarVal && !isNaN(sugarVal) ? sugarVal : undefined;
         payload.alertness_level = alertness;
       }
 
@@ -148,14 +171,21 @@ export default function VitalsPage() {
       });
 
       handleCloseModal();
+      setSystolic("");
+      setDiastolic("");
+      setPulse("");
       loadVitals();
     } catch (err: any) {
       alert(err.message || "Failed to record vitals");
     } finally {
+      inFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
 
+  const numericSystolic = systolic === "" ? NaN : Number(systolic);
+  const numericDiastolic = diastolic === "" ? NaN : Number(diastolic);
+  const hasValidBP = numericSystolic > 0 && numericDiastolic > 0;
   const numericSugar = parseFloat(bloodSugar);
   const hasValidSugar = !isNaN(numericSugar) && numericSugar > 0;
 
@@ -175,7 +205,6 @@ export default function VitalsPage() {
     return true;
   });
 
-  const ArrowIcon = locale === "ar" ? ArrowLeft : ArrowRight;
 
   return (
     <div className="min-h-screen">
@@ -183,7 +212,7 @@ export default function VitalsPage() {
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
@@ -200,8 +229,9 @@ export default function VitalsPage() {
 
           {!isViewer(currentCaregiver?.role) && (
             <button
+              type="button"
               onClick={handleOpenModal}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
+              className="flex min-h-12 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95"
             >
               <Plus className="h-4 w-4 stroke-[2.5]" />
               <span>{t.recordVitals}</span>
@@ -218,7 +248,9 @@ export default function VitalsPage() {
             onClick={handleCloseModal}
           >
             <div
-              className="relative w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-150"
+              role="dialog"
+              aria-modal="true"
+              className="relative w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden animate-in zoom-in-95 duration-150"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
@@ -228,10 +260,12 @@ export default function VitalsPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedKind(null)}
-                      className="rounded-xl border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      aria-label={locale === "ar" ? "العودة لاختيار نوع الفحص" : "Back to selection"}
+                      className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                       title={locale === "ar" ? "العودة لاختيار نوع الفحص" : "Back to selection"}
                     >
-                      <ArrowIcon className="h-4 w-4" />
+                      {/* "Back" points toward the start edge: left in LTR, right in RTL */}
+                      <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
                     </button>
                   ) : (
                     <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
@@ -262,8 +296,10 @@ export default function VitalsPage() {
                 </div>
 
                 <button
+                  type="button"
                   onClick={handleCloseModal}
-                  className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 transition-colors"
+                  aria-label={t.cancel}
+                  className="flex min-h-12 min-w-12 shrink-0 items-center justify-center rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 transition-colors"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -298,7 +334,7 @@ export default function VitalsPage() {
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className={`h-5 w-5 text-slate-400 group-hover:text-rose-600 group-hover:translate-x-0.5 transition-all ${locale === "ar" ? "rotate-180 group-hover:-translate-x-0.5" : ""}`} />
+                      <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 group-hover:text-rose-600 transition-all rtl:rotate-180 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5" />
                     </button>
 
                     {/* Option 2: Blood Sugar */}
@@ -325,7 +361,7 @@ export default function VitalsPage() {
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className={`h-5 w-5 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all ${locale === "ar" ? "rotate-180 group-hover:-translate-x-0.5" : ""}`} />
+                      <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 group-hover:text-blue-600 transition-all rtl:rotate-180 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5" />
                     </button>
 
                     {/* Option 3: Cognitive Alertness */}
@@ -352,7 +388,7 @@ export default function VitalsPage() {
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className={`h-5 w-5 text-slate-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all ${locale === "ar" ? "rotate-180 group-hover:-translate-x-0.5" : ""}`} />
+                      <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 group-hover:text-purple-600 transition-all rtl:rotate-180 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5" />
                     </button>
 
                     {/* Option 4: Full Checkup */}
@@ -379,7 +415,7 @@ export default function VitalsPage() {
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className={`h-5 w-5 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all ${locale === "ar" ? "rotate-180 group-hover:-translate-x-0.5" : ""}`} />
+                      <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 group-hover:text-emerald-600 transition-all rtl:rotate-180 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5" />
                     </button>
                   </div>
                 ) : (
@@ -393,10 +429,10 @@ export default function VitalsPage() {
                       <button
                         type="button"
                         onClick={() => setSelectedKind(null)}
-                        className="text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 flex items-center gap-1"
+                        className="min-h-12 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 flex items-center gap-1"
                       >
                         <span>{t.changeVitalType}</span>
-                        <ArrowIcon className="h-3 w-3" />
+                        <ArrowLeft className="h-3 w-3 rtl:rotate-180" />
                       </button>
                     </div>
 
@@ -415,11 +451,17 @@ export default function VitalsPage() {
                             </span>
                             <input
                               type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              enterKeyHint="next"
+                              dir="ltr"
                               min="50"
                               max="300"
                               required
+                              placeholder="120"
+                              aria-label={t.systolic}
                               value={systolic}
-                              onChange={(e) => setSystolic(Number(e.target.value))}
+                              onChange={(e) => setSystolic(e.target.value)}
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-rose-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                             />
                           </div>
@@ -430,18 +472,26 @@ export default function VitalsPage() {
                             </span>
                             <input
                               type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              enterKeyHint="next"
+                              dir="ltr"
                               min="30"
                               max="200"
                               required
+                              placeholder="80"
+                              aria-label={t.diastolic}
                               value={diastolic}
-                              onChange={(e) => setDiastolic(Number(e.target.value))}
+                              onChange={(e) => setDiastolic(e.target.value)}
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-rose-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                             />
                           </div>
                         </div>
 
                         {/* Live BP Classification */}
-                        <BloodPressureBadge systolic={systolic} diastolic={diastolic} showDetails={true} />
+                        {hasValidBP && (
+                          <BloodPressureBadge systolic={numericSystolic} diastolic={numericDiastolic} showDetails={true} />
+                        )}
                       </div>
                     )}
 
@@ -452,16 +502,21 @@ export default function VitalsPage() {
                           <Activity className="h-3.5 w-3.5 text-emerald-500" />
                           <span>{locale === "ar" ? "معدل النبض (Pulse)" : "Heart Rate (Pulse)"}</span>
                         </label>
-                        <div className="flex items-center gap-3">
-                          <div className="relative flex-1">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="relative min-w-32 flex-1">
                             <input
                               type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              enterKeyHint="done"
                               min="30"
                               max="220"
                               required
+                              placeholder="75"
+                              aria-label={t.pulse}
                               value={pulse}
-                              onChange={(e) => setPulse(Number(e.target.value))}
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
+                              onChange={(e) => setPulse(e.target.value)}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pe-12 text-base font-bold text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                             />
                             <span className="absolute end-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
                               bpm
@@ -472,8 +527,8 @@ export default function VitalsPage() {
                               <button
                                 type="button"
                                 key={pVal}
-                                onClick={() => setPulse(pVal)}
-                                className="px-2 py-2 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-emerald-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                                onClick={() => setPulse(String(pVal))}
+                                className="min-h-12 min-w-12 px-2 py-2 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-emerald-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
                               >
                                 {pVal}
                               </button>
@@ -486,14 +541,14 @@ export default function VitalsPage() {
                     {/* BLOOD SUGAR INPUTS */}
                     {(selectedKind === "sugar" || selectedKind === "full") && (
                       <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 dark:border-blue-950/60 dark:bg-blue-950/20">
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                           <label className="text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                             <Droplet className="h-3.5 w-3.5 text-blue-600 fill-blue-600" />
                             <span>{locale === "ar" ? "فحص سكر الدم (Glucose)" : "Blood Glucose (Sugar)"}</span>
                           </label>
 
                           {/* Timing selector */}
-                          <div className="flex items-center gap-1 text-[10px]">
+                          <div className="flex items-center gap-1 text-xs">
                             {(["random", "fasting", "post_meal"] as BloodSugarTiming[]).map((tSlot) => {
                               const isSelected = sugarTiming === tSlot;
                               const labels = {
@@ -506,7 +561,8 @@ export default function VitalsPage() {
                                   type="button"
                                   key={tSlot}
                                   onClick={() => setSugarTiming(tSlot)}
-                                  className={`px-2 py-0.5 rounded-md font-bold transition-all ${
+                                  aria-pressed={isSelected}
+                                  className={`min-h-12 px-2.5 py-1 rounded-md font-bold transition-all ${
                                     isSelected
                                       ? "bg-blue-600 text-white shadow-2xs"
                                       : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300"
@@ -519,10 +575,13 @@ export default function VitalsPage() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="relative flex-1">
+                        <div className="flex flex-wrap items-center gap-3 mb-3">
+                          <div className="relative min-w-32 flex-1">
                             <input
                               type="number"
+                              inputMode="decimal"
+                              enterKeyHint="done"
+                              aria-label={t.bloodSugar}
                               step="0.1"
                               min="1.0"
                               max="35.0"
@@ -530,7 +589,7 @@ export default function VitalsPage() {
                               placeholder="e.g. 6.4"
                               value={bloodSugar}
                               onChange={(e) => setBloodSugar(e.target.value)}
-                              className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
+                              className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 pe-16 text-lg font-bold text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                             />
                             <span className="absolute end-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
                               mmol/L
@@ -538,13 +597,13 @@ export default function VitalsPage() {
                           </div>
 
                           {/* Quick Presets */}
-                          <div className="flex items-center gap-1">
+                          <div className="flex flex-wrap items-center gap-1">
                             {["5.5", "6.8", "7.5", "9.0", "11.0"].map((preset) => (
                               <button
                                 type="button"
                                 key={preset}
                                 onClick={() => setBloodSugar(preset)}
-                                className="px-2 py-2 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                                className="min-h-12 min-w-12 px-2 py-2 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
                               >
                                 {preset}
                               </button>
@@ -576,7 +635,8 @@ export default function VitalsPage() {
                                 type="button"
                                 key={level}
                                 onClick={() => setAlertness(level)}
-                                className={`flex flex-col text-start p-2.5 rounded-xl border transition-all ${
+                                aria-pressed={isSelected}
+                                className={`flex min-h-12 flex-col text-start p-2.5 rounded-xl border transition-all ${
                                   isSelected
                                     ? "border-purple-600 bg-purple-100/70 text-purple-900 dark:bg-purple-950/70 dark:text-purple-200 ring-2 ring-purple-500/20"
                                     : "border-slate-200 hover:border-slate-300 bg-white dark:bg-slate-800 dark:border-slate-700"
@@ -621,7 +681,7 @@ export default function VitalsPage() {
                             ? "أي ملاحظات إضافية..."
                             : "Any clinical observations..."
                         }
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
                       />
                     </div>
 
@@ -630,14 +690,15 @@ export default function VitalsPage() {
                       <button
                         type="button"
                         onClick={handleCloseModal}
-                        className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                        className="min-h-12 rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
                       >
                         {t.cancel}
                       </button>
                       <button
                         type="submit"
                         disabled={isSubmitting}
-                        className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-5 py-2.5 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                        aria-busy={isSubmitting}
+                        className="flex min-h-12 items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-5 py-2.5 text-xs font-bold text-white shadow-emerald-500/20 shadow-sm transition-all active:scale-95 disabled:opacity-50"
                       >
                         {isSubmitting ? (
                           <>
@@ -666,8 +727,10 @@ export default function VitalsPage() {
           <div className="flex items-center gap-1.5 flex-wrap">
             <Filter className="h-3.5 w-3.5 text-slate-400" />
             <button
+              type="button"
               onClick={() => setFilterMode("all")}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+              aria-pressed={filterMode === "all"}
+              className={`min-h-12 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
                 filterMode === "all"
                   ? "bg-slate-900 text-white dark:bg-emerald-600"
                   : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
@@ -676,8 +739,10 @@ export default function VitalsPage() {
               {locale === "ar" ? "جميع القراءات" : "All Readings"}
             </button>
             <button
+              type="button"
               onClick={() => setFilterMode("bp")}
-              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+              aria-pressed={filterMode === "bp"}
+              className={`flex items-center gap-1 min-h-12 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
                 filterMode === "bp"
                   ? "bg-rose-600 text-white"
                   : "bg-white text-rose-700 border border-rose-200 hover:bg-rose-50 dark:bg-slate-800 dark:border-rose-900 dark:text-rose-300"
@@ -687,8 +752,10 @@ export default function VitalsPage() {
               {locale === "ar" ? "ضغط ونبض" : "BP & Pulse"}
             </button>
             <button
+              type="button"
               onClick={() => setFilterMode("sugar")}
-              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+              aria-pressed={filterMode === "sugar"}
+              className={`flex items-center gap-1 min-h-12 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
                 filterMode === "sugar"
                   ? "bg-blue-600 text-white"
                   : "bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-blue-900 dark:text-blue-300"
@@ -698,8 +765,10 @@ export default function VitalsPage() {
               {locale === "ar" ? "سكر الدم" : "Sugar Only"}
             </button>
             <button
+              type="button"
               onClick={() => setFilterMode("alerts")}
-              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+              aria-pressed={filterMode === "alerts"}
+              className={`flex items-center gap-1 min-h-12 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
                 filterMode === "alerts"
                   ? "bg-amber-600 text-white"
                   : "bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 dark:bg-slate-800 dark:border-amber-900 dark:text-amber-300"
@@ -738,17 +807,12 @@ export default function VitalsPage() {
           ) : (
             filteredVitals.map((vital) => {
               const alertnessMeta = ALERTNESS_METAS[vital.alertness_level];
-              const dateStr = new Date(vital.recorded_at).toLocaleDateString(
-                locale === "ar" ? "ar-SA" : "en-US",
-                { month: "short", day: "numeric" }
-              );
-              const timeStr = new Date(vital.recorded_at).toLocaleTimeString(
-                locale === "ar" ? "ar-SA" : "en-US",
-                { hour: "numeric", minute: "2-digit", hour12: true }
-              );
+              const dateStr = formatShortDate(vital.recorded_at, locale);
+              const timeStr = formatTime(vital.recorded_at, locale);
 
-              const hasBP = vital.systolic !== undefined && vital.diastolic !== undefined;
-              const hasSugar = vital.blood_sugar !== undefined && vital.blood_sugar > 0;
+              // `!= null` also rejects JSON null (not just a missing key)
+              const hasBP = vital.systolic != null && vital.diastolic != null;
+              const hasSugar = vital.blood_sugar != null && vital.blood_sugar > 0;
               const hasAlertness = vital.vital_type === "alertness" || (!hasBP && !hasSugar);
 
               // Badge indicator based on vital type
@@ -788,7 +852,7 @@ export default function VitalsPage() {
 
                     <div className="flex items-center gap-1 text-[11px] text-slate-400">
                       <Clock className="h-3 w-3" />
-                      <span>{dateStr} • {timeStr}</span>
+                      <Ltr>{dateStr} • {timeStr}</Ltr>
                     </div>
                   </div>
 
@@ -809,10 +873,10 @@ export default function VitalsPage() {
 
                   {/* 3. Bottom Row: Pulse, Alertness, and Caregiver Attribution */}
                   <div className="flex flex-wrap items-center gap-2 text-xs pt-2.5 border-t border-slate-100 dark:border-slate-800">
-                    {vital.pulse !== undefined && (
+                    {vital.pulse != null && (
                       <span className="flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
                         <Heart className="h-3.5 w-3.5 text-rose-500" />
-                        <span>{vital.pulse} bpm</span>
+                        <Ltr>{vital.pulse} bpm</Ltr>
                       </span>
                     )}
 
