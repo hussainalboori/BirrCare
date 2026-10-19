@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Birrcare (رعاية بر) — Production Deployment & Self-Healing Script
+# Usage: ./scripts/deploy.sh
+
+echo "=========================================================="
+echo " Birrcare (رعاية بر) — Deploying Updates"
+echo " Date: $(date -u +"%Y-%m-%d %H:%M:%SZ")"
+echo "=========================================================="
+
+# Ensure script is run from project root
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${PROJECT_ROOT}"
+
+# 1. Automated Safety Backup of SQLite Database
+if [ -f "data/birrcare.db" ]; then
+  BACKUP_DIR="data/backups"
+  mkdir -p "${BACKUP_DIR}"
+  BACKUP_FILE="${BACKUP_DIR}/birrcare_backup_$(date +%Y%m%d_%H%M%S).db"
+  echo "--> Creating safety database snapshot at ${BACKUP_FILE}..."
+  
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 data/birrcare.db ".backup '${BACKUP_FILE}'"
+  else
+    cp data/birrcare.db "${BACKUP_FILE}"
+  fi
+  echo "    Backup created successfully."
+  
+  # Retain only the last 10 backups to preserve disk space
+  ls -tp "${BACKUP_DIR}"/birrcare_backup_*.db 2>/dev/null | grep -v '/$' | tail -n +11 | xargs -I {} rm -- {} 2>/dev/null || true
+fi
+
+# 2. Build or Pull latest Docker containers
+echo "--> Rebuilding and starting Docker services..."
+docker compose build --pull
+docker compose up -d --remove-orphans
+
+# 3. Health check verification
+echo "--> Verifying backend and frontend health..."
+MAX_ATTEMPTS=20
+ATTEMPT=0
+BACKEND_HEALTHY=false
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+  if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null 2>&1; then
+    BACKEND_HEALTHY=true
+    break
+  fi
+  ATTEMPT=$((ATTEMPT + 1))
+  sleep 1
+done
+
+if [ "$BACKEND_HEALTHY" = true ]; then
+  echo "    ✔ Backend is healthy on http://127.0.0.1:8080"
+else
+  echo "    ✖ Backend health check failed after ${MAX_ATTEMPTS}s"
+  docker compose logs --tail=30 birrcare-backend
+  exit 1
+fi
+
+ATTEMPT=0
+FRONTEND_HEALTHY=false
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+  if curl -sf http://127.0.0.1:3000 >/dev/null 2>&1; then
+    FRONTEND_HEALTHY=true
+    break
+  fi
+  ATTEMPT=$((ATTEMPT + 1))
+  sleep 1
+done
+
+if [ "$FRONTEND_HEALTHY" = true ]; then
+  echo "    ✔ Frontend is healthy on http://127.0.0.1:3000"
+else
+  echo "    ✖ Frontend health check failed after ${MAX_ATTEMPTS}s"
+  docker compose logs --tail=30 birrcare-frontend
+  exit 1
+fi
+
+echo "=========================================================="
+echo " ✔ Birrcare successfully deployed and verified!"
+echo "=========================================================="

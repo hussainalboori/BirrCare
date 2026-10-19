@@ -80,13 +80,16 @@ func main() {
 	r.Use(auth.Middleware(database))
 
 	// Health check
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"healthy","service":"birrcare-backend"}`))
-	})
+	}
+	r.Get("/health", healthHandler)
 
 	// API v1 Routes
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Get("/health", healthHandler)
+
 		// Real-time Event Stream
 		api.Get("/events/stream", broker.ServeHTTP)
 
