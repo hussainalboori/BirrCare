@@ -34,35 +34,35 @@ const PRESET_OPTIONS: {
   id: ShiftPreset;
   titleKey: "preset24h" | "preset4h" | "preset8h" | "preset12h";
   descKey: "preset24hDesc" | "preset4hDesc" | "preset8hDesc" | "preset12hDesc";
-  badge: string;
+  badge: { ar: string; en: string };
   color: string;
 }[] = [
   {
     id: "24h",
     titleKey: "preset24h",
     descKey: "preset24hDesc",
-    badge: "1 Shift • 24h",
+    badge: { ar: "وردية واحدة • 24 ساعة", en: "1 shift • 24h" },
     color: "border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20",
   },
   {
     id: "4h",
     titleKey: "preset4h",
     descKey: "preset4hDesc",
-    badge: "6 Shifts • 4h each",
+    badge: { ar: "6 ورديات • 4 ساعات لكل منها", en: "6 shifts • 4h each" },
     color: "border-blue-500 bg-blue-50/50 dark:bg-blue-950/20",
   },
   {
     id: "8h",
     titleKey: "preset8h",
     descKey: "preset8hDesc",
-    badge: "3 Shifts • 8h each",
+    badge: { ar: "3 ورديات • 8 ساعات لكل منها", en: "3 shifts • 8h each" },
     color: "border-purple-500 bg-purple-50/50 dark:bg-purple-950/20",
   },
   {
     id: "12h",
     titleKey: "preset12h",
     descKey: "preset12hDesc",
-    badge: "2 Shifts • 12h each",
+    badge: { ar: "ورديتان • 12 ساعة لكل منها", en: "2 shifts • 12h each" },
     color: "border-amber-500 bg-amber-50/50 dark:bg-amber-950/20",
   },
 ];
@@ -411,19 +411,19 @@ export function ShiftManagementModal({
                           className={`relative flex flex-col justify-between p-4 rounded-2xl border-2 transition-all ${
                             isCurrentPreset
                               ? "border-purple-600 bg-purple-50/40 dark:bg-purple-950/30 shadow-md ring-2 ring-purple-500/20"
-                              : "border-slate-200 hover:border-purple-300 dark:border-slate-700 bg-white dark:bg-slate-850"
+                              : "border-slate-200 hover:border-purple-300 dark:border-slate-700 bg-white dark:bg-slate-800/60"
                           }`}
                         >
                           <div>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                              <span className="text-sm font-extrabold text-slate-900 dark:text-white">
                                 {t[p.titleKey]}
                               </span>
-                              <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                                {p.badge}
-                              </span>
+                              <bdi className="shrink-0 rounded-md bg-slate-100 dark:bg-slate-700 px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:text-slate-200">
+                                {p.badge[locale]}
+                              </bdi>
                             </div>
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
                               {t[p.descKey]}
                             </p>
                           </div>
@@ -439,7 +439,7 @@ export function ShiftManagementModal({
                                 type="button"
                                 disabled={saving}
                                 onClick={() => handleApplyPreset(p.id)}
-                                className="w-full flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 px-3 py-2 text-xs font-bold text-white transition-all active:scale-95 disabled:opacity-50"
+                                className="w-full flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 px-3 py-2 text-xs font-bold text-white transition-all active:scale-95 disabled:opacity-50"
                               >
                                 {saving ? (
                                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -659,7 +659,7 @@ export function ShiftManagementModal({
 
                     {/* Live On-Duty Badge */}
                     {dutyStatus && (
-                      <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-850 shadow-sm">
+                      <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-700 shadow-sm">
                         <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                         <div>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
