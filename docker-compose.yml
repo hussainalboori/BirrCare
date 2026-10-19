@@ -1,0 +1,29 @@
+services:
+  birrcare-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: birrcare_backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - PORT=8080
+      - DB_PATH=/data/birrcare.db
+      - APP_ENV=production
+    volumes:
+      - ./data:/data
+
+  birrcare-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: birrcare_frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://127.0.0.1:8080/api/v1
+      - NODE_ENV=production
+    depends_on:
+      - birrcare-backend
