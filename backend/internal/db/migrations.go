@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -78,7 +79,7 @@ CREATE TABLE IF NOT EXISTS handover_notes (
     id TEXT PRIMARY KEY,
     caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
     created_at TEXT DEFAULT (datetime('now')),
-    shift_type TEXT CHECK (shift_type IN ('morning', 'evening', 'night')),
+    shift_type TEXT NOT NULL DEFAULT 'morning',
     summary TEXT NOT NULL,
     urgent_flag INTEGER DEFAULT 0
 );
@@ -101,9 +102,35 @@ CREATE TABLE IF NOT EXISTS app_settings (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- 8. Caregiver Work Shifts (Configured by Super Admin)
+CREATE TABLE IF NOT EXISTS shifts (
+    id TEXT PRIMARY KEY,
+    name_ar TEXT NOT NULL,
+    name_en TEXT NOT NULL,
+    start_time TEXT NOT NULL, -- '08:00'
+    end_time TEXT NOT NULL,   -- '08:00' or '12:00'
+    duration_hours REAL NOT NULL DEFAULT 24.0,
+    color TEXT DEFAULT '#2563eb',
+    display_order INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 9. Caregiver Shift Assignments
+CREATE TABLE IF NOT EXISTS shift_assignments (
+    id TEXT PRIMARY KEY,
+    shift_id TEXT NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+    date TEXT NOT NULL, -- 'YYYY-MM-DD'
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    CONSTRAINT uq_shift_date UNIQUE (shift_id, date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_handover_date ON handover_notes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shift_assignments_date ON shift_assignments(date);
 `
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.
@@ -228,12 +255,43 @@ func Migrate(database *sql.DB) error {
 		return err
 	}
 
+	// 6. Safe migration for handover_notes to remove old restrictive CHECK constraint on shift_type
+	var handoverSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='handover_notes'").Scan(&handoverSQL)
+	if strings.Contains(handoverSQL, "shift_type IN") {
+		log.Println("Migrating handover_notes table: removing shift_type CHECK constraint...")
+		migrationSQL := `
+			PRAGMA foreign_keys = OFF;
+			CREATE TABLE IF NOT EXISTS handover_notes_v2 (
+				id TEXT PRIMARY KEY,
+				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+				created_at TEXT DEFAULT (datetime('now')),
+				shift_type TEXT NOT NULL DEFAULT 'morning',
+				summary TEXT NOT NULL,
+				urgent_flag INTEGER DEFAULT 0
+			);
+			INSERT OR IGNORE INTO handover_notes_v2 (id, caregiver_id, created_at, shift_type, summary, urgent_flag)
+			SELECT id, caregiver_id, created_at, shift_type, summary, urgent_flag FROM handover_notes;
+			DROP TABLE handover_notes;
+			ALTER TABLE handover_notes_v2 RENAME TO handover_notes;
+			CREATE INDEX IF NOT EXISTS idx_handover_date ON handover_notes(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`
+		if _, err := database.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed migrating handover_notes table: %w", err)
+		}
+	}
+
 	if err := seedCaregivers(database); err != nil {
 		return fmt.Errorf("failed seeding caregivers: %w", err)
 	}
 
 	if err := seedMedications(database); err != nil {
 		return fmt.Errorf("failed seeding medications: %w", err)
+	}
+
+	if err := seedShifts(database); err != nil {
+		return fmt.Errorf("failed seeding shifts: %w", err)
 	}
 
 	log.Println("Database schema migrated and verified successfully.")
@@ -394,3 +452,38 @@ func verifyDoseUniqueConstraint(database *sql.DB) error {
 	}
 	return fmt.Errorf("SAFETY: medication_logs is missing UNIQUE(medication_id, scheduled_date, slot) - double-dose lock disabled")
 }
+
+func seedShifts(database *sql.DB) error {
+	var count int
+	err := database.QueryRow("SELECT COUNT(*) FROM shifts").Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	// Default: 24-Hour Shift (single shift per day covering 24 hours)
+	_, err = database.Exec(`
+		INSERT INTO shifts (id, name_ar, name_en, start_time, end_time, duration_hours, color, display_order, is_active)
+		VALUES ('shift_24h', 'وردية 24 ساعة (يوم كامل)', '24-Hour Full Day Shift', '08:00', '08:00', 24.0, '#059669', 1, 1)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Seed default today's assignment to first super_admin or caregiver
+	var cgID string
+	_ = database.QueryRow("SELECT id FROM caregivers WHERE role = 'super_admin' OR role = 'caregiver' ORDER BY created_at ASC LIMIT 1").Scan(&cgID)
+	if cgID != "" {
+		todayStr := time.Now().Format("2006-01-02")
+		_, _ = database.Exec(`
+			INSERT OR IGNORE INTO shift_assignments (id, shift_id, caregiver_id, date, notes)
+			VALUES ('assign_default', 'shift_24h', ?, ?, 'Initial shift assignment')
+		`, cgID, todayStr)
+	}
+
+	log.Println("Seeded default 24-hour caregiver shift configuration.")
+	return nil
+}
+

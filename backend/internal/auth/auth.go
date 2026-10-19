@@ -314,3 +314,9 @@ func CanManageMedications(c *models.Caregiver) bool {
 func CanTakeActions(c *models.Caregiver) bool {
 	return c != nil && (c.Role == models.RoleSuperAdmin || c.Role == models.RoleAdmin || c.Role == models.RoleCaregiver)
 }
+
+// CanManageShifts checks if caregiver has super_admin privileges to configure work shift slots and assignments.
+func CanManageShifts(c *models.Caregiver) bool {
+	return c != nil && c.Role == models.RoleSuperAdmin
+}
+

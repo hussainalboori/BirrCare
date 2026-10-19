@@ -5,7 +5,7 @@ import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
-import { HandoverNote, ShiftType } from "@/lib/types";
+import { HandoverNote, ShiftType, Shift } from "@/lib/types";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { formatShortDate, formatTime } from "@/lib/datetime";
@@ -17,6 +17,7 @@ export default function HandoversPage() {
   const { currentCaregiver, openPinModal } = useCaregiver();
 
   const [notesList, setNotesList] = useState<HandoverNote[]>([]);
+  const [activeShifts, setActiveShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inFlightRef = useRef(false); // synchronous double-submit guard
@@ -29,8 +30,21 @@ export default function HandoversPage() {
 
   const loadHandovers = useCallback(async () => {
     try {
-      const data = await fetchApi<HandoverNote[]>("/handovers?limit=25");
-      setNotesList(data || []);
+      const [notesData, shiftsData] = await Promise.all([
+        fetchApi<HandoverNote[]>("/handovers?limit=25"),
+        fetchApi<Shift[]>("/api/v1/shifts"),
+      ]);
+      setNotesList(notesData || []);
+      const validShifts = shiftsData || [];
+      setActiveShifts(validShifts);
+      if (validShifts.length > 0) {
+        setShiftType((prev) => {
+          if (!validShifts.some((s) => s.id === prev)) {
+            return validShifts[0].id;
+          }
+          return prev;
+        });
+      }
     } catch (err) {
       console.warn("Failed fetching handovers:", err);
     } finally {
@@ -45,6 +59,9 @@ export default function HandoversPage() {
   // Live SSE listener
   const { status: connectionStatus } = useLiveSync({
     onNoteAdded: () => {
+      loadHandovers();
+    },
+    onShiftUpdated: () => {
       loadHandovers();
     },
     onResync: () => {
@@ -140,22 +157,41 @@ export default function HandoversPage() {
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
                 {t.shiftType}
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {(["morning", "evening", "night"] as ShiftType[]).map((st) => (
-                  <button
-                    type="button"
-                    key={st}
-                    onClick={() => setShiftType(st)}
-                    aria-pressed={shiftType === st}
-                    className={`min-h-12 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                      shiftType === st
-                        ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 ring-2 ring-emerald-500/20"
-                        : "border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:text-slate-400"
-                    }`}
-                  >
-                    {t.shifts[st]}
-                  </button>
-                ))}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {activeShifts.length > 0
+                  ? activeShifts.map((s) => (
+                      <button
+                        type="button"
+                        key={s.id}
+                        onClick={() => setShiftType(s.id)}
+                        aria-pressed={shiftType === s.id}
+                        className={`min-h-12 py-2 px-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 ${
+                          shiftType === s.id
+                            ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 ring-2 ring-emerald-500/20"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:text-slate-400"
+                        }`}
+                      >
+                        <span>{locale === "ar" ? s.name_ar : s.name_en}</span>
+                        <span className="text-[10px] opacity-75 font-mono">
+                          {s.start_time} - {s.end_time}
+                        </span>
+                      </button>
+                    ))
+                  : (["morning", "evening", "night"] as const).map((st) => (
+                      <button
+                        type="button"
+                        key={st}
+                        onClick={() => setShiftType(st)}
+                        aria-pressed={shiftType === st}
+                        className={`min-h-12 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                          shiftType === st
+                            ? "border-emerald-600 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 ring-2 ring-emerald-500/20"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:text-slate-400"
+                        }`}
+                      >
+                        {t.shifts[st]}
+                      </button>
+                    ))}
               </div>
             </div>
 
@@ -262,9 +298,24 @@ export default function HandoversPage() {
                       <span className="text-xs font-bold text-slate-900 dark:text-white">
                         {note.caregiver_name}
                       </span>
-                      <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-400">
-                        {t.shifts[note.shift_type] || note.shift_type}
-                      </span>
+                      {(() => {
+                        const matchedShift = activeShifts.find((s) => s.id === note.shift_type);
+                        const label = matchedShift
+                          ? `${locale === "ar" ? matchedShift.name_ar : matchedShift.name_en} (${matchedShift.start_time} - ${matchedShift.end_time})`
+                          : (t.shifts as Record<string, string>)[note.shift_type] || note.shift_type;
+                        return (
+                          <span
+                            className="rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            style={
+                              matchedShift?.color
+                                ? { borderInlineStart: `3px solid ${matchedShift.color}` }
+                                : undefined
+                            }
+                          >
+                            {label}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <div className="flex items-center gap-1 text-[11px] text-slate-400">

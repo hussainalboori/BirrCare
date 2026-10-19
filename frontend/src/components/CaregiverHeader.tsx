@@ -4,11 +4,12 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
 import { ScheduleManagementModal } from "./ScheduleManagementModal";
+import { ShiftManagementModal } from "./ShiftManagementModal";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -22,6 +23,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
@@ -112,6 +114,20 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               </button>
             )}
 
+            {/* Super Admin: Shift Management (24h / 4h shifts) */}
+            {isSuperAdmin(role) && (
+              <button
+                type="button"
+                onClick={() => setIsShiftModalOpen(true)}
+                aria-label={t.manageShifts}
+                className="flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-xl bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 text-xs font-bold text-blue-700 transition-colors active:scale-95 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60"
+                title={locale === "ar" ? "إدارة وتحديد فترات الورديات والمناوبين" : "Manage Work Shifts & Duty Schedule"}
+              >
+                <Clock className="h-4 w-4" />
+                <span className="hidden md:inline">{t.manageShifts}</span>
+              </button>
+            )}
+
             {/* Admin or Super Admin: Schedule Management */}
             {canManageMedications(role) && (
               <button
@@ -189,6 +205,12 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <MedicationCatalogModal
         isOpen={isMedModalOpen}
         onClose={() => setIsMedModalOpen(false)}
+        onUpdated={onMedicationsUpdated}
+      />
+
+      <ShiftManagementModal
+        isOpen={isShiftModalOpen}
+        onClose={() => setIsShiftModalOpen(false)}
         onUpdated={onMedicationsUpdated}
       />
     </>

@@ -69,6 +69,7 @@ func NewRouter(o Options) http.Handler {
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker}
 	handoverHandler := &handlers.HandoverHandler{DB: o.DB, Broker: o.Broker}
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
+	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
 
 	r := chi.NewRouter()
 
@@ -145,6 +146,17 @@ func NewRouter(o Options) http.Handler {
 
 				// Doctor Consultation Summary
 				api.Get("/export/summary", exportHandler.ExportDoctorSummary)
+
+				// Caregiver Work Shifts & Duty Management (Super Admin controls, all can read)
+				api.Get("/shifts", shiftsHandler.ListShifts)
+				api.Post("/shifts", shiftsHandler.CreateShift)
+				api.Put("/shifts/{id}", shiftsHandler.UpdateShift)
+				api.Delete("/shifts/{id}", shiftsHandler.DeleteShift)
+				api.Post("/shifts/presets", shiftsHandler.ApplyPreset)
+				api.Get("/shifts/assignments", shiftsHandler.ListAssignments)
+				api.Post("/shifts/assignments", shiftsHandler.AssignShift)
+				api.Delete("/shifts/assignments/{id}", shiftsHandler.DeleteAssignment)
+				api.Get("/shifts/current-duty", shiftsHandler.GetCurrentDuty)
 			})
 		})
 	})

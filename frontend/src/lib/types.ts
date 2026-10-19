@@ -1,7 +1,48 @@
 export type AlertnessLevel = "alert" | "confused" | "restless" | "drowsy";
 export type BPStatus = "NORMAL" | "ELEVATED" | "STAGE_2" | "CRISIS";
 export type BloodSugarStatus = "LOW" | "NORMAL" | "ELEVATED" | "VERY_HIGH";
-export type ShiftType = "morning" | "evening" | "night";
+export type ShiftType = "morning" | "evening" | "night" | string;
+
+export interface Shift {
+  id: string;
+  name_ar: string;
+  name_en: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
+  color: string;
+  display_order: number;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface ShiftAssignment {
+  id: string;
+  shift_id: string;
+  caregiver_id: string;
+  date: string;
+  notes?: string;
+  created_at?: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  caregiver_role?: CaregiverRole;
+  shift_name_ar?: string;
+  shift_name_en?: string;
+  shift_start_time?: string;
+  shift_end_time?: string;
+  shift_color?: string;
+}
+
+export interface CurrentDutyStatus {
+  active_shift?: Shift;
+  active_assignment?: ShiftAssignment;
+  active_caregiver?: Caregiver;
+  is_on_duty: boolean;
+  current_time: string;
+  date: string;
+}
+
+export type ShiftPreset = "24h" | "4h" | "8h" | "12h";
 
 export type CaregiverRole = "super_admin" | "admin" | "caregiver" | "viewer";
 
@@ -90,7 +131,7 @@ export interface HandoverNote {
 
 export interface SSEEvent<T = any> {
   id: string;
-  type: "MED_LOGGED" | "VITAL_LOGGED" | "NOTE_ADDED" | "CAREGIVER_SWITCHED";
+  type: "MED_LOGGED" | "VITAL_LOGGED" | "NOTE_ADDED" | "CAREGIVER_SWITCHED" | "SHIFT_UPDATED" | "DUTY_UPDATED" | string;
   timestamp: string;
   actor: {
     id: string;

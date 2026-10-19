@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"birrcare/backend/internal/audit"
@@ -86,11 +87,11 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	validShifts := map[string]bool{"morning": true, "evening": true, "night": true}
+	req.ShiftType = strings.TrimSpace(req.ShiftType)
 	if req.ShiftType == "" {
 		req.ShiftType = "morning"
-	} else if !validShifts[req.ShiftType] {
-		writeJSONError(w, http.StatusBadRequest, "INVALID_SHIFT", "shift_type must be morning, evening or night")
+	} else if len(req.ShiftType) > 64 {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_SHIFT", "shift_type is too long")
 		return
 	}
 	if len(req.Summary) > 10000 {

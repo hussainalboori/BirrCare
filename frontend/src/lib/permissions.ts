@@ -4,6 +4,10 @@ export function isSuperAdmin(role?: CaregiverRole | string): boolean {
   return role === "super_admin";
 }
 
+export function canManageShifts(role?: CaregiverRole | string): boolean {
+  return role === "super_admin";
+}
+
 export function canManageMedications(role?: CaregiverRole | string): boolean {
   return role === "super_admin" || role === "admin";
 }

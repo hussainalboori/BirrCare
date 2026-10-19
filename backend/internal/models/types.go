@@ -142,3 +142,46 @@ type ActorInfo struct {
 	Name        string `json:"name"`
 	AvatarColor string `json:"avatar_color"`
 }
+
+// Shift represents a caregiver work shift window (e.g. 24h shift, 4h shift, 8h shift, or custom).
+type Shift struct {
+	ID            string    `json:"id"`
+	NameAr        string    `json:"name_ar"`
+	NameEn        string    `json:"name_en"`
+	StartTime     string    `json:"start_time"` // "08:00"
+	EndTime       string    `json:"end_time"`   // "12:00" or "08:00"
+	DurationHours float64   `json:"duration_hours"`
+	Color         string    `json:"color"`
+	DisplayOrder  int       `json:"display_order"`
+	IsActive      bool      `json:"is_active"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// ShiftAssignment assigns a caregiver to a specific shift on a given date (YYYY-MM-DD).
+type ShiftAssignment struct {
+	ID             string    `json:"id"`
+	ShiftID        string    `json:"shift_id"`
+	CaregiverID    string    `json:"caregiver_id"`
+	Date           string    `json:"date"` // "YYYY-MM-DD"
+	Notes          string    `json:"notes,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	CaregiverName  string    `json:"caregiver_name,omitempty"`
+	AvatarColor    string    `json:"avatar_color,omitempty"`
+	CaregiverRole  string    `json:"caregiver_role,omitempty"`
+	ShiftNameAr    string    `json:"shift_name_ar,omitempty"`
+	ShiftNameEn    string    `json:"shift_name_en,omitempty"`
+	ShiftStartTime string    `json:"shift_start_time,omitempty"`
+	ShiftEndTime   string    `json:"shift_end_time,omitempty"`
+	ShiftColor     string    `json:"shift_color,omitempty"`
+}
+
+// CurrentDutyStatus conveys who is currently on duty right now.
+type CurrentDutyStatus struct {
+	ActiveShift      *Shift           `json:"active_shift,omitempty"`
+	ActiveAssignment *ShiftAssignment `json:"active_assignment,omitempty"`
+	ActiveCaregiver  *Caregiver       `json:"active_caregiver,omitempty"`
+	IsOnDuty         bool             `json:"is_on_duty"`
+	CurrentTime      string           `json:"current_time"`
+	Date             string           `json:"date"`
+}
+
