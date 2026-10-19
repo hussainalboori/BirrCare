@@ -1,0 +1,10 @@
+# User unit: install to ~/.config/systemd/user/ (see scripts/auto-deploy.sh)
+[Unit]
+Description=Birrcare pull-based deploy (fetch main, deploy if CI passed)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/birrcare/scripts/auto-deploy.sh
+TimeoutStartSec=30min

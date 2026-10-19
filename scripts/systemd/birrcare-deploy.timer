@@ -1,0 +1,11 @@
+# User unit: install to ~/.config/systemd/user/ (see scripts/auto-deploy.sh)
+[Unit]
+Description=Check for Birrcare updates every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

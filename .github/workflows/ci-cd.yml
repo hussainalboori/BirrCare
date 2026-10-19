@@ -183,33 +183,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # -------------------------------------------------------------
-  # Job 5: Deploy on the self-hosted runner (the BirrCare host)
-  # -------------------------------------------------------------
-  # Deploys from a persistent clone outside the runner workspace: actions/checkout
-  # cleans its workspace on every run, which would wipe data/ (the SQLite DB) and .env.
-  # `git reset --hard` leaves git-ignored files (data/, .env) untouched.
-  deploy:
-    name: Deploy to BirrCare host
-    runs-on: self-hosted
-    needs: [docker-verify]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    concurrency:
-      group: production-deploy
-      cancel-in-progress: false
-    steps:
-      - name: Sync ~/birrcare to this commit
-        run: |
-          DEPLOY_DIR="$HOME/birrcare"
-          [ -d "$DEPLOY_DIR/.git" ] || git clone "https://github.com/${GITHUB_REPOSITORY}.git" "$DEPLOY_DIR"
-          cd "$DEPLOY_DIR"
-          git fetch --prune origin
-          git reset --hard "$GITHUB_SHA"
-          [ -f .env ] || echo "::warning::No .env in $DEPLOY_DIR - copy .env.example to .env and set APP_TIMEZONE, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD"
-
-      - name: Build, start and health-check services
-        run: cd "$HOME/birrcare" && ./scripts/deploy.sh
-
-      - name: Show running containers
-        if: always()
-        run: docker ps --filter name=birrcare
+  # Deployment is pull-based: the BirrCare host polls main and deploys commits whose
+  # run of this workflow succeeded (scripts/auto-deploy.sh + scripts/systemd/).
+  # Never add a `runs-on: self-hosted` job here: on a public repo, fork pull
+  # requests can run their own copy of this file on any registered runner.
