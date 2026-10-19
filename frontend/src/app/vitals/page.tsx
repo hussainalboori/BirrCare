@@ -81,6 +81,10 @@ export default function VitalsPage() {
     onVitalLogged: () => {
       loadVitals();
     },
+    // Insulin logging also records the sugar reading taken with it.
+    onEvent: (e) => {
+      if (e.type === "INSULIN_LOGGED") loadVitals();
+    },
     onResync: () => {
       loadVitals();
     },

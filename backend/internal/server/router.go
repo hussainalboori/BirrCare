@@ -73,6 +73,7 @@ func NewRouter(o Options) http.Handler {
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
+	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
 
 	r := chi.NewRouter()
 
@@ -145,6 +146,13 @@ func NewRouter(o Options) http.Handler {
 				// Stroke Vitals
 				api.Get("/vitals", vitalsHandler.ListVitals)
 				api.Post("/vitals", vitalsHandler.LogVitals)
+
+				// Insulin: doctor's correction scale / fixed dose, and injections
+				api.Get("/insulin/plans", insulinHandler.ListPlans)
+				api.Post("/insulin/plans", insulinHandler.CreatePlan)
+				api.Put("/insulin/plans/{id}", insulinHandler.UpdatePlan)
+				api.Get("/insulin/status", insulinHandler.GetStatus)
+				api.Post("/insulin/log", insulinHandler.LogInsulin)
 
 				// Handover Notes
 				api.Get("/handovers", handoverHandler.ListHandovers)

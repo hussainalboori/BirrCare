@@ -4,11 +4,11 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/context/LanguageContext";
-import { Pill, Activity, ClipboardList, FileSpreadsheet } from "lucide-react";
+import { Pill, Activity, ClipboardList, FileSpreadsheet, Syringe } from "lucide-react";
 
 export function Navigation() {
   const pathname = usePathname();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
 
   const links = [
     {
@@ -22,6 +22,12 @@ export function Navigation() {
       label: t.navVitals,
       icon: Activity,
       active: pathname.startsWith("/vitals"),
+    },
+    {
+      href: "/insulin",
+      label: locale === "ar" ? "الإنسولين" : "Insulin",
+      icon: Syringe,
+      active: pathname.startsWith("/insulin"),
     },
     {
       href: "/handovers",
@@ -47,7 +53,7 @@ export function Navigation() {
               key={link.href}
               href={link.href}
               aria-current={link.active ? "page" : undefined}
-              className={`flex min-h-12 min-w-12 flex-col items-center justify-center gap-1 rounded-2xl px-3 py-1.5 transition-all active:scale-95 ${
+              className={`flex min-h-12 min-w-12 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-1.5 transition-all active:scale-95 ${
                 link.active
                   ? "text-emerald-600 dark:text-emerald-400 font-bold"
                   : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 font-medium"

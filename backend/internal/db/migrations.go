@@ -128,6 +128,41 @@ CREATE TABLE IF NOT EXISTS shift_assignments (
     CONSTRAINT uq_shift_date UNIQUE (shift_id, date)
 );
 
+-- 10. Insulin plans: the doctor's correction (sliding) scale or fixed dose, entered by an admin.
+-- The app never computes a dose; it only looks up the doctor's table.
+CREATE TABLE IF NOT EXISTS insulin_plans (
+    id TEXT PRIMARY KEY,
+    name_ar TEXT NOT NULL,
+    name_en TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('scale', 'fixed')),
+    fixed_units REAL,
+    scale TEXT NOT NULL DEFAULT '[]', -- JSON [{"min":4,"max":8,"units":0},...] mmol/L, min inclusive, max exclusive
+    min_hours_between REAL NOT NULL DEFAULT 4,
+    prescribed_by TEXT,
+    notes_ar TEXT,
+    notes_en TEXT,
+    is_active INTEGER DEFAULT 1,
+    updated_by TEXT REFERENCES caregivers(id),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 11. Insulin injections (and held doses), with the reading and scale used at the time
+CREATE TABLE IF NOT EXISTS insulin_logs (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES insulin_plans(id),
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    given_at TEXT DEFAULT (datetime('now')),
+    status TEXT NOT NULL CHECK (status IN ('given', 'held')),
+    units REAL NOT NULL CHECK (units >= 0 AND units <= 100),
+    scale_units REAL,       -- what the doctor's scale said for this reading (NULL = outside the scale)
+    blood_sugar REAL,
+    vital_id TEXT REFERENCES vitals_logs(id),
+    reason TEXT,            -- required when units differ from the scale or the interval lock is overridden
+    scale_snapshot TEXT     -- the plan as it was, so later scale edits never rewrite history
+);
+
+CREATE INDEX IF NOT EXISTS idx_insulin_logs_plan ON insulin_logs(plan_id, given_at DESC);
+CREATE INDEX IF NOT EXISTS idx_insulin_logs_date ON insulin_logs(given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_handover_date ON handover_notes(created_at DESC);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyBloodPressure } from "@/lib/clinical";
+import { classifyBloodPressure, lookupInsulinScale } from "@/lib/clinical";
 
 // AGENTS.md §4.3 — the higher category of systolic OR diastolic wins.
 describe("classifyBloodPressure (AGENTS.md §4.3 boundaries)", () => {
@@ -40,5 +40,19 @@ describe("classifyBloodPressure (AGENTS.md §4.3 boundaries)", () => {
     expect(classifyBloodPressure(125, 70).badgeClass).toContain("yellow");
     expect(classifyBloodPressure(150, 70).badgeClass).toContain("orange");
     expect(classifyBloodPressure(190, 70).badgeClass).toContain("rose");
+  });
+});
+
+describe("lookupInsulinScale", () => {
+  const scale = [
+    { min: 0, max: 8, units: 0 },
+    { min: 8, max: 11, units: 2 },
+    { min: 11, max: 14, units: 4 },
+  ];
+  it("matches the backend: min inclusive, max exclusive, null outside the scale", () => {
+    expect(lookupInsulinScale(scale, 7.99)).toBe(0);
+    expect(lookupInsulinScale(scale, 8)).toBe(2);
+    expect(lookupInsulinScale(scale, 13.9)).toBe(4);
+    expect(lookupInsulinScale(scale, 14)).toBeNull();
   });
 });

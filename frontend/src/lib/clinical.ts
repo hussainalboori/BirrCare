@@ -178,3 +178,12 @@ export const ALERTNESS_METAS: Record<AlertnessLevel, AlertnessMeta> = {
     descEn: "Hard to awaken outside regular sleeping hours",
   },
 };
+
+/** Below this (mmol/L) correction insulin is never given; the backend enforces the same. */
+export const HYPO_THRESHOLD = 3.9;
+
+/** The doctor's units for a reading, or null when it falls outside every row of the scale. */
+export function lookupInsulinScale(scale: { min: number; max: number; units: number }[], sugar: number): number | null {
+  const row = scale.find((r) => sugar >= r.min && sugar < r.max);
+  return row ? row.units : null;
+}

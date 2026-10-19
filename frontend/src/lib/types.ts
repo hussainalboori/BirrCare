@@ -168,4 +168,50 @@ export interface DoctorSummary {
   alertness_distribution: Record<AlertnessLevel, number>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
+  insulin_logs?: InsulinLog[];
+}
+
+/** One row of the doctor's correction scale: min inclusive, max exclusive, mmol/L. */
+export interface InsulinScaleRow {
+  min: number;
+  max: number;
+  units: number;
+}
+
+export interface InsulinPlan {
+  id: string;
+  name_ar: string;
+  name_en: string;
+  kind: "scale" | "fixed";
+  fixed_units?: number;
+  scale: InsulinScaleRow[];
+  min_hours_between: number;
+  prescribed_by?: string;
+  notes_ar?: string;
+  notes_en?: string;
+  is_active: boolean;
+  updated_at?: string;
+}
+
+export interface InsulinLog {
+  id: string;
+  plan_id: string;
+  plan_name_ar?: string;
+  plan_name_en?: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  given_at: string;
+  status: "given" | "held";
+  units: number;
+  scale_units: number | null;
+  blood_sugar: number | null;
+  reason?: string;
+}
+
+export interface InsulinPlanStatus {
+  plan: InsulinPlan;
+  last_given: InsulinLog | null;
+  next_allowed_at?: string;
+  recent: InsulinLog[];
 }

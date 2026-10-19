@@ -24,6 +24,9 @@ type DoctorSummaryResponse struct {
 	Alertness   map[string]int     `json:"alertness_distribution"`
 	RecentNotes []models.HandoverNote `json:"recent_notes"`
 	RecentVitals []models.VitalsLog `json:"recent_vitals"`
+	// Every injection with the reading and what the scale said, so the doctor can
+	// see how the scale is performing and adjust it.
+	InsulinLogs []InsulinLog `json:"insulin_logs"`
 }
 
 type VitalsStats struct {
@@ -214,6 +217,15 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// 4. Insulin (the vitals/notes cursors above are closed, so the connection is free)
+	if noteRows != nil {
+		noteRows.Close()
+	}
+	insulinLogs, err := insulinLogsSince(h.DB, startDateStr)
+	if err != nil {
+		insulinLogs = []InsulinLog{}
+	}
+
 	res := DoctorSummaryResponse{
 		GeneratedAt:  time.Now().UTC(),
 		DaysCovered:  days,
@@ -224,6 +236,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		Alertness:    alertnessMap,
 		RecentNotes:  recentNotes,
 		RecentVitals: recentVitals,
+		InsulinLogs:  insulinLogs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

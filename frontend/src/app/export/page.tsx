@@ -257,6 +257,61 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
+            {/* Insulin vs sugar: what the scale said, what was given, and why it differed */}
+            {summary.insulin_logs && summary.insulin_logs.length > 0 && (() => {
+              const logs = summary.insulin_logs;
+              const given = logs.filter((l) => l.status === "given");
+              const totalUnits = given.reduce((s, l) => s + l.units, 0);
+              const deviations = given.filter((l) => l.scale_units === null || l.scale_units !== l.units).length;
+              const lows = logs.filter((l) => l.blood_sugar != null && l.blood_sugar < 3.9).length;
+              return (
+                <div className="mb-6 break-inside-avoid">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    {locale === "ar" ? "الإنسولين مقابل قراءات السكر" : "Insulin vs blood sugar"}
+                  </h3>
+                  <p className="mb-3 text-xs text-slate-500">
+                    <Ltr>{given.length}</Ltr> {locale === "ar" ? "إبرة" : "injections"} · <Ltr>{Number(totalUnits.toFixed(1))}</Ltr>{" "}
+                    {locale === "ar" ? "وحدة إجمالاً" : "units total"} · <Ltr>{deviations}</Ltr>{" "}
+                    {locale === "ar" ? "مختلفة عن الجدول" : "differed from scale"} · <Ltr>{lows}</Ltr>{" "}
+                    {locale === "ar" ? "قراءة أقل من 3.9" : "readings below 3.9"}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-start text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400">
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "الوقت" : "Time"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "الإنسولين" : "Insulin"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "السكر" : "Sugar"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "الجدول" : "Scale"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "أُعطي" : "Given"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "السبب" : "Reason"}</th>
+                          <th className="py-2 text-start font-semibold">{locale === "ar" ? "المُسجل" : "By"}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {logs.slice(0, 60).map((l) => {
+                          const differed = l.status === "given" && (l.scale_units === null || l.scale_units !== l.units);
+                          return (
+                            <tr key={l.id} className={differed ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
+                              <td className="py-2 pe-3 font-mono text-slate-600 dark:text-slate-400"><Ltr>{formatDateTime(l.given_at, locale)}</Ltr></td>
+                              <td className="py-2 pe-3"><bdi>{locale === "ar" ? l.plan_name_ar : l.plan_name_en}</bdi></td>
+                              <td className={`py-2 pe-3 font-semibold ${l.blood_sugar != null && l.blood_sugar < 3.9 ? "text-rose-600" : "text-blue-700 dark:text-blue-300"}`}>
+                                {l.blood_sugar != null ? <Ltr>{l.blood_sugar.toFixed(1)}</Ltr> : "--"}
+                              </td>
+                              <td className="py-2 pe-3">{l.scale_units != null ? <Ltr>{l.scale_units}</Ltr> : "—"}</td>
+                              <td className="py-2 pe-3 font-bold">{l.status === "given" ? <Ltr>{l.units}</Ltr> : locale === "ar" ? "لم تُعطَ" : "held"}</td>
+                              <td className="py-2 pe-3 text-slate-600 dark:text-slate-400"><bdi>{l.reason}</bdi></td>
+                              <td className="py-2 text-slate-600 dark:text-slate-400">{l.caregiver_name}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Doctor Examination Notes Area */}
             <div className="mt-8 border-t-2 border-dashed border-slate-300 pt-6">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">

@@ -7,7 +7,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { installAudioUnlock, playAlert } from "@/lib/alertSound";
 import { CrisisActions } from "./CrisisActions";
 import { Ltr } from "./Ltr";
-import { Pill, Activity, ClipboardList, UserCheck, X, AlertTriangle } from "lucide-react";
+import { Pill, Activity, ClipboardList, UserCheck, X, AlertTriangle, Syringe } from "lucide-react";
 
 interface MedPayload {
   name_ar?: string;
@@ -19,6 +19,14 @@ interface VitalPayload {
   systolic?: number;
   diastolic?: number;
   bp_status?: string;
+}
+interface InsulinPayload {
+  name_ar?: string;
+  name_en?: string;
+  status?: string;
+  units?: number;
+  blood_sugar?: number | null;
+  reason?: string;
 }
 interface NotePayload {
   summary?: string;
@@ -98,6 +106,23 @@ export function SseToast() {
       Icon = crisis ? AlertTriangle : Activity;
       actionText = crisis ? (locale === "ar" ? "سجّل أزمة ضغط دم — طوارئ" : "logged a blood pressure CRISIS") : t.toastVitalsRecorded;
       if (p.systolic && p.diastolic) detail = <Ltr>{p.systolic}/{p.diastolic} mmHg</Ltr>;
+      break;
+    }
+    case "INSULIN_LOGGED": {
+      const p = (event.payload || {}) as InsulinPayload;
+      Icon = Syringe;
+      const name = locale === "ar" ? p.name_ar || p.name_en : p.name_en || p.name_ar;
+      actionText =
+        p.status === "given"
+          ? locale === "ar" ? "أعطى إبرة إنسولين" : "gave an insulin injection"
+          : locale === "ar" ? "سجّل السكر بدون إبرة" : "checked sugar, no injection";
+      detail = (
+        <>
+          <bdi>{name}</bdi>
+          {p.status === "given" && <> · <Ltr>{p.units}</Ltr>{locale === "ar" ? " وحدة" : " units"}</>}
+          {p.blood_sugar != null && <> · <Ltr>{p.blood_sugar} mmol/L</Ltr></>}
+        </>
+      );
       break;
     }
     case "NOTE_ADDED": {
