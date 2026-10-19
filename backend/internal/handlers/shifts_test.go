@@ -30,6 +30,11 @@ func setupShiftsTestDB(t *testing.T) (*sql.DB, *handlers.ShiftsHandler) {
 		t.Fatalf("failed running migrations: %v", err)
 	}
 
+	_, _ = database.Exec(`
+		INSERT OR IGNORE INTO caregivers (id, name, email, role, pin_hash, avatar_color, preferred_lang)
+		VALUES ('cg_fatima', 'Fatima', 'fatima@test.local', 'caregiver', 'hash', '#059669', 'en')
+	`)
+
 	broker := sse.InitBroker()
 	t.Cleanup(func() { broker.Close() })
 	handler := &handlers.ShiftsHandler{DB: database, Broker: broker}

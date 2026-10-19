@@ -16,6 +16,8 @@ import (
 	"birrcare/backend/internal/db"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/sse"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func setup(t *testing.T, cfg auth.Config, timeout time.Duration) (*httptest.Server, *sql.DB, *sse.Broker) {
@@ -27,6 +29,13 @@ func setup(t *testing.T, cfg auth.Config, timeout time.Duration) (*httptest.Serv
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
+	pinHash, _ := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.DefaultCost)
+	_, _ = database.Exec(`
+		INSERT OR IGNORE INTO caregivers (id, name, email, role, pin_hash, avatar_color, preferred_lang)
+		VALUES 
+			('cg_ali', 'علي', 'ali@test.local', 'admin', ?, '#2563eb', 'ar'),
+			('cg_fatima', 'فاطمة', 'fatima@test.local', 'caregiver', ?, '#059669', 'ar')
+	`, string(pinHash), string(pinHash))
 	if err := auth.InitSessionSecret(database); err != nil {
 		t.Fatal(err)
 	}

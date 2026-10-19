@@ -36,6 +36,27 @@ func setupTestDB(t *testing.T) (*handlers.MedicationHandler, *handlers.VitalsHan
 		t.Fatalf("Failed to migrate test db: %v", err)
 	}
 
+	_, _ = database.Exec("DELETE FROM shift_assignments")
+	_, _ = database.Exec("DELETE FROM caregivers")
+	if _, err := database.Exec(`
+		INSERT INTO caregivers (id, name, email, role, pin_hash, avatar_color, preferred_lang)
+		VALUES 
+			('cg_hussain', 'حسين (Hussain)', 'hussain@test.local', 'super_admin', 'hash', '#d97706', 'ar'),
+			('cg_ali', 'علي (Ali)', 'ali@test.local', 'admin', 'hash', '#2563eb', 'ar'),
+			('cg_fatima', 'فاطمة (Fatima)', 'fatima@test.local', 'caregiver', 'hash', '#059669', 'ar'),
+			('cg_zainab', 'زينب (Zainab)', 'zainab@test.local', 'viewer', 'hash', '#7c3aed', 'ar')
+	`); err != nil {
+		t.Fatalf("failed inserting test caregivers: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, created_by)
+		VALUES 
+			('med_aspirin', 'أسبرين', 'Aspirin', '81mg', 'Daily', 'Daily', '["morning"]', '/meds/aspirin.svg', 'cg_hussain'),
+			('med_citicoline', 'سيتيكولين', 'Citicoline', '500mg', 'Twice', 'Twice', '["morning", "evening"]', '/meds/citicoline.svg', 'cg_hussain')
+	`); err != nil {
+		t.Fatalf("failed inserting test medications: %v", err)
+	}
+
 	broker := sse.InitBroker()
 	medHandler := &handlers.MedicationHandler{DB: database, Broker: broker}
 	vitalsHandler := &handlers.VitalsHandler{DB: database, Broker: broker}

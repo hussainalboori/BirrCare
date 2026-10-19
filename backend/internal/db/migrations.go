@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -209,12 +210,6 @@ func Migrate(database *sql.DB) error {
 		_, _ = database.Exec(`UPDATE medications SET slot_times = '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}' WHERE slot_times IS NULL OR slot_times = ''`)
 	}
 
-	// Update visual pill image paths for seeded medications if empty
-	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/aspirin.svg' WHERE id = 'med_aspirin' AND (image_url IS NULL OR image_url = '')")
-	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/clopidogrel.svg' WHERE id = 'med_clopidogrel' AND (image_url IS NULL OR image_url = '')")
-	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/amlodipine.svg' WHERE id = 'med_amlodipine' AND (image_url IS NULL OR image_url = '')")
-	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/atorvastatin.svg' WHERE id = 'med_atorvastatin' AND (image_url IS NULL OR image_url = '')")
-	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/citicoline.svg' WHERE id = 'med_citicoline' AND (image_url IS NULL OR image_url = '')")
 
 	// 4. Migrate vitals_logs table to allow selective metrics (systolic/diastolic/pulse can be NULL when logging only sugar or alertness)
 	var notNullSystolic int
@@ -282,12 +277,8 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
-	if err := seedCaregivers(database); err != nil {
-		return fmt.Errorf("failed seeding caregivers: %w", err)
-	}
-
-	if err := seedMedications(database); err != nil {
-		return fmt.Errorf("failed seeding medications: %w", err)
+	if err := seedSuperAdmin(database); err != nil {
+		return fmt.Errorf("failed seeding super admin: %w", err)
 	}
 
 	if err := seedShifts(database); err != nil {
@@ -298,7 +289,7 @@ func Migrate(database *sql.DB) error {
 	return nil
 }
 
-func seedCaregivers(database *sql.DB) error {
+func seedSuperAdmin(database *sql.DB) error {
 	var count int
 	err := database.QueryRow("SELECT COUNT(*) FROM caregivers").Scan(&count)
 	if err != nil {
@@ -308,112 +299,36 @@ func seedCaregivers(database *sql.DB) error {
 		return nil
 	}
 
-	// Default PIN: "1234"
-	hash, err := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.DefaultCost)
+	adminUser := strings.TrimSpace(os.Getenv("SUPER_ADMIN_USER"))
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+
+	adminPIN := strings.TrimSpace(os.Getenv("SUPER_ADMIN_PIN"))
+	if adminPIN == "" {
+		adminPIN = "1234"
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminPIN), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed hashing super admin PIN: %w", err)
 	}
 	pinHash := string(hash)
 
-	caregivers := []struct {
-		id, name, email, role, avatarColor, lang string
-	}{
-		{"cg_hussain", "حسين (Hussain)", "hussain@family.local", "super_admin", "#d97706", "ar"},
-		{"cg_ali", "علي (Ali)", "ali@family.local", "admin", "#2563eb", "ar"},
-		{"cg_fatima", "فاطمة (Fatima)", "fatima@family.local", "caregiver", "#059669", "ar"},
-		{"cg_zainab", "زينب (Zainab)", "zainab@family.local", "viewer", "#7c3aed", "ar"},
+	email := adminUser
+	if !strings.Contains(email, "@") {
+		email = fmt.Sprintf("%s@birrcare.local", strings.ToLower(adminUser))
 	}
 
-	for _, c := range caregivers {
-		_, err := database.Exec(`
-			INSERT INTO caregivers (id, name, email, role, pin_hash, avatar_color, preferred_lang)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, c.id, c.name, c.email, c.role, pinHash, c.avatarColor, c.lang)
-		if err != nil {
-			return err
-		}
-	}
-
-	log.Println("Seeded initial family caregivers (Default PIN: 1234)")
-	return nil
-}
-
-func seedMedications(database *sql.DB) error {
-	var count int
-	err := database.QueryRow("SELECT COUNT(*) FROM medications").Scan(&count)
+	_, err = database.Exec(`
+		INSERT INTO caregivers (id, name, email, role, pin_hash, avatar_color, preferred_lang)
+		VALUES ('cg_superadmin', ?, ?, 'super_admin', ?, '#d97706', 'en')
+	`, adminUser, email, pinHash)
 	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
+		return fmt.Errorf("failed inserting super admin: %w", err)
 	}
 
-	meds := []struct {
-		id, nameAr, nameEn, dosage, instAr, instEn, slots, imgURL string
-	}{
-		{
-			"med_aspirin",
-			"أسبرين حماية",
-			"Aspirin Protect",
-			"81mg",
-			"قرص واحد يومياً بعد الإفطار مع ماء وافر",
-			"One tablet daily after breakfast with plenty of water",
-			`["morning"]`,
-			"/meds/aspirin.svg",
-		},
-		{
-			"med_clopidogrel",
-			"بلافيكس (كلوبيدوجريل)",
-			"Plavix (Clopidogrel)",
-			"75mg",
-			"قرص واحد يومياً في نفس الموعد لمنع التجلط",
-			"One tablet daily at the exact same hour to prevent thrombosis",
-			`["evening"]`,
-			"/meds/clopidogrel.svg",
-		},
-		{
-			"med_amlodipine",
-			"أملوديبين (للضغط)",
-			"Amlodipine (Blood Pressure)",
-			"5mg",
-			"قرص واحد صباحاً لضبط ضغط الدم الشرياني",
-			"One tablet in the morning to maintain blood pressure within range",
-			`["morning"]`,
-			"/meds/amlodipine.svg",
-		},
-		{
-			"med_atorvastatin",
-			"ليبيتور (أتورفاستاتين)",
-			"Lipitor (Atorvastatin)",
-			"40mg",
-			"قرص واحد مساءً قبل النوم لخفض الكوليسترول",
-			"One tablet at bedtime to regulate lipid panel",
-			`["bedtime"]`,
-			"/meds/atorvastatin.svg",
-		},
-		{
-			"med_citicoline",
-			"سيتيكولين (منشط عصبي)",
-			"Citicoline (Neuroprotector)",
-			"500mg",
-			"قرص مرتين يومياً صباحاً ومساءً لدعم التعافي العصبي",
-			"Twice daily morning and evening to support neuro-recovery",
-			`["morning", "evening"]`,
-			"/meds/citicoline.svg",
-		},
-	}
-
-	for _, m := range meds {
-		_, err := database.Exec(`
-			INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, created_by)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cg_hussain')
-		`, m.id, m.nameAr, m.nameEn, m.dosage, m.instAr, m.instEn, m.slots, m.imgURL)
-		if err != nil {
-			return err
-		}
-	}
-
-	log.Println("Seeded post-stroke medical prescription catalog.")
+	log.Printf("Seeded initial Super Admin account (%s) from environment configuration.\n", adminUser)
 	return nil
 }
 
