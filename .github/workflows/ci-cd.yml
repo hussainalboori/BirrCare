@@ -120,16 +120,13 @@ jobs:
           cache-to: type=gha,mode=max
 
   # -------------------------------------------------------------
-  # Job 4: Publish & Continuous Deployment (Main branch only)
+  # Job 4: Publish images to GHCR (Main branch only)
   # -------------------------------------------------------------
   publish-and-deploy:
-    name: Publish to GHCR & Deploy
+    name: Publish to GHCR
     runs-on: ubuntu-latest
     needs: [docker-verify]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    env:
-      # `secrets` is not allowed in step-level `if:`; expose it via env instead.
-      SSH_HOST: ${{ secrets.SSH_HOST }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -186,16 +183,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Optional Automated SSH Deployment (runs if SSH_HOST is provided)
-      - name: Trigger Host Server Deployment
-        if: env.SSH_HOST != ''
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          script: |
-            cd ${{ secrets.DEPLOY_PATH || '~/BirrCare' }}
-            git pull origin main
-            ./scripts/deploy.sh
+  # -------------------------------------------------------------
+  # Job 5: Deploy on the self-hosted runner (the BirrCare host)
+  # -------------------------------------------------------------
+  # Deploys from a persistent clone outside the runner workspace: actions/checkout
+  # cleans its workspace on every run, which would wipe data/ (the SQLite DB) and .env.
+  # `git reset --hard` leaves git-ignored files (data/, .env) untouched.
+  deploy:
+    name: Deploy to BirrCare host
+    runs-on: self-hosted
+    needs: [docker-verify]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Sync ~/birrcare to this commit
+        run: |
+          DEPLOY_DIR="$HOME/birrcare"
+          [ -d "$DEPLOY_DIR/.git" ] || git clone "https://github.com/${GITHUB_REPOSITORY}.git" "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
+          git fetch --prune origin
+          git reset --hard "$GITHUB_SHA"
+          [ -f .env ] || echo "::warning::No .env in $DEPLOY_DIR - copy .env.example to .env and set APP_TIMEZONE, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD"
+
+      - name: Build, start and health-check services
+        run: cd "$HOME/birrcare" && ./scripts/deploy.sh
+
+      - name: Show running containers
+        if: always()
+        run: docker ps --filter name=birrcare
