@@ -65,6 +65,7 @@ type VitalsLog struct {
 	AlertnessLevel string    `json:"alertness_level"` // 'alert', 'confused', 'restless', 'drowsy'
 	Notes          string    `json:"notes,omitempty"`
 	BPStatus       string    `json:"bp_status"` // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	SugarStatus    string    `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
 }
 
 // HandoverNote captures shift transitions and urgent flags between siblings.

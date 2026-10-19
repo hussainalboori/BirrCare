@@ -33,6 +33,23 @@ func CalculateBPStatus(systolic, diastolic int) string {
 	return "NORMAL"
 }
 
+func CalculateSugarStatus(sugar *float64) string {
+	if sugar == nil {
+		return ""
+	}
+	s := *sugar
+	if s < 70 {
+		return "LOW"
+	}
+	if s >= 200 {
+		return "VERY_HIGH"
+	}
+	if s > 140 {
+		return "ELEVATED"
+	}
+	return "NORMAL"
+}
+
 func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 	limitStr := r.URL.Query().Get("limit")
 	limit := 30
@@ -72,6 +89,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		}
 		v.RecordedAt, _ = time.Parse("2006-01-02 15:04:05", recordedAtStr)
 		v.BPStatus = CalculateBPStatus(v.Systolic, v.Diastolic)
+		v.SugarStatus = CalculateSugarStatus(v.BloodSugar)
 		list = append(list, v)
 	}
 
@@ -113,6 +131,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.New().String()
 	bpStatus := CalculateBPStatus(req.Systolic, req.Diastolic)
+	sugarStatus := CalculateSugarStatus(req.BloodSugar)
 	now := time.Now().UTC()
 
 	_, err := h.DB.Exec(`
@@ -125,8 +144,11 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id,
-		fmt.Sprintf("BP %d/%d, Pulse %d, Alertness: %s (Status: %s)", req.Systolic, req.Diastolic, req.Pulse, req.AlertnessLevel, bpStatus))
+	auditDetails := fmt.Sprintf("BP %d/%d, Pulse %d, Alertness: %s (Status: %s)", req.Systolic, req.Diastolic, req.Pulse, req.AlertnessLevel, bpStatus)
+	if req.BloodSugar != nil {
+		auditDetails += fmt.Sprintf(", Sugar: %.1f mg/dL (%s)", *req.BloodSugar, sugarStatus)
+	}
+	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
 	// Broadcast SSE event
 	h.Broker.Broadcast("VITAL_LOGGED", models.ActorInfo{
@@ -140,6 +162,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"diastolic":       req.Diastolic,
 		"pulse":           req.Pulse,
 		"blood_sugar":     req.BloodSugar,
+		"sugar_status":    sugarStatus,
 		"alertness_level": req.AlertnessLevel,
 		"bp_status":       bpStatus,
 		"notes":           req.Notes,
@@ -150,8 +173,9 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":          id,
-		"bp_status":   bpStatus,
-		"recorded_at": now.Format(time.RFC3339),
+		"id":           id,
+		"bp_status":    bpStatus,
+		"sugar_status": sugarStatus,
+		"recorded_at":  now.Format(time.RFC3339),
 	})
 }

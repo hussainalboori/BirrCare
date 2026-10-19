@@ -1,5 +1,6 @@
 export type AlertnessLevel = "alert" | "confused" | "restless" | "drowsy";
 export type BPStatus = "NORMAL" | "ELEVATED" | "STAGE_2" | "CRISIS";
+export type BloodSugarStatus = "LOW" | "NORMAL" | "ELEVATED" | "VERY_HIGH";
 export type ShiftType = "morning" | "evening" | "night";
 
 export interface Caregiver {
@@ -64,6 +65,7 @@ export interface VitalsLog {
   alertness_level: AlertnessLevel;
   notes?: string;
   bp_status: BPStatus;
+  sugar_status?: BloodSugarStatus;
 }
 
 export interface HandoverNote {

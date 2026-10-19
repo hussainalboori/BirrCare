@@ -107,7 +107,7 @@ export default function DoctorExportPage() {
             </div>
 
             {/* Key Clinical Summary Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
               {/* BP Average */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-[11px] font-semibold text-slate-500 block mb-1">
@@ -118,6 +118,21 @@ export default function DoctorExportPage() {
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {locale === "ar" ? `المدى: ${summary.vitals_stats.min_systolic}-${summary.vitals_stats.max_systolic}` : `Range: ${summary.vitals_stats.min_systolic}-${summary.vitals_stats.max_systolic}`}
+                </span>
+              </div>
+
+              {/* Blood Sugar Average */}
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-950/60 dark:bg-blue-950/20">
+                <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300 block mb-1 flex items-center gap-1">
+                  <Activity className="h-3.5 w-3.5 text-blue-500" />
+                  {locale === "ar" ? "متوسط السكر" : "Avg Glucose"}
+                </span>
+                <span className="text-lg font-black text-blue-900 dark:text-blue-100">
+                  {summary.vitals_stats.avg_blood_sugar ? Math.round(summary.vitals_stats.avg_blood_sugar) : "--"}{" "}
+                  <span className="text-xs font-normal">mg/dL</span>
+                </span>
+                <span className="text-[10px] text-slate-400 block mt-1">
+                  {locale === "ar" ? "سكر الدم" : "Blood Sugar"}
                 </span>
               </div>
 
@@ -197,6 +212,7 @@ export default function DoctorExportPage() {
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400">
                       <th className="py-2 text-start font-semibold">{locale === "ar" ? "التاريخ والوقت" : "Date & Time"}</th>
                       <th className="py-2 text-start font-semibold">{locale === "ar" ? "ضغط الدم" : "Blood Pressure"}</th>
+                      <th className="py-2 text-start font-semibold">{locale === "ar" ? "سكر الدم" : "Blood Sugar"}</th>
                       <th className="py-2 text-start font-semibold">{locale === "ar" ? "النبض" : "Pulse"}</th>
                       <th className="py-2 text-start font-semibold">{locale === "ar" ? "الحالة الإدراكية" : "Alertness"}</th>
                       <th className="py-2 text-start font-semibold">{locale === "ar" ? "المُسجل" : "Caregiver"}</th>
@@ -210,6 +226,9 @@ export default function DoctorExportPage() {
                         </td>
                         <td className="py-2 font-bold text-slate-900 dark:text-white">
                           {v.systolic}/{v.diastolic} mmHg
+                        </td>
+                        <td className="py-2 font-semibold text-blue-700 dark:text-blue-300">
+                          {v.blood_sugar ? `${v.blood_sugar} mg/dL` : "--"}
                         </td>
                         <td className="py-2 text-slate-700 dark:text-slate-300">{v.pulse} bpm</td>
                         <td className="py-2">

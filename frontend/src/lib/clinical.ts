@@ -58,6 +58,82 @@ export function classifyBloodPressure(systolic: number, diastolic: number): BPCl
   };
 }
 
+export type BloodSugarTiming = "fasting" | "post_meal" | "random";
+
+export interface SugarClassification {
+  status: "LOW" | "NORMAL" | "ELEVATED" | "VERY_HIGH";
+  badgeClass: string;
+  bgLightClass: string;
+  labelAr: string;
+  labelEn: string;
+  actionAr: string;
+  actionEn: string;
+}
+
+export function classifyBloodSugar(sugar: number, timing: BloodSugarTiming = "random"): SugarClassification {
+  if (sugar < 70) {
+    return {
+      status: "LOW",
+      badgeClass: "bg-rose-600 text-white animate-pulse shadow-rose-500/40 shadow-lg",
+      bgLightClass: "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-400",
+      labelAr: "هبوط حاد في السكر (طوارئ)",
+      labelEn: "Hypoglycemia Alert (Low)",
+      actionAr: "أعطِ المريض عصير سكري فوراً وافحص مجدداً بعد 15 دقيقة",
+      actionEn: "Administer fast-acting sugar/juice immediately, recheck in 15 min",
+    };
+  }
+
+  const isFasting = timing === "fasting";
+  const elevatedThreshold = isFasting ? 126 : 180;
+  const normalThreshold = isFasting ? 100 : 140;
+
+  if (sugar >= 250) {
+    return {
+      status: "VERY_HIGH",
+      badgeClass: "bg-rose-600 text-white shadow-rose-500/30 shadow-md",
+      bgLightClass: "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-400",
+      labelAr: "ارتفاع سكر حاد",
+      labelEn: "Severe Hyperglycemia",
+      actionAr: "مستوى مرتفع جداً يضر الأوعية الدموية في الدماغ، راجع الطبيب",
+      actionEn: "Critically high glucose, consult doctor or administer correctional insulin",
+    };
+  }
+
+  if (sugar > elevatedThreshold) {
+    return {
+      status: "ELEVATED",
+      badgeClass: "bg-amber-600 text-white shadow-amber-500/30 shadow-md",
+      bgLightClass: "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400",
+      labelAr: "مرتفع",
+      labelEn: "Elevated Glucose",
+      actionAr: "تأكد من إعطاء أدوية السكر وشرب الماء الوافر",
+      actionEn: "Ensure diabetes medication was administered with adequate hydration",
+    };
+  }
+
+  if (sugar > normalThreshold) {
+    return {
+      status: "ELEVATED",
+      badgeClass: "bg-yellow-500 text-slate-900 shadow-yellow-500/20 shadow",
+      bgLightClass: "bg-yellow-500/10 border-yellow-500/30 text-yellow-700 dark:text-yellow-400",
+      labelAr: "أعلى من المستهدف قليلاً",
+      labelEn: "Slightly High",
+      actionAr: "راقب القياس في الفترات القادمة",
+      actionEn: "Continue monitoring over upcoming meals",
+    };
+  }
+
+  return {
+    status: "NORMAL",
+    badgeClass: "bg-emerald-600 text-white shadow-emerald-500/20 shadow",
+    bgLightClass: "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400",
+    labelAr: "طبيعي ومثالي",
+    labelEn: "Normal Glucose",
+    actionAr: "مستوى السكر في الحدود الآمنة للتعافي العصبي",
+    actionEn: "Glucose within safe stroke recovery target range",
+  };
+}
+
 export interface AlertnessMeta {
   level: AlertnessLevel;
   badgeClass: string;
