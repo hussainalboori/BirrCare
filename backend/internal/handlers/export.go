@@ -61,7 +61,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 
 	// 1. Vitals stats
 	rows, err := h.DB.Query(`
-		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.notes,
+		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
 		       c.name, c.avatar_color
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
@@ -73,71 +73,88 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	alertnessMap := map[string]int{"alert": 0, "confused": 0, "restless": 0, "drowsy": 0}
 	var recentVitals []models.VitalsLog
 	var sumSys, sumDia, sumPulse, sumSugar float64
-	var sugarCount int
+	var bpCount, pulseCount, sugarCount int
 
 	if err == nil {
 		defer rows.Close()
-		first := true
+		firstBP := true
 		for rows.Next() {
 			var v models.VitalsLog
-			var notes sql.NullString
+			var sys, dia, pulse sql.NullInt64
+			var notes, vitalType sql.NullString
 			var sugar sql.NullFloat64
 			var recordedAtStr string
-			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &v.Systolic, &v.Diastolic, &v.Pulse, &sugar, &v.AlertnessLevel, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
+			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
 				continue
 			}
-			if notes.Valid {
-				v.Notes = notes.String
+			if sys.Valid && dia.Valid {
+				s := int(sys.Int64)
+				d := int(dia.Int64)
+				v.Systolic = &s
+				v.Diastolic = &d
+				v.BPStatus = CalculateBPStatus(s, d)
+				sumSys += float64(s)
+				sumDia += float64(d)
+				bpCount++
+
+				if firstBP {
+					stats.MinSystolic = s
+					stats.MaxSystolic = s
+					stats.MinDiastolic = d
+					stats.MaxDiastolic = d
+					firstBP = false
+				} else {
+					if s < stats.MinSystolic {
+						stats.MinSystolic = s
+					}
+					if s > stats.MaxSystolic {
+						stats.MaxSystolic = s
+					}
+					if d < stats.MinDiastolic {
+						stats.MinDiastolic = d
+					}
+					if d > stats.MaxDiastolic {
+						stats.MaxDiastolic = d
+					}
+				}
+
+				if v.BPStatus == "CRISIS" {
+					stats.CrisisCount++
+				} else if v.BPStatus == "STAGE_2" || v.BPStatus == "ELEVATED" {
+					stats.ElevatedCount++
+				}
+			}
+			if pulse.Valid {
+				p := int(pulse.Int64)
+				v.Pulse = &p
+				sumPulse += float64(p)
+				pulseCount++
 			}
 			if sugar.Valid {
 				v.BloodSugar = &sugar.Float64
 				sumSugar += sugar.Float64
 				sugarCount++
 			}
+			if vitalType.Valid {
+				v.VitalType = vitalType.String
+			}
+			if notes.Valid {
+				v.Notes = notes.String
+			}
 			v.RecordedAt, _ = time.Parse("2006-01-02 15:04:05", recordedAtStr)
-			v.BPStatus = CalculateBPStatus(v.Systolic, v.Diastolic)
 
 			stats.TotalReadings++
-			sumSys += float64(v.Systolic)
-			sumDia += float64(v.Diastolic)
-			sumPulse += float64(v.Pulse)
-
-			if first {
-				stats.MinSystolic = v.Systolic
-				stats.MaxSystolic = v.Systolic
-				stats.MinDiastolic = v.Diastolic
-				stats.MaxDiastolic = v.Diastolic
-				first = false
-			} else {
-				if v.Systolic < stats.MinSystolic {
-					stats.MinSystolic = v.Systolic
-				}
-				if v.Systolic > stats.MaxSystolic {
-					stats.MaxSystolic = v.Systolic
-				}
-				if v.Diastolic < stats.MinDiastolic {
-					stats.MinDiastolic = v.Diastolic
-				}
-				if v.Diastolic > stats.MaxDiastolic {
-					stats.MaxDiastolic = v.Diastolic
-				}
-			}
-
-			if v.BPStatus == "CRISIS" {
-				stats.CrisisCount++
-			} else if v.BPStatus == "STAGE_2" || v.BPStatus == "ELEVATED" {
-				stats.ElevatedCount++
-			}
-
 			alertnessMap[v.AlertnessLevel]++
 			recentVitals = append(recentVitals, v)
 		}
 	}
 
-	if stats.TotalReadings > 0 {
-		stats.AvgSystolic = sumSys / float64(stats.TotalReadings)
-		stats.AvgDiastolic = sumDia / float64(stats.TotalReadings)
-		stats.AvgPulse = sumPulse / float64(stats.TotalReadings)
+	if bpCount > 0 {
+		stats.AvgSystolic = sumSys / float64(bpCount)
+		stats.AvgDiastolic = sumDia / float64(bpCount)
+	}
+	if pulseCount > 0 {
+		stats.AvgPulse = sumPulse / float64(pulseCount)
 	}
 	if sugarCount > 0 {
 		avgS := sumSugar / float64(sugarCount)

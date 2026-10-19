@@ -55,19 +55,22 @@ export interface DailyScheduleResponse {
   schedule: ScheduledDose[];
 }
 
+export type VitalKind = "bp" | "sugar" | "alertness" | "full";
+
 export interface VitalsLog {
   id: string;
   caregiver_id: string;
   caregiver_name?: string;
   avatar_color?: string;
   recorded_at: string;
-  systolic: number;
-  diastolic: number;
-  pulse: number;
+  vital_type?: VitalKind;
+  systolic?: number;
+  diastolic?: number;
+  pulse?: number;
   blood_sugar?: number;
   alertness_level: AlertnessLevel;
   notes?: string;
-  bp_status: BPStatus;
+  bp_status?: BPStatus;
   sugar_status?: BloodSugarStatus;
 }
 

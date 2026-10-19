@@ -62,11 +62,12 @@ CREATE TABLE IF NOT EXISTS vitals_logs (
     id TEXT PRIMARY KEY,
     caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
     recorded_at TEXT DEFAULT (datetime('now')),
-    systolic INTEGER NOT NULL CHECK (systolic BETWEEN 50 AND 300),
-    diastolic INTEGER NOT NULL CHECK (diastolic BETWEEN 30 AND 200),
-    pulse INTEGER NOT NULL CHECK (pulse BETWEEN 30 AND 220),
+    systolic INTEGER CHECK (systolic IS NULL OR systolic BETWEEN 50 AND 300),
+    diastolic INTEGER CHECK (diastolic IS NULL OR diastolic BETWEEN 30 AND 200),
+    pulse INTEGER CHECK (pulse IS NULL OR pulse BETWEEN 30 AND 220),
     blood_sugar REAL,
-    alertness_level TEXT NOT NULL CHECK (alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
+    alertness_level TEXT DEFAULT 'alert' CHECK (alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
+    vital_type TEXT DEFAULT 'full',
     notes TEXT
 );
 
@@ -153,6 +154,39 @@ func Migrate(database *sql.DB) error {
 	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/amlodipine.svg' WHERE id = 'med_amlodipine' AND (image_url IS NULL OR image_url = '')")
 	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/atorvastatin.svg' WHERE id = 'med_atorvastatin' AND (image_url IS NULL OR image_url = '')")
 	_, _ = database.Exec("UPDATE medications SET image_url = '/meds/citicoline.svg' WHERE id = 'med_citicoline' AND (image_url IS NULL OR image_url = '')")
+
+	// 4. Migrate vitals_logs table to allow selective metrics (systolic/diastolic/pulse can be NULL when logging only sugar or alertness)
+	var notNullSystolic int
+	_ = database.QueryRow("SELECT notnull FROM pragma_table_info('vitals_logs') WHERE name='systolic'").Scan(&notNullSystolic)
+	var hasVitalType int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vitals_logs') WHERE name='vital_type'").Scan(&hasVitalType)
+	if notNullSystolic == 1 || hasVitalType == 0 {
+		log.Println("Migrating vitals_logs schema to allow selective vital types (BP, sugar, alertness, full)...")
+		migrationSQL := `
+			PRAGMA foreign_keys = OFF;
+			CREATE TABLE IF NOT EXISTS vitals_logs_v2 (
+				id TEXT PRIMARY KEY,
+				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+				recorded_at TEXT DEFAULT (datetime('now')),
+				systolic INTEGER CHECK (systolic IS NULL OR systolic BETWEEN 50 AND 300),
+				diastolic INTEGER CHECK (diastolic IS NULL OR diastolic BETWEEN 30 AND 200),
+				pulse INTEGER CHECK (pulse IS NULL OR pulse BETWEEN 30 AND 220),
+				blood_sugar REAL,
+				alertness_level TEXT DEFAULT 'alert' CHECK (alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
+				vital_type TEXT DEFAULT 'full',
+				notes TEXT
+			);
+			INSERT OR IGNORE INTO vitals_logs_v2 (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
+			SELECT id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, 'full', notes FROM vitals_logs;
+			DROP TABLE vitals_logs;
+			ALTER TABLE vitals_logs_v2 RENAME TO vitals_logs;
+			CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
+			PRAGMA foreign_keys = ON;
+		`
+		if _, err := database.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed migrating vitals_logs table: %w", err)
+		}
+	}
 
 	if err := seedCaregivers(database); err != nil {
 		return fmt.Errorf("failed seeding caregivers: %w", err)

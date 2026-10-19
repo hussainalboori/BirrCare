@@ -90,13 +90,14 @@ type VitalsLog struct {
 	CaregiverName  string    `json:"caregiver_name,omitempty"`
 	AvatarColor    string    `json:"avatar_color,omitempty"`
 	RecordedAt     time.Time `json:"recorded_at"`
-	Systolic       int       `json:"systolic"`
-	Diastolic      int       `json:"diastolic"`
-	Pulse          int       `json:"pulse"`
+	VitalType      string    `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full'
+	Systolic       *int      `json:"systolic,omitempty"`
+	Diastolic      *int      `json:"diastolic,omitempty"`
+	Pulse          *int      `json:"pulse,omitempty"`
 	BloodSugar     *float64  `json:"blood_sugar,omitempty"`
 	AlertnessLevel string    `json:"alertness_level"` // 'alert', 'confused', 'restless', 'drowsy'
 	Notes          string    `json:"notes,omitempty"`
-	BPStatus       string    `json:"bp_status"` // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	BPStatus       string    `json:"bp_status,omitempty"` // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
 	SugarStatus    string    `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
 }
 

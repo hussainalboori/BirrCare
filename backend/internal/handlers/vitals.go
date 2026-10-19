@@ -58,7 +58,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.DB.Query(`
-		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.notes,
+		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
 		       c.name, c.avatar_color
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
@@ -74,22 +74,36 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 	var list []models.VitalsLog
 	for rows.Next() {
 		var v models.VitalsLog
-		var notes sql.NullString
+		var sys, dia, pulse sql.NullInt64
+		var notes, vitalType sql.NullString
 		var bloodSugar sql.NullFloat64
 		var recordedAtStr string
 
-		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &v.Systolic, &v.Diastolic, &v.Pulse, &bloodSugar, &v.AlertnessLevel, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
+		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
 			continue
+		}
+		if sys.Valid && dia.Valid {
+			s := int(sys.Int64)
+			d := int(dia.Int64)
+			v.Systolic = &s
+			v.Diastolic = &d
+			v.BPStatus = CalculateBPStatus(s, d)
+		}
+		if pulse.Valid {
+			p := int(pulse.Int64)
+			v.Pulse = &p
+		}
+		if bloodSugar.Valid {
+			v.BloodSugar = &bloodSugar.Float64
+			v.SugarStatus = CalculateSugarStatus(v.BloodSugar)
+		}
+		if vitalType.Valid {
+			v.VitalType = vitalType.String
 		}
 		if notes.Valid {
 			v.Notes = notes.String
 		}
-		if bloodSugar.Valid {
-			v.BloodSugar = &bloodSugar.Float64
-		}
 		v.RecordedAt, _ = time.Parse("2006-01-02 15:04:05", recordedAtStr)
-		v.BPStatus = CalculateBPStatus(v.Systolic, v.Diastolic)
-		v.SugarStatus = CalculateSugarStatus(v.BloodSugar)
 		list = append(list, v)
 	}
 
@@ -98,11 +112,12 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 }
 
 type LogVitalsRequest struct {
-	Systolic       int      `json:"systolic"`
-	Diastolic      int      `json:"diastolic"`
-	Pulse          int      `json:"pulse"`
+	VitalType      string   `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full'
+	Systolic       *int     `json:"systolic,omitempty"`
+	Diastolic      *int     `json:"diastolic,omitempty"`
+	Pulse          *int     `json:"pulse,omitempty"`
 	BloodSugar     *float64 `json:"blood_sugar,omitempty"`
-	AlertnessLevel string   `json:"alertness_level"` // 'alert', 'confused', 'restless', 'drowsy'
+	AlertnessLevel string   `json:"alertness_level,omitempty"` // 'alert', 'confused', 'restless', 'drowsy'
 	Notes          string   `json:"notes,omitempty"`
 }
 
@@ -123,9 +138,54 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Systolic < 50 || req.Systolic > 300 || req.Diastolic < 30 || req.Diastolic > 200 || req.Pulse < 30 || req.Pulse > 220 {
-		http.Error(w, `{"error":"vitals numbers out of clinical safety range"}`, http.StatusBadRequest)
+	// At least one metric must be provided
+	if req.Systolic == nil && req.BloodSugar == nil && req.AlertnessLevel == "" {
+		http.Error(w, `{"error":"at least one vital measurement (blood pressure, blood sugar, or alertness) must be provided"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Validate Blood Pressure if provided
+	if req.Systolic != nil || req.Diastolic != nil {
+		if req.Systolic == nil || req.Diastolic == nil {
+			http.Error(w, `{"error":"both systolic and diastolic must be provided for blood pressure"}`, http.StatusBadRequest)
+			return
+		}
+		if *req.Systolic < 50 || *req.Systolic > 300 || *req.Diastolic < 30 || *req.Diastolic > 200 {
+			http.Error(w, `{"error":"blood pressure numbers out of clinical safety range"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate Pulse if provided
+	if req.Pulse != nil {
+		if *req.Pulse < 30 || *req.Pulse > 220 {
+			http.Error(w, `{"error":"pulse number out of clinical safety range"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate Blood Sugar if provided
+	if req.BloodSugar != nil {
+		if *req.BloodSugar < 1.0 || *req.BloodSugar > 45.0 {
+			http.Error(w, `{"error":"blood sugar out of clinical safety range"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Determine vital_type
+	vitalType := req.VitalType
+	if vitalType == "" {
+		if req.Systolic != nil && req.BloodSugar != nil {
+			vitalType = "full"
+		} else if req.Systolic != nil {
+			vitalType = "bp"
+		} else if req.BloodSugar != nil {
+			vitalType = "sugar"
+		} else if req.AlertnessLevel != "" {
+			vitalType = "alertness"
+		} else {
+			vitalType = "full"
+		}
 	}
 
 	validAlertness := map[string]bool{"alert": true, "confused": true, "restless": true, "drowsy": true}
@@ -134,24 +194,34 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
-	bpStatus := CalculateBPStatus(req.Systolic, req.Diastolic)
+	var bpStatus string
+	if req.Systolic != nil && req.Diastolic != nil {
+		bpStatus = CalculateBPStatus(*req.Systolic, *req.Diastolic)
+	}
 	sugarStatus := CalculateSugarStatus(req.BloodSugar)
 	now := time.Now().UTC()
 
 	_, err := h.DB.Exec(`
-		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, notes)
-		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, req.AlertnessLevel, req.Notes)
+		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
+		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, req.AlertnessLevel, vitalType, req.Notes)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"failed to log vitals: %v"}`, err), http.StatusInternalServerError)
 		return
 	}
 
-	auditDetails := fmt.Sprintf("BP %d/%d, Pulse %d, Alertness: %s (Status: %s)", req.Systolic, req.Diastolic, req.Pulse, req.AlertnessLevel, bpStatus)
+	auditDetails := fmt.Sprintf("Type: %s", vitalType)
+	if req.Systolic != nil && req.Diastolic != nil {
+		auditDetails += fmt.Sprintf(", BP %d/%d (Status: %s)", *req.Systolic, *req.Diastolic, bpStatus)
+	}
+	if req.Pulse != nil {
+		auditDetails += fmt.Sprintf(", Pulse %d", *req.Pulse)
+	}
 	if req.BloodSugar != nil {
 		auditDetails += fmt.Sprintf(", Sugar: %.1f mmol/L (%s)", *req.BloodSugar, sugarStatus)
 	}
+	auditDetails += fmt.Sprintf(", Alertness: %s", req.AlertnessLevel)
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
 	// Broadcast SSE event
@@ -162,6 +232,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}, map[string]interface{}{
 		"id":              id,
 		"recorded_at":     now.Format(time.RFC3339),
+		"vital_type":      vitalType,
 		"systolic":        req.Systolic,
 		"diastolic":       req.Diastolic,
 		"pulse":           req.Pulse,
@@ -178,6 +249,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":           id,
+		"vital_type":   vitalType,
 		"bp_status":    bpStatus,
 		"sugar_status": sugarStatus,
 		"recorded_at":  now.Format(time.RFC3339),
