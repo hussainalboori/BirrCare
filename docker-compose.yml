@@ -21,6 +21,9 @@ services:
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
       - SUPER_ADMIN_USER=${SUPER_ADMIN_USER:-admin}
       - SUPER_ADMIN_PIN=${SUPER_ADMIN_PIN:-1234}
+      - EMERGENCY_NUMBER=${EMERGENCY_NUMBER:-}
+      - DOCTOR_NAME=${DOCTOR_NAME:-}
+      - DOCTOR_PHONE=${DOCTOR_PHONE:-}
     volumes:
       - ./data:/data
 

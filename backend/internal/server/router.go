@@ -25,6 +25,7 @@ type Options struct {
 	RequestTimeout time.Duration // per-request timeout for non-streaming routes
 	MaxBodyBytes   int64
 	AllowedOrigins []string
+	Contacts       handlers.Contacts
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -47,6 +48,7 @@ func OptionsFromEnv(database *sql.DB, broker *sse.Broker) Options {
 		RequestTimeout: 60 * time.Second,
 		MaxBodyBytes:   1 << 20,
 		AllowedOrigins: origins,
+		Contacts:       handlers.ContactsFromEnv(),
 	}
 }
 
@@ -70,6 +72,7 @@ func NewRouter(o Options) http.Handler {
 	handoverHandler := &handlers.HandoverHandler{DB: o.DB, Broker: o.Broker}
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
+	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 
 	r := chi.NewRouter()
 
@@ -114,6 +117,9 @@ func NewRouter(o Options) http.Handler {
 			api.Get("/caregivers", authHandler.ListCaregivers)
 			api.Post("/auth/verify-pin", authHandler.VerifyPIN)
 			api.Post("/auth/logout", authHandler.Logout)
+			// Public: a crisis screen must show the doctor's number even if the PIN
+			// session has expired. The whole site is already behind Cloudflare Access.
+			api.Get("/contacts", contactsHandler.GetContacts)
 
 			api.Group(func(api chi.Router) {
 				api.Use(auth.RequireAuth)

@@ -12,6 +12,11 @@ import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import { ClipboardList, Plus, AlertTriangle, Clock, Send, Loader2 } from "lucide-react";
 
+const QUICK_PHRASES = {
+  ar: ["أكلت جيداً", "أكلت نصف الوجبة", "رفضت الأكل", "شربت ماء جيداً", "نامت جيداً", "لم تنم جيداً"],
+  en: ["Ate well", "Ate half the meal", "Refused food", "Drank water well", "Slept well", "Slept poorly"],
+};
+
 export default function HandoversPage() {
   const { t, locale } = useLanguage();
   const { currentCaregiver, openPinModal } = useCaregiver();
@@ -23,6 +28,8 @@ export default function HandoversPage() {
   const inFlightRef = useRef(false); // synchronous double-submit guard
   const [showForm, setShowForm] = useState(false);
 
+  const summaryRef = useRef<HTMLTextAreaElement>(null);
+
   // Form state
   const [shiftType, setShiftType] = useState<ShiftType>("morning");
   const [summary, setSummary] = useState<string>("");
@@ -30,12 +37,14 @@ export default function HandoversPage() {
 
   const loadHandovers = useCallback(async () => {
     try {
-      const [notesData, shiftsData] = await Promise.all([
+      // Independent requests: a shifts failure must never hide the notes themselves.
+      const [notesRes, shiftsRes] = await Promise.allSettled([
         fetchApi<HandoverNote[]>("/handovers?limit=25"),
-        fetchApi<Shift[]>("/api/v1/shifts"),
+        fetchApi<Shift[]>("/shifts"),
       ]);
-      setNotesList(notesData || []);
-      const validShifts = shiftsData || [];
+      if (notesRes.status === "fulfilled") setNotesList(notesRes.value || []);
+      else console.warn("Failed fetching handovers:", notesRes.reason);
+      const validShifts = shiftsRes.status === "fulfilled" ? shiftsRes.value || [] : [];
       setActiveShifts(validShifts);
       if (validShifts.length > 0) {
         setShiftType((prev) => {
@@ -55,6 +64,17 @@ export default function HandoversPage() {
   useEffect(() => {
     loadHandovers();
   }, [loadHandovers]);
+
+  // Opening the form drops the cursor straight into the note: type and send.
+  useEffect(() => {
+    if (showForm) summaryRef.current?.focus();
+  }, [showForm]);
+
+  const appendPhrase = (phrase: string) => {
+    const sep = locale === "ar" ? "، " : ", ";
+    setSummary((prev) => (prev.trim() ? `${prev.trim()}${sep}${phrase}` : phrase));
+    summaryRef.current?.focus();
+  };
 
   // Live SSE listener
   const { status: connectionStatus } = useLiveSync({
@@ -152,6 +172,34 @@ export default function HandoversPage() {
               {t.newHandover}
             </h2>
 
+            {/* Note text */}
+            <div className="mb-4">
+              <textarea
+                ref={summaryRef}
+                required
+                rows={4}
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                placeholder={t.summaryPlaceholder}
+                aria-label={t.newHandover}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+
+            {/* One-tap phrases: most notes are about food, water and sleep */}
+            <div className="mb-4 flex flex-wrap gap-2">
+              {QUICK_PHRASES[locale].map((phrase) => (
+                <button
+                  type="button"
+                  key={phrase}
+                  onClick={() => appendPhrase(phrase)}
+                  className="min-h-12 rounded-full border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  {phrase}
+                </button>
+              ))}
+            </div>
+
             {/* Shift Window Selector */}
             <div className="mb-4">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
@@ -209,19 +257,6 @@ export default function HandoversPage() {
                   {t.urgentFlag}
                 </span>
               </label>
-            </div>
-
-            {/* Note text */}
-            <div className="mb-4">
-              <textarea
-                required
-                rows={4}
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-                placeholder={t.summaryPlaceholder}
-                aria-label={t.newHandover}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
             </div>
 
             {/* Form actions */}

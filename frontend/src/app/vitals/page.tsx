@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
+import { CrisisActions } from "@/components/CrisisActions";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
@@ -57,6 +58,8 @@ export default function VitalsPage() {
   const [sugarTiming, setSugarTiming] = useState<BloodSugarTiming>("random");
   const [alertness, setAlertness] = useState<AlertnessLevel>("alert");
   const [notes, setNotes] = useState<string>("");
+  // Last saved crisis reading: keeps the "what to do now" panel on screen after the modal closes.
+  const [savedCrisis, setSavedCrisis] = useState<{ systolic: number; diastolic: number } | null>(null);
 
   const loadVitals = useCallback(async () => {
     try {
@@ -170,6 +173,10 @@ export default function VitalsPage() {
         body: JSON.stringify(payload),
       });
 
+      if (payload.systolic && classifyBloodPressure(payload.systolic, payload.diastolic).status === "CRISIS") {
+        setSavedCrisis({ systolic: payload.systolic, diastolic: payload.diastolic });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
       handleCloseModal();
       setSystolic("");
       setDiastolic("");
@@ -238,6 +245,26 @@ export default function VitalsPage() {
             </button>
           )}
         </div>
+
+        {savedCrisis && (
+          <section
+            role="alert"
+            className="mb-6 rounded-3xl border-2 border-rose-500 bg-rose-50 p-4 shadow-lg dark:bg-rose-950/40"
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <BloodPressureBadge systolic={savedCrisis.systolic} diastolic={savedCrisis.diastolic} />
+              <button
+                type="button"
+                onClick={() => setSavedCrisis(null)}
+                aria-label={locale === "ar" ? "إخفاء" : "Dismiss"}
+                className="flex min-h-12 min-w-12 items-center justify-center rounded-full text-rose-700 hover:bg-rose-100 dark:text-rose-300 dark:hover:bg-rose-900/40"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <CrisisActions />
+          </section>
+        )}
 
         {/* ========================================================================= */}
         {/* POP-UP MODAL: CHOOSE VITAL TYPE OR FILL FOCUSED FORM */}

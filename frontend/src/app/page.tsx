@@ -79,8 +79,9 @@ export default function MedicationsPage() {
   const takenDoses = scheduleData.filter((d) => d.log?.status === "taken").length;
   const progressPercent = totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 0;
 
-  // Group by slots: morning, afternoon, evening, bedtime
-  const slotOrder = ["morning", "afternoon", "evening", "bedtime"];
+  // Group by slots in clock order. "night" (02:00 by default) must be listed, or the
+  // dose given at 3 AM never renders on the dashboard.
+  const slotOrder = ["night", "morning", "afternoon", "evening", "bedtime"];
   const groupedBySlot = slotOrder.map((slot) => ({
     slot,
     doses: scheduleData.filter((d) => d.slot === slot),

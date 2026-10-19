@@ -14,6 +14,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
+	"birrcare/backend/internal/handlers"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/sse"
 
@@ -177,5 +178,36 @@ func TestSSEStreamOutlivesRequestTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out")
+	}
+}
+
+// The crisis screen must reach the doctor's number without a PIN session.
+func TestContactsArePublic(t *testing.T) {
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "birrcare.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	broker := sse.InitBroker()
+	srv := httptest.NewServer(NewRouter(Options{
+		DB: database, Broker: broker, Auth: prodCfg, Limiter: auth.NewPINLimiter(),
+		RequestTimeout: time.Second, MaxBodyBytes: 1 << 20,
+		Contacts: handlers.Contacts{EmergencyNumber: "997", DoctorName: "Dr. Noura", DoctorPhone: "+966500000000"},
+	}))
+	t.Cleanup(func() { broker.Close(); srv.Close(); database.Close() })
+
+	res := do(t, "GET", srv.URL+"/api/v1/contacts", nil, nil)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	var got handlers.Contacts
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EmergencyNumber != "997" || got.DoctorPhone != "+966500000000" || got.DoctorName != "Dr. Noura" {
+		t.Fatalf("unexpected contacts: %+v", got)
 	}
 }

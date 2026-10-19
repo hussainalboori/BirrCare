@@ -5,6 +5,7 @@ import { classifyBloodPressure } from "@/lib/clinical";
 import { useLanguage } from "@/context/LanguageContext";
 import { AlertTriangle, CheckCircle, AlertCircle } from "lucide-react";
 import { Ltr } from "./Ltr";
+import { CrisisActions } from "./CrisisActions";
 
 interface BloodPressureBadgeProps {
   systolic: number;
@@ -50,6 +51,8 @@ export function BloodPressureBadge({ systolic, diastolic, showDetails = false }:
           {locale === "ar" ? meta.actionAr : meta.actionEn}
         </div>
       )}
+
+      {showDetails && isCrisis && <CrisisActions />}
     </div>
   );
 }

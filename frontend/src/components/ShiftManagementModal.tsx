@@ -114,9 +114,9 @@ export function ShiftManagementModal({
     setError(null);
     try {
       const [shiftsData, cgData, dutyData] = await Promise.all([
-        fetchApi<Shift[]>("/api/v1/shifts"),
-        fetchApi<Caregiver[]>("/api/v1/caregivers"),
-        fetchApi<CurrentDutyStatus>("/api/v1/shifts/current-duty"),
+        fetchApi<Shift[]>("/shifts"),
+        fetchApi<Caregiver[]>("/caregivers"),
+        fetchApi<CurrentDutyStatus>("/shifts/current-duty"),
       ]);
       setShifts(shiftsData || []);
       setCaregivers(cgData?.filter((c) => c.is_active && c.role !== "viewer") || []);
@@ -124,7 +124,7 @@ export function ShiftManagementModal({
 
       // Load assignments for selected date
       const assignData = await fetchApi<ShiftAssignment[]>(
-        `/api/v1/shifts/assignments?date=${selectedDate}`
+        `/shifts/assignments?date=${selectedDate}`
       );
       setAssignments(assignData || []);
     } catch (err: any) {
@@ -144,7 +144,7 @@ export function ShiftManagementModal({
     setError(null);
     setSuccessMsg(null);
     try {
-      const updatedShifts = await fetchApi<Shift[]>("/api/v1/shifts/presets", {
+      const updatedShifts = await fetchApi<Shift[]>("/shifts/presets", {
         method: "POST",
         body: JSON.stringify({ preset }),
       });
@@ -175,7 +175,7 @@ export function ShiftManagementModal({
     setError(null);
     setSuccessMsg(null);
     try {
-      await fetchApi<Shift>("/api/v1/shifts", {
+      await fetchApi<Shift>("/shifts", {
         method: "POST",
         body: JSON.stringify({
           name_ar: newShiftNameAr.trim(),
@@ -218,7 +218,7 @@ export function ShiftManagementModal({
     setSaving(true);
     setError(null);
     try {
-      await fetchApi(`/api/v1/shifts/${shiftId}`, { method: "DELETE" });
+      await fetchApi(`/shifts/${shiftId}`, { method: "DELETE" });
       await loadData();
       onUpdated?.();
     } catch (err: any) {
@@ -233,7 +233,7 @@ export function ShiftManagementModal({
     setSaving(true);
     setError(null);
     try {
-      await fetchApi("/api/v1/shifts/assignments", {
+      await fetchApi("/shifts/assignments", {
         method: "POST",
         body: JSON.stringify({
           shift_id: shiftId,
