@@ -87,7 +87,13 @@ func MessageFor(kind, alertID, lang string) Message {
 	if ar {
 		body = "تنبيه دواء — افتح رعاية بر"
 	}
-	if kind == "bp_crisis" {
+	if kind == "alertness" || kind == "fast_positive" {
+		body = "Health alert — open Birrcare"
+		if ar {
+			body = "تنبيه صحي — افتح رعاية بر"
+		}
+	}
+	if kind == "bp_crisis" || kind == "bp_low" {
 		body = "Blood pressure alert — open Birrcare"
 		if ar {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"

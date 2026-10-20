@@ -13,6 +13,7 @@ import (
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -22,12 +23,19 @@ type VitalsHandler struct {
 	Push   *push.Notifier // nil = no Web Push
 }
 
+// CalculateBPStatus classifies a reading. Order: CRISIS, STAGE_2, LOW, ELEVATED,
+// NORMAL, so a high systolic is reported as high even with a low diastolic.
+// Must match classifyBloodPressure in frontend/src/lib/clinical.ts; both are tested
+// against clinical/bp-cases.json.
 func CalculateBPStatus(systolic, diastolic int) string {
 	if systolic >= 180 || diastolic >= 120 {
 		return "CRISIS"
 	}
 	if systolic >= 140 || diastolic >= 90 {
 		return "STAGE_2"
+	}
+	if low := currentBPLow(); systolic < low.LowSystolic || diastolic < low.LowDiastolic {
+		return "LOW"
 	}
 	if systolic >= 120 || diastolic >= 80 {
 		return "ELEVATED"
@@ -61,7 +69,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.DB.Query(`
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
-		       c.name, c.avatar_color, v.suspect_default_sugar
+		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, '')
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		ORDER BY v.recorded_at DESC
@@ -80,8 +88,9 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		var notes, vitalType sql.NullString
 		var bloodSugar sql.NullFloat64
 		var recordedAtStr string
+		var fastResult, lastNormal string
 
-		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar); err != nil {
+		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal); err != nil {
 			continue
 		}
 		if sys.Valid && dia.Valid {
@@ -103,6 +112,10 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 			v.VitalType = vitalType.String
 		}
 		normalizeAlertness(&v)
+		if fastResult != "" {
+			v.FastResult = json.RawMessage(fastResult)
+		}
+		v.LastNormalAt = sqliteToRFC3339(lastNormal)
 		if notes.Valid {
 			v.Notes = notes.String
 		}
@@ -122,7 +135,17 @@ type LogVitalsRequest struct {
 	BloodSugar     *float64 `json:"blood_sugar,omitempty"`
 	AlertnessLevel string   `json:"alertness_level,omitempty"` // 'alert', 'confused', 'restless', 'drowsy'
 	Notes          string   `json:"notes,omitempty"`
+	// F.A.S.T. stroke check (vital_type 'fast', issue #13). Any true answer is positive.
+	FastResult *FastResult `json:"fast_result,omitempty"`
 }
+
+type FastResult struct {
+	Face   bool `json:"face"`
+	Arm    bool `json:"arm"`
+	Speech bool `json:"speech"`
+}
+
+func (f FastResult) Positive() bool { return f.Face || f.Arm || f.Speech }
 
 func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
@@ -142,7 +165,14 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// At least one metric must be provided
-	if req.Systolic == nil && req.BloodSugar == nil && req.AlertnessLevel == "" {
+	if req.VitalType == "fast" && req.FastResult == nil {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_FAST", "a F.A.S.T. check needs fast_result {face, arm, speech}")
+		return
+	}
+	if req.VitalType != "fast" {
+		req.FastResult = nil
+	}
+	if req.Systolic == nil && req.BloodSugar == nil && req.AlertnessLevel == "" && req.FastResult == nil {
 		http.Error(w, `{"error":"at least one vital measurement (blood pressure, blood sugar, or alertness) must be provided"}`, http.StatusBadRequest)
 		return
 	}
@@ -215,7 +245,14 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	sugarStatus := CalculateSugarStatus(req.BloodSugar)
 	now := time.Now().UTC()
 
-	// A crisis reading and its alert (issue #12) commit together, or not at all.
+	var fastJSON *string
+	if req.FastResult != nil {
+		b, _ := json.Marshal(req.FastResult)
+		s := string(b)
+		fastJSON = &s
+	}
+
+	// A reading and its alerts (issues #12, #13) commit together, or not at all.
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		internalError(w, "failed to log vitals", err)
@@ -223,21 +260,41 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
 	if _, err := tx.Exec(`
-		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes); err != nil {
+		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes, fastJSON); err != nil {
 		tx.Rollback()
 		internalError(w, "failed to log vitals", err)
 		return
 	}
-	var alertID string
-	if bpStatus == "CRISIS" {
-		if alertID, err = recordAlert(tx, "bp_crisis", id, caregiver.ID, map[string]interface{}{
-			"systolic": *req.Systolic, "diastolic": *req.Diastolic,
-		}); err != nil {
+	// Alerts, most urgent first: the first one is pushed and carried by the SSE event.
+	type pending struct {
+		kind    string
+		payload map[string]interface{}
+	}
+	var toRaise []pending
+	if req.FastResult != nil && req.FastResult.Positive() {
+		toRaise = append(toRaise, pending{"fast_positive", map[string]interface{}{"face": req.FastResult.Face, "arm": req.FastResult.Arm, "speech": req.FastResult.Speech}})
+	}
+	switch bpStatus {
+	case "CRISIS":
+		toRaise = append(toRaise, pending{"bp_crisis", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
+	case "LOW":
+		toRaise = append(toRaise, pending{"bp_low", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
+	}
+	if alertness != nil && (*alertness == "confused" || *alertness == "drowsy") {
+		toRaise = append(toRaise, pending{"alertness", map[string]interface{}{"level": *alertness}})
+	}
+	var alertID, alertKind string
+	for _, a := range toRaise {
+		aid, err := recordAlert(tx, a.kind, id, caregiver.ID, a.payload)
+		if err != nil {
 			tx.Rollback()
-			internalError(w, "failed to record crisis alert", err)
+			internalError(w, "failed to record alert", err)
 			return
+		}
+		if alertID == "" {
+			alertID, alertKind = aid, a.kind
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -260,6 +317,9 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	} else {
 		auditDetails += ", Alertness: not assessed"
 	}
+	if req.FastResult != nil {
+		auditDetails += fmt.Sprintf(", F.A.S.T. face=%t arm=%t speech=%t", req.FastResult.Face, req.FastResult.Arm, req.FastResult.Speech)
+	}
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
 	// Broadcast SSE event (a crisis carries its alert id, also as the SSE "id:").
@@ -275,13 +335,14 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"sugar_status":    sugarStatus,
 		"alertness_level": alertness,
 		"bp_status":       bpStatus,
+		"fast_result":     req.FastResult,
 		"notes":           req.Notes,
 		"caregiver_name":  caregiver.Name,
 		"avatar_color":    caregiver.AvatarColor,
 	}
 	if alertID != "" {
 		h.Broker.BroadcastAlert(alertID, "VITAL_LOGGED", actorOf(caregiver), vitalPayload)
-		h.Push.NotifyAsync(alertID, "bp_crisis", caregiver.ID)
+		h.Push.NotifyAsync(alertID, alertKind, caregiver.ID)
 	} else {
 		h.Broker.Broadcast("VITAL_LOGGED", actorOf(caregiver), vitalPayload)
 	}
@@ -304,4 +365,42 @@ func normalizeAlertness(v *models.VitalsLog) {
 	if v.VitalType == "bp" || v.VitalType == "sugar" {
 		v.AlertnessLevel = nil
 	}
+}
+
+type LastNormalRequest struct {
+	LastNormalAt string `json:"last_normal_at"` // RFC3339
+}
+
+// SetLastNormal records when she was last seen normal on a F.A.S.T. check, for the
+// paramedics (issue #13). Within the last 7 days, not in the future.
+func (h *VitalsHandler) SetLastNormal(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if !auth.CanTakeActions(caregiver) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Viewers cannot change readings")
+		return
+	}
+	var req LastNormalRequest
+	var t time.Time
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err == nil {
+		t, err = time.Parse(time.RFC3339, req.LastNormalAt)
+	}
+	now := time.Now().UTC()
+	if err != nil || t.After(now.Add(time.Minute)) || now.Sub(t) > 7*24*time.Hour {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_TIME", "last_normal_at must be an RFC3339 time within the last 7 days")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	res, err := h.DB.ExecContext(r.Context(), `UPDATE vitals_logs SET last_normal_at = ? WHERE id = ? AND vital_type = 'fast'`, t.UTC().Format(sqliteTimeLayout), id)
+	if err != nil {
+		internalError(w, "failed to save time", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "F.A.S.T. check not found")
+		return
+	}
+	audit.Log(h.DB, caregiver.ID, "FAST_LAST_NORMAL", "vitals_log", id, "Last seen normal at "+t.UTC().Format(time.RFC3339))
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"saved"}`))
 }

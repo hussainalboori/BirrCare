@@ -10,7 +10,8 @@ import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { localDateString } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
-import { Calendar, CheckCircle2, Clock, Sparkles } from "lucide-react";
+import { Calendar, CheckCircle2, Clock, Sparkles, Brain } from "lucide-react";
+import Link from "next/link";
 
 export default function MedicationsPage() {
   const { t, locale } = useLanguage();
@@ -100,6 +101,15 @@ export default function MedicationsPage() {
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         <PushOptIn />
+        {/* Issue #13: one tap to the F.A.S.T. stroke check */}
+        <Link
+          href="/fast"
+          data-testid="seems-off"
+          className="mb-4 flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 border-rose-700 bg-white px-4 text-lg font-black text-rose-800 active:scale-95 dark:bg-slate-900 dark:text-rose-300"
+        >
+          <Brain className="h-6 w-6" />
+          {locale === "ar" ? "تبدو غير طبيعية؟ فحص الجلطة السريع" : "She seems off? Quick stroke check"}
+        </Link>
         {/* Header & Date Selector */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

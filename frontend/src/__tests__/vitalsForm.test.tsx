@@ -12,6 +12,8 @@ vi.mock("@/context/CaregiverContext", () => ({
 }));
 vi.mock("@/hooks/useLiveSync", () => ({ useLiveSync: () => ({ status: "connected" }) }));
 vi.mock("@/components/CaregiverHeader", () => ({ CaregiverHeader: () => null }));
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 import VitalsPage from "@/app/vitals/page";
 
@@ -70,6 +72,18 @@ describe("vitals form (issue #10)", () => {
     expect(body).toMatchObject({ vital_type: "bp", systolic: 185, diastolic: 115 });
     expect(body).not.toHaveProperty("pulse");
     expect(window.alert).not.toHaveBeenCalled();
+  });
+
+  it("issue #13: choosing 'Hard to wake' shows what to do and opens F.A.S.T. after saving", async () => {
+    render(<VitalsPage />);
+    await openKind(t.vitalAlertnessTitle);
+    fireEvent.click(screen.getByRole("button", { name: /Hard to wake/ }));
+    expect(screen.getByRole("alert").textContent).toContain("Call the doctor now, emergency if this is new");
+    expect(screen.getByRole("link", { name: /F\.A\.S\.T\./ }).getAttribute("href")).toBe("/fast");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    await waitFor(() => expect(postedBodies()).toHaveLength(1));
+    expect(postedBodies()[0]).toMatchObject({ vital_type: "alertness", alertness_level: "drowsy" });
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/fast"));
   });
 
   it("after saving sugar 14.2, reopening Full starts with an empty sugar field", async () => {

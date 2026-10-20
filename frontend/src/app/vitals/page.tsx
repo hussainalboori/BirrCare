@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
 import { CrisisActions } from "@/components/CrisisActions";
+import { ClinicalThresholds } from "@/components/ClinicalThresholds";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
@@ -34,6 +37,7 @@ import {
 export default function VitalsPage() {
   const { t, locale } = useLanguage();
   const { currentCaregiver, openPinModal } = useCaregiver();
+  const router = useRouter();
 
   const [vitalsList, setVitalsList] = useState<VitalsLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,12 +124,20 @@ export default function VitalsPage() {
   }, [liveCrisis]);
 
   // Quick BP from the bottom bar: /vitals?quick=bp, or an event when already here.
+  const quickFocusRef = useRef(false);
   const openQuickBP = useCallback(() => {
     if (!currentCaregiver || isViewer(currentCaregiver.role)) return;
+    quickFocusRef.current = true;
     setIsModalOpen(true);
     setSelectedKind("bp");
-    setTimeout(() => systolicRef.current?.focus(), 50);
   }, [currentCaregiver]);
+  // Focus systolic once the field is actually on screen (a timer raced slow devices).
+  useEffect(() => {
+    if (isModalOpen && selectedKind === "bp" && quickFocusRef.current && systolicRef.current) {
+      quickFocusRef.current = false;
+      systolicRef.current.focus();
+    }
+  }, [isModalOpen, selectedKind]);
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("quick") === "bp" && currentCaregiver) {
       window.history.replaceState(null, "", "/vitals");
@@ -233,7 +245,10 @@ export default function VitalsPage() {
       if (payload.systolic && classifyBloodPressure(payload.systolic, payload.diastolic).status === "CRISIS") {
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
+      // New confusion or hard to wake (issue #13): go straight to the F.A.S.T. check.
+      const escalate = payload.alertness_level === "confused" || payload.alertness_level === "drowsy";
       handleCloseModal(); // also clears every field, so the next check starts empty
+      if (escalate) router.push("/fast");
       loadVitals();
     } catch (err: any) {
       alert(err.message || "Failed to record vitals");
@@ -298,6 +313,8 @@ export default function VitalsPage() {
             </button>
           )}
         </div>
+
+        <ClinicalThresholds />
 
         {savedCrisis && (
           <section
@@ -764,6 +781,20 @@ export default function VitalsPage() {
                             );
                           })}
                         </div>
+                        {(alertness === "confused" || alertness === "drowsy") && (
+                          <div
+                            role="alert"
+                            className={`mt-3 space-y-2 rounded-xl p-3 text-base font-bold text-white ${alertness === "drowsy" ? "bg-rose-700" : "bg-orange-600"}`}
+                          >
+                            <p>{locale === "ar" ? ALERTNESS_METAS[alertness].descAr : ALERTNESS_METAS[alertness].descEn}</p>
+                            <Link
+                              href="/fast"
+                              className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-rose-800"
+                            >
+                              {locale === "ar" ? "افحص F.A.S.T. الآن" : "Do the F.A.S.T. check now"}
+                            </Link>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -926,6 +957,38 @@ export default function VitalsPage() {
               const hasBP = vital.systolic != null && vital.diastolic != null;
               const hasSugar = vital.blood_sugar != null && vital.blood_sugar > 0;
               const hasAlertness = vital.vital_type === "alertness" || (!hasBP && !hasSugar);
+
+              // F.A.S.T. stroke check (issue #13)
+              if (vital.vital_type === "fast" && vital.fast_result) {
+                const f = vital.fast_result;
+                const positive = f.face || f.arm || f.speech;
+                const signs = [f.face && (locale === "ar" ? "الوجه" : "face"), f.arm && (locale === "ar" ? "الذراع" : "arm"), f.speech && (locale === "ar" ? "الكلام" : "speech")].filter(Boolean);
+                return (
+                  <div
+                    key={vital.id}
+                    className={`rounded-2xl border p-4 shadow-xs ${positive ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${positive ? "bg-rose-700 text-white" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"}`}>
+                        F.A.S.T. — {positive ? (locale === "ar" ? `علامة: ${signs.join("، ")}` : `sign: ${signs.join(", ")}`) : locale === "ar" ? "لا علامات" : "no signs"}
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                        <Clock className="h-3 w-3" />
+                        <Ltr>{dateStr} • {timeStr}</Ltr>
+                      </span>
+                    </div>
+                    {vital.last_normal_at && (
+                      <p className="mt-2 text-sm font-semibold text-rose-800 dark:text-rose-300">
+                        {locale === "ar" ? "آخر مرة طبيعية: " : "Last seen normal: "}
+                        <bdi dir="auto">{formatTime(vital.last_normal_at, locale)}</bdi>
+                      </p>
+                    )}
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      <bdi>{vital.caregiver_name}</bdi>
+                    </p>
+                  </div>
+                );
+              }
 
               // Badge indicator based on vital type
               const typeBadge =

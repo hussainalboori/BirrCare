@@ -10,6 +10,21 @@ export interface BPClassification {
   actionEn: string;
 }
 
+/** Low BP thresholds (issue #13): LOW when systolic < sys or diastolic < dia. The
+ * doctor's values come from /settings/clinical (setBPLowThresholds at app start). */
+let bpLow = { sys: 90, dia: 60 };
+export function setBPLowThresholds(sys: number, dia: number) {
+  if (Number.isFinite(sys) && Number.isFinite(dia)) bpLow = { sys, dia };
+}
+export function getBPLowThresholds() {
+  return bpLow;
+}
+
+/**
+ * Order: CRISIS, STAGE_2, LOW, ELEVATED, NORMAL, so a high systolic is reported as
+ * high even with a low diastolic. Must match CalculateBPStatus in the Go backend;
+ * both are tested against clinical/bp-cases.json.
+ */
 export function classifyBloodPressure(systolic: number, diastolic: number): BPClassification {
   if (systolic >= 180 || diastolic >= 120) {
     return {
@@ -36,6 +51,18 @@ export function classifyBloodPressure(systolic: number, diastolic: number): BPCl
     };
   }
 
+  if (systolic < bpLow.sys || diastolic < bpLow.dia) {
+    return {
+      status: "LOW",
+      badgeClass: "bg-rose-700 text-white shadow-rose-500/30 shadow-md",
+      bgLightClass: "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-300",
+      labelAr: "ضغط منخفض",
+      labelEn: "Low blood pressure",
+      actionAr: "مدّدها على ظهرها، أعد القياس بعد 5 دقائق، واتصل بالطبيب",
+      actionEn: "Lay her down, re-measure in 5 minutes, and call the doctor",
+    };
+  }
+
   if (systolic >= 120 || diastolic >= 80) {
     return {
       status: "ELEVATED",
@@ -54,8 +81,8 @@ export function classifyBloodPressure(systolic: number, diastolic: number): BPCl
     bgLightClass: "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400",
     labelAr: "طبيعي ومستقر",
     labelEn: "Normal & Stable",
-    actionAr: "الضغط في الحدود المثالية لمريض الجلطة",
-    actionEn: "Pressure is within ideal recovery target range",
+    actionAr: "الضغط ضمن الحدود الطبيعية",
+    actionEn: "Blood pressure is in the normal range",
   };
 }
 
@@ -155,11 +182,11 @@ export const ALERTNESS_METAS: Record<AlertnessLevel, AlertnessMeta> = {
   },
   confused: {
     level: "confused",
-    badgeClass: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30",
-    labelAr: "مشوش / بطء استجابة",
-    labelEn: "Confused / Disoriented",
-    descAr: "صعوبة في تمييز الوقت أو الوجوه أو نطق الكلمات",
-    descEn: "Difficulty orienting time, people or slurred speech",
+    badgeClass: "bg-orange-600 text-white border border-orange-700",
+    labelAr: "مشوشة / بطيئة الاستجابة",
+    labelEn: "Confused / slow to respond",
+    descAr: "إذا كان هذا جديداً: افحص F.A.S.T. الآن واتصل بالطبيب",
+    descEn: "If this is new: do the F.A.S.T. check now and call the doctor",
   },
   restless: {
     level: "restless",
@@ -171,11 +198,11 @@ export const ALERTNESS_METAS: Record<AlertnessLevel, AlertnessMeta> = {
   },
   drowsy: {
     level: "drowsy",
-    badgeClass: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30",
-    labelAr: "نعاس مفرط / خمول",
-    labelEn: "Drowsy / Lethargic",
-    descAr: "صعوبة في البقاء مستيقظاً خارج أوقات النوم",
-    descEn: "Hard to awaken outside regular sleeping hours",
+    badgeClass: "bg-rose-700 text-white border border-rose-800",
+    labelAr: "صعب إيقاظها",
+    labelEn: "Hard to wake",
+    descAr: "اتصل بالطبيب الآن، وبالإسعاف إذا كان هذا جديداً",
+    descEn: "Call the doctor now, emergency if this is new",
   },
 };
 

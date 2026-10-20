@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'dose_override', 'vomited')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -124,7 +124,11 @@ CREATE TABLE IF NOT EXISTS vitals_logs (
     vital_type TEXT DEFAULT 'full',
     notes TEXT,
     -- 1 = a 'full' reading saved with 6.4, the value the old form pre-filled (issue #10).
-    suspect_default_sugar INTEGER NOT NULL DEFAULT 0
+    suspect_default_sugar INTEGER NOT NULL DEFAULT 0,
+    -- F.A.S.T. stroke check (vital_type 'fast', issue #13): {"face":bool,"arm":bool,"speech":bool}
+    fast_result TEXT,
+    -- When she was last seen normal, for the paramedics.
+    last_normal_at TEXT
 );
 
 -- 5. Shift Handover Notes
@@ -390,11 +394,11 @@ func Migrate(database *sql.DB) error {
 
 	// Two-factor authentication (authenticator app) and session revocation.
 	for _, col := range []struct{ name, def string }{
-		{"totp_secret", "TEXT"},                         // base32, set once 2FA is enabled
-		{"totp_pending_secret", "TEXT"},                 // during setup, until the first code is confirmed
-		{"totp_enabled", "INTEGER NOT NULL DEFAULT 0"},  // 1 = PIN alone never signs in
-		{"totp_last_step", "INTEGER NOT NULL DEFAULT 0"}, // last accepted time step (replay guard)
-		{"recovery_codes", "TEXT"},                      // JSON array of SHA-256 hashes, removed when used
+		{"totp_secret", "TEXT"},                                // base32, set once 2FA is enabled
+		{"totp_pending_secret", "TEXT"},                        // during setup, until the first code is confirmed
+		{"totp_enabled", "INTEGER NOT NULL DEFAULT 0"},         // 1 = PIN alone never signs in
+		{"totp_last_step", "INTEGER NOT NULL DEFAULT 0"},       // last accepted time step (replay guard)
+		{"recovery_codes", "TEXT"},                             // JSON array of SHA-256 hashes, removed when used
 		{"sessions_valid_after", "INTEGER NOT NULL DEFAULT 0"}, // unix time; older session cookies are refused
 	} {
 		var n int
@@ -418,7 +422,6 @@ func Migrate(database *sql.DB) error {
 			}
 		}
 	}
-
 
 	// 4. Migrate vitals_logs table to allow selective metrics (systolic/diastolic/pulse can be NULL when logging only sugar or alertness)
 	var notNullSystolic int
@@ -488,6 +491,41 @@ func Migrate(database *sql.DB) error {
 		`
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating vitals_logs (alertness/suspect sugar): %w", err)
+		}
+	}
+
+	// Issue #13: F.A.S.T. results and "last seen normal" on vitals; more alert kinds.
+	for _, col := range []string{"fast_result", "last_normal_at"} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vitals_logs') WHERE name = ?", col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE vitals_logs ADD COLUMN " + col + " TEXT"); err != nil {
+				return fmt.Errorf("failed adding vitals_logs.%s: %w", col, err)
+			}
+		}
+	}
+	var alertsSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'fast_positive'") {
+		log.Println("Migrating alerts: low BP, alertness and F.A.S.T. kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v2;
+			CREATE TABLE alerts_v2 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now'))
+			);
+			INSERT INTO alerts_v2 SELECT id, kind, ref_id, created_by, payload, created_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v2 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts: %w", err)
 		}
 	}
 
@@ -663,4 +701,3 @@ func seedShifts(database *sql.DB) error {
 	log.Println("Seeded default 24-hour caregiver shift configuration.")
 	return nil
 }
-

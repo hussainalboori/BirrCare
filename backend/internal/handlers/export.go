@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"birrcare/backend/internal/models"
@@ -43,6 +44,9 @@ type VitalsStats struct {
 	CrisisCount   int      `json:"crisis_count"`
 	ElevatedCount int      `json:"elevated_count"`
 	AvgBloodSugar *float64 `json:"avg_blood_sugar,omitempty"`
+	LowCount      int      `json:"low_count"` // low blood pressure readings (issue #13)
+	// Positive F.A.S.T. stroke checks in the period.
+	FastPositiveCount int `json:"fast_positive_count"`
 	// Readings flagged as possibly the old form's pre-filled 6.4; left out of the average.
 	UnverifiedSugarCount int `json:"unverified_sugar_count"`
 }
@@ -83,7 +87,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	// 1. Vitals stats
 	rows, err := h.DB.Query(`
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
-		       c.name, c.avatar_color, v.suspect_default_sugar
+		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, '')
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		WHERE v.recorded_at >= ?
@@ -105,7 +109,8 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			var notes, vitalType sql.NullString
 			var sugar sql.NullFloat64
 			var recordedAtStr string
-			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar); err != nil {
+			var fastResult, lastNormal string
+			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal); err != nil {
 				continue
 			}
 			if sys.Valid && dia.Valid {
@@ -141,6 +146,8 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 
 				if v.BPStatus == "CRISIS" {
 					stats.CrisisCount++
+				} else if v.BPStatus == "LOW" {
+					stats.LowCount++
 				} else if v.BPStatus == "STAGE_2" || v.BPStatus == "ELEVATED" {
 					stats.ElevatedCount++
 				}
@@ -165,6 +172,13 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 				v.VitalType = vitalType.String
 			}
 			normalizeAlertness(&v)
+			if fastResult != "" {
+				v.FastResult = json.RawMessage(fastResult)
+			}
+			v.LastNormalAt = sqliteToRFC3339(lastNormal)
+			if v.VitalType == "fast" && (strings.Contains(fastResult, `"face":true`) || strings.Contains(fastResult, `"arm":true`) || strings.Contains(fastResult, `"speech":true`)) {
+				stats.FastPositiveCount++
+			}
 			if notes.Valid {
 				v.Notes = notes.String
 			}

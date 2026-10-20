@@ -7,6 +7,8 @@ import { fetchApi } from "@/lib/api";
 import { formatTime } from "@/lib/datetime";
 import { playAlert } from "@/lib/alertSound";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
+import { setBPLowThresholds } from "@/lib/clinical";
+import Link from "next/link";
 import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
 import { Ltr } from "./Ltr";
@@ -20,7 +22,7 @@ import { Phone, Siren, Check, AlertTriangle } from "lucide-react";
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "dose_override" | "vomited";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -64,6 +66,14 @@ export function AlertCenter() {
     };
   }, [me, load]);
 
+  // The doctor's low-BP thresholds, so the app classifies readings like the server.
+  useEffect(() => {
+    if (!me) return;
+    fetchApi<{ bp_low_systolic: number; bp_low_diastolic: number }>("/settings/clinical")
+      .then((t) => t && setBPLowThresholds(t.bp_low_systolic, t.bp_low_diastolic))
+      .catch(() => {});
+  }, [me]);
+
   // Live: any event that created an alert.
   useEffect(() => {
     const onEvent = (e: Event) => {
@@ -92,21 +102,53 @@ export function AlertCenter() {
     }
   };
 
-  const crisis = current.kind === "bp_crisis";
   const p = current.payload;
+  const red = current.kind !== "dose_override" && current.kind !== "vomited";
+  const crisis = current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
   const by = current.created_by_name ? <bdi>{current.created_by_name}</bdi> : null;
   const more = alerts.length > 1 ? (ar ? ` (+${alerts.length - 1} تنبيه آخر)` : ` (+${alerts.length - 1} more)`) : "";
   const doctorLabel = contacts.doctor_name || (ar ? "الطبيب" : "Doctor");
+  const reading = p.systolic != null ? <Ltr>{String(p.systolic)}/{String(p.diastolic)}</Ltr> : null;
+
+  let title: React.ReactNode;
+  let advice = "";
+  switch (current.kind) {
+    case "bp_crisis":
+      title = <>{ar ? "ضغط دم خطير" : "Blood pressure crisis"}: {reading}</>;
+      break;
+    case "bp_low":
+      title = <>{ar ? "ضغط منخفض" : "Low blood pressure"}: {reading}</>;
+      advice = ar ? "مدّدها على ظهرها، أعد القياس بعد 5 دقائق، واتصل بالطبيب." : "Lay her down, re-measure in 5 minutes, and call the doctor.";
+      break;
+    case "fast_positive":
+      title = ar ? "علامة جلطة في فحص F.A.S.T. — اتصل بالإسعاف" : "Stroke sign in the F.A.S.T. check — call emergency";
+      break;
+    case "alertness":
+      title = p.level === "drowsy" ? (ar ? "صعب إيقاظها" : "Hard to wake") : ar ? "مشوشة / بطيئة الاستجابة" : "Confused / slow to respond";
+      advice =
+        p.level === "drowsy"
+          ? ar ? "اتصل بالطبيب الآن، وبالإسعاف إذا كان هذا جديداً." : "Call the doctor now, emergency if this is new."
+          : ar ? "إذا كان هذا جديداً: افحص F.A.S.T. الآن واتصل بالطبيب." : "If this is new: do the F.A.S.T. check now and call the doctor.";
+      break;
+    case "vomited":
+      title = <>{ar ? "استفرغت بعد جرعة" : "Vomited after a dose"}{medName && <>: <bdi>{medName}</bdi></>}</>;
+      break;
+    default:
+      title = (
+        <>
+          {ar ? "أُعطيت جرعة قبل موعدها المسموح (بأمر الطبيب)" : "A dose was given inside its minimum interval (doctor's order)"}
+          {medName && <>: <bdi>{medName}</bdi></>}
+        </>
+      );
+  }
 
   const seenButton = (
     <button
       type="button"
       onClick={acknowledge}
-      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold ${
-        crisis ? "bg-rose-900/50 text-white" : "bg-amber-950/30 text-white"
-      }`}
+      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold text-white ${red ? "bg-rose-900/50" : "bg-amber-950/30"}`}
     >
       <Check className="h-5 w-5" />
       {ar ? "تم الاطلاع" : "Seen"}
@@ -117,79 +159,59 @@ export function AlertCenter() {
     <div
       role="alertdialog"
       aria-live="assertive"
-      aria-label={crisis ? (ar ? "ضغط دم خطير" : "Blood pressure crisis") : ar ? "تنبيه دواء" : "Medication alert"}
+      aria-label={typeof title === "string" ? title : ar ? "تنبيه" : "Alert"}
       data-testid={crisis ? "crisis-bar" : "alert-bar"}
+      data-kind={current.kind}
       className={`fixed inset-x-0 top-0 z-[60] px-3 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] text-white shadow-2xl ${
-        crisis ? "bg-rose-700" : "bg-amber-800"
+        red ? "bg-rose-700" : "bg-amber-800"
       }`}
     >
       <div className="mx-auto max-w-3xl space-y-2">
-        {crisis ? (
-          <>
-            <p className="text-base font-black leading-snug">
-              ⚠ {ar ? "ضغط دم خطير" : "Blood pressure crisis"}:{" "}
-              <Ltr>
-                {String(p.systolic)}/{String(p.diastolic)}
-              </Ltr>
-              {more}
-              <span className="block text-sm font-semibold">
-                {by && (
-                  <>
-                    {ar ? "سجّله" : "Logged by"} {by}{" "}
-                  </>
-                )}
-                {when}
-              </span>
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <a
-                href={`tel:${contacts.emergency}`}
-                className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-white px-2 text-base font-black text-rose-800"
-              >
-                <Siren className="h-5 w-5 shrink-0" />
-                <span>{ar ? "الإسعاف" : "Emergency"}</span>
-                <Ltr>{contacts.emergency}</Ltr>
-              </a>
-              {contacts.doctor_phone ? (
-                <a
-                  href={`tel:${contacts.doctor_phone}`}
-                  className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border-2 border-white px-2 text-base font-black text-white"
-                >
-                  <Phone className="h-5 w-5 shrink-0" />
-                  <bdi className="truncate">{doctorLabel}</bdi>
-                </a>
-              ) : (
-                seenButton
+        <p className="flex items-start gap-2 text-base font-black leading-snug">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <span>
+            {title}
+            {more}
+            {advice && <span className="block text-sm font-bold">{advice}</span>}
+            <span className="block text-sm font-semibold">
+              {by && (
+                <>
+                  {ar ? "سجّله" : "Logged by"} {by}{" "}
+                </>
               )}
-            </div>
-            {contacts.doctor_phone && seenButton}
-          </>
-        ) : (
-          <>
-            <p className="flex items-start gap-2 text-base font-bold leading-snug">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-              <span>
-                {current.kind === "vomited"
-                  ? ar
-                    ? "استفرغت بعد جرعة"
-                    : "Vomited after a dose"
-                  : ar
-                  ? "أُعطيت جرعة قبل موعدها المسموح (بأمر الطبيب)"
-                  : "A dose was given inside its minimum interval (doctor's order)"}
-                {medName && (
-                  <>
-                    : <bdi>{medName}</bdi>
-                  </>
-                )}
-                {more}
-                <span className="block text-sm font-semibold">
-                  {by} {when}
-                </span>
-              </span>
-            </p>
-            {seenButton}
-          </>
+              {when}
+            </span>
+          </span>
+        </p>
+        {red && (
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href={`tel:${contacts.emergency}`}
+              className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-white px-2 text-base font-black text-rose-800"
+            >
+              <Siren className="h-5 w-5 shrink-0" />
+              <span>{ar ? "الإسعاف" : "Emergency"}</span>
+              <Ltr>{contacts.emergency}</Ltr>
+            </a>
+            {contacts.doctor_phone ? (
+              <a
+                href={`tel:${contacts.doctor_phone}`}
+                className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border-2 border-white px-2 text-base font-black text-white"
+              >
+                <Phone className="h-5 w-5 shrink-0" />
+                <bdi className="truncate">{doctorLabel}</bdi>
+              </a>
+            ) : (
+              seenButton
+            )}
+          </div>
         )}
+        {current.kind === "alertness" && (
+          <Link href="/fast" className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-rose-800">
+            {ar ? "افحص F.A.S.T. الآن" : "Do the F.A.S.T. check now"}
+          </Link>
+        )}
+        {(!red || contacts.doctor_phone) && seenButton}
       </div>
     </div>
   );

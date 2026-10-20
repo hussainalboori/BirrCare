@@ -1,5 +1,5 @@
 export type AlertnessLevel = "alert" | "confused" | "restless" | "drowsy";
-export type BPStatus = "NORMAL" | "ELEVATED" | "STAGE_2" | "CRISIS";
+export type BPStatus = "LOW" | "NORMAL" | "ELEVATED" | "STAGE_2" | "CRISIS";
 export type BloodSugarStatus = "LOW" | "NORMAL" | "ELEVATED" | "VERY_HIGH";
 export type ShiftType = "morning" | "evening" | "night" | string;
 
@@ -141,7 +141,7 @@ export interface DailyScheduleResponse {
   schedule: ScheduledDose[];
 }
 
-export type VitalKind = "bp" | "sugar" | "alertness" | "full";
+export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast";
 
 export interface VitalsLog {
   id: string;
@@ -158,6 +158,10 @@ export interface VitalsLog {
   alertness_level: AlertnessLevel | null;
   /** The sugar may be the old form's pre-filled 6.4, not a measurement. */
   suspect_default_sugar?: boolean;
+  /** F.A.S.T. stroke check (vital_type "fast"). */
+  fast_result?: { face: boolean; arm: boolean; speech: boolean };
+  /** When she was last seen normal (RFC3339), for the paramedics. */
+  last_normal_at?: string;
   notes?: string;
   bp_status?: BPStatus;
   sugar_status?: BloodSugarStatus;

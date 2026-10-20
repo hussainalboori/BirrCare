@@ -220,8 +220,10 @@ The interval check runs inside the same immediate-lock transaction as the insert
 
 | Method | Path | Description |
 |---|---|---|
+| PUT | `/vitals/{id}/last-normal` | `{last_normal_at}` (RFC3339, last 7 days) on a F.A.S.T. check: when she was last seen normal, for the paramedics. |
+| GET · PUT | `/settings/clinical` | `{bp_low_systolic, bp_low_diastolic}`: the doctor's low-BP limit (default 90/60). PUT is admin only (70–120 / 40–80). |
 | GET | `/vitals?limit=` | Latest readings (default 30, max 100). `alertness_level` is `null` when not assessed; `suspect_default_sugar: true` marks an old reading that may be the former form's pre-filled 6.4. |
-| POST | `/vitals` | Log any of: `systolic` + `diastolic` (both together), `pulse`, `blood_sugar` (1–45 mmol/L), `alertness_level`, `notes`, optional `vital_type` (`bp`, `sugar`, `alertness`, `full`). At least BP, sugar or alertness is required. A missing alertness is stored as `NULL`, never as `alert`. |
+| POST | `/vitals` | Log any of: `systolic` + `diastolic` (both together), `pulse`, `blood_sugar` (1–45 mmol/L), `alertness_level`, `notes`, optional `vital_type` (`bp`, `sugar`, `alertness`, `full`). At least BP, sugar or alertness is required. A missing alertness is stored as `NULL`, never as `alert`. A F.A.S.T. stroke check is `vital_type: "fast"` with `fast_result: {face, arm, speech}`. Alerts are raised in the same transaction for: a crisis, low BP, `confused`/`drowsy`, or any "yes" in F.A.S.T. |
 
 **Insulin**
 
@@ -238,7 +240,7 @@ These are events every sibling must see: a BP crisis, a dose given inside its mi
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/alerts/unacked` | Your unacknowledged alerts from the last 24 h, oldest first (not the ones you caused). Each has `id`, `kind` (`bp_crisis`, `dose_override`, `vomited`), `created_by_name`, `payload` and `created_at`. |
+| GET | `/alerts/unacked` | Your unacknowledged alerts from the last 24 h, oldest first (not the ones you caused). Each has `id`, `kind` (`bp_crisis`, `bp_low`, `alertness`, `fast_positive`, `dose_override`, `vomited`), `created_by_name`, `payload` and `created_at`. |
 | POST | `/alerts/{id}/ack` | Mark it seen for you. Idempotent; `404` for an unknown id. |
 | GET | `/push/key` | VAPID public key for `pushManager.subscribe`. |
 | POST | `/push/subscribe` | The browser's `PushSubscription` JSON (`endpoint`, `keys.p256dh`, `keys.auth`), stored for you. |
@@ -305,12 +307,17 @@ Blood pressure badge (`frontend/src/lib/clinical.ts`, backend `CalculateBPStatus
 |---|---|
 | ≥ 180 systolic or ≥ 120 diastolic | Crisis: call emergency (red) |
 | ≥ 140 or ≥ 90 | Stage 2 hypertension (orange) |
+| < 90 systolic or < 60 diastolic (the doctor's limit, `/settings/clinical`) | Low: lay her down, re-measure in 5 min, call the doctor (red) |
 | ≥ 120 or ≥ 80 | Elevated (yellow) |
 | below that | Normal (green) |
 
 Blood sugar (mmol/L): below 3.9 low, 3.9–7.8 normal, above 7.8 elevated, 13.9 and above very high.
 
 Doses: a `taken` or `partial` dose blocks another of the same medication within its minimum interval, the doctor's value or ¾ of the shortest scheduled gap. Partial and vomited doses tell the family to call the doctor or pharmacist before giving any more; the app never suggests a re-dose or an amount.
+
+A high reading wins over a low one, e.g. 150/55 is Stage 2, not Low. The Go and TypeScript classifiers are tested against the same cases in `clinical/bp-cases.json`.
+
+Alertness: `confused` is orange and `drowsy` ("hard to wake") is red. Both alert every sibling and lead to the F.A.S.T. check (`/fast`): any "yes" shows "Call emergency now" and asks when she was last seen normal.
 
 These thresholds and the in-app crisis steps are the project's own defaults, not medical advice; follow the treating doctor's instructions.
 

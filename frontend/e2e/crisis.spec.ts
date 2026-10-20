@@ -60,11 +60,11 @@ test("offline: typing 185/115 in Quick BP shows both call links before any reque
   const posts = await mockApi(page, { contacts: "offline" });
   await page.goto("/vitals?quick=bp");
 
-  const systolic = page.getByLabel("Systolic", { exact: false }).first();
+  const systolic = page.getByLabel("Systolic (mmHg)", { exact: true });
   await expect(systolic).toBeFocused();
   await page.keyboard.type("185");
   // Auto-advance: three digits move to diastolic.
-  await expect(page.getByLabel("Diastolic", { exact: false }).first()).toBeFocused();
+  await expect(page.getByLabel("Diastolic (mmHg)", { exact: true })).toBeFocused();
   await page.keyboard.type("115");
 
   const crisis = page.getByTestId("live-crisis");
@@ -82,7 +82,7 @@ test("offline: typing 185/115 in Quick BP shows both call links before any reque
 test("no EMERGENCY_NUMBER: the call button still renders from the fallback, and admins see a setup banner", async ({ page }) => {
   await mockApi(page, { role: "admin", contacts: {} });
   await page.goto("/vitals?quick=bp");
-  await expect(page.getByLabel("Systolic", { exact: false }).first()).toBeFocused();
+  await expect(page.getByLabel("Systolic (mmHg)", { exact: true })).toBeFocused();
   await page.keyboard.type("190");
   await page.keyboard.type("100");
   const fallback = page.getByTestId("live-crisis").locator('a[href^="tel:"]');
@@ -140,7 +140,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await mockApi(page, { contacts: { emergency_number: "997", doctor_phone: "+966500000000" } });
     await page.goto("/vitals?quick=bp");
-    await expect(page.getByLabel("Systolic", { exact: false }).first()).toBeFocused();
+    await expect(page.getByLabel("Systolic (mmHg)", { exact: true })).toBeFocused();
     await page.keyboard.type("200");
     await page.keyboard.type("125");
     await expect(page.getByTestId("live-crisis")).toBeVisible();

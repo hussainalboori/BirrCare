@@ -72,6 +72,8 @@ func NewRouter(o Options) http.Handler {
 	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
+	clinicalHandler := &handlers.ClinicalSettingsHandler{DB: o.DB}
+	handlers.LoadClinicalSettings(o.DB)
 	handoverHandler := &handlers.HandoverHandler{DB: o.DB, Broker: o.Broker}
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
@@ -163,6 +165,11 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/push/subscribe", alertsHandler.Subscribe)
 				api.Post("/push/unsubscribe", alertsHandler.Unsubscribe)
 				api.Post("/push/test", alertsHandler.TestPush)
+
+				// Clinical thresholds and the F.A.S.T. check (issue #13)
+				api.Get("/settings/clinical", clinicalHandler.Get)
+				api.Put("/settings/clinical", clinicalHandler.Put)
+				api.Put("/vitals/{id}/last-normal", vitalsHandler.SetLastNormal)
 
 				// Stroke Vitals
 				api.Get("/vitals", vitalsHandler.ListVitals)

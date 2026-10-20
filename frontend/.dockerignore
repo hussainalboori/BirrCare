@@ -5,3 +5,8 @@ build
 .git
 .DS_Store
 *.log
+# Tests aren't part of the image (and src/__tests__ reads ../clinical, outside this context)
+src/__tests__
+e2e
+playwright.config.ts
+vitest.config.mts

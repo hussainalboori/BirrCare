@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	RoleSuperAdmin = "super_admin"
@@ -142,9 +145,12 @@ type VitalsLog struct {
 	AlertnessLevel *string `json:"alertness_level"`
 	Notes          string  `json:"notes,omitempty"`
 	// The sugar may be the old form's pre-filled 6.4, not a measurement (issue #10).
-	SuspectDefaultSugar bool   `json:"suspect_default_sugar,omitempty"`
-	BPStatus            string `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
-	SugarStatus         string `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+	SuspectDefaultSugar bool `json:"suspect_default_sugar,omitempty"`
+	// F.A.S.T. stroke check (vital_type 'fast', issue #13) and when she was last seen normal.
+	FastResult   json.RawMessage `json:"fast_result,omitempty"`
+	LastNormalAt string          `json:"last_normal_at,omitempty"` // RFC3339
+	BPStatus     string          `json:"bp_status,omitempty"`      // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	SugarStatus  string          `json:"sugar_status,omitempty"`   // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
 }
 
 // HandoverNote captures shift transitions and urgent flags between siblings.

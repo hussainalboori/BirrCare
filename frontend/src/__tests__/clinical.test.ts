@@ -64,3 +64,23 @@ describe("autoIntervalHours (mirrors the Go backend)", () => {
     expect(autoIntervalHours(["evening", "bedtime"], { evening: "20:00", bedtime: "22:30" })).toBe(1.88);
   });
 });
+
+// Issue #13: the same cases as the Go CalculateBPStatus test.
+import bpCases from "../../../clinical/bp-cases.json";
+import { setBPLowThresholds } from "@/lib/clinical";
+
+describe("classifyBloodPressure shared fixture (clinical/bp-cases.json)", () => {
+  it("matches every case, in lockstep with the Go classifier", () => {
+    setBPLowThresholds(bpCases.low_systolic, bpCases.low_diastolic);
+    for (const c of bpCases.cases) {
+      expect(classifyBloodPressure(c.sys, c.dia).status, `${c.sys}/${c.dia}`).toBe(c.expected);
+    }
+  });
+
+  it("follows the doctor's own low thresholds", () => {
+    setBPLowThresholds(100, 60);
+    expect(classifyBloodPressure(95, 70).status).toBe("LOW");
+    setBPLowThresholds(90, 60);
+    expect(classifyBloodPressure(95, 70).status).toBe("NORMAL");
+  });
+});

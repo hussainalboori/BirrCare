@@ -1,0 +1,21 @@
+{
+  "_comment": "Shared by the Go (CalculateBPStatus) and TypeScript (classifyBloodPressure) test suites so both classifiers stay in lockstep (issue #13). Default low thresholds: systolic < 90 or diastolic < 60. Order: CRISIS, STAGE_2, LOW, ELEVATED, NORMAL - a high systolic is reported as high even when the diastolic is low.",
+  "low_systolic": 90,
+  "low_diastolic": 60,
+  "cases": [
+    { "sys": 82, "dia": 48, "expected": "LOW" },
+    { "sys": 89, "dia": 70, "expected": "LOW" },
+    { "sys": 110, "dia": 59, "expected": "LOW" },
+    { "sys": 125, "dia": 55, "expected": "LOW" },
+    { "sys": 90, "dia": 60, "expected": "NORMAL" },
+    { "sys": 119, "dia": 79, "expected": "NORMAL" },
+    { "sys": 120, "dia": 79, "expected": "ELEVATED" },
+    { "sys": 125, "dia": 82, "expected": "ELEVATED" },
+    { "sys": 140, "dia": 85, "expected": "STAGE_2" },
+    { "sys": 150, "dia": 55, "expected": "STAGE_2" },
+    { "sys": 179, "dia": 119, "expected": "STAGE_2" },
+    { "sys": 180, "dia": 100, "expected": "CRISIS" },
+    { "sys": 185, "dia": 115, "expected": "CRISIS" },
+    { "sys": 130, "dia": 122, "expected": "CRISIS" }
+  ]
+}
