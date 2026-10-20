@@ -54,8 +54,8 @@ func TestVoidThenRelogSameDose(t *testing.T) {
 	defer cleanup()
 
 	id := mustLog(t, h, fatima, aspirinToday())
-	if code, out := logDose(t, h, fatima, aspirinToday()); code != http.StatusConflict || out["error"] != "DOSE_ALREADY_LOGGED" {
-		t.Fatalf("second tap before undo: want 409 DOSE_ALREADY_LOGGED, got %d %v", code, out)
+	if code, out := logDose(t, h, ali, aspirinToday()); code != http.StatusConflict || out["error"] != "DOSE_ALREADY_LOGGED" {
+		t.Fatalf("a sibling's tap before undo: want 409 DOSE_ALREADY_LOGGED, got %d %v", code, out)
 	}
 	if code, out := voidDose(t, h, fatima, id, ""); code != http.StatusOK {
 		t.Fatalf("undo own dose: %d %v", code, out)

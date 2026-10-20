@@ -1003,6 +1003,21 @@ func (h *MedicationHandler) writeDoseConflict(w http.ResponseWriter, r *http.Req
 		log.Printf("[ERROR] dose conflict lookup failed: %v", err)
 	}
 
+	// Issue #16: a retry of my own tap (a lost 201, an offline outbox resend) is not
+	// a sibling conflict: same caregiver, same status → 200, already logged by you.
+	if me := auth.GetCaregiverFromContext(r.Context()); me != nil && caregiverID == me.ID && status == req.Status {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":                "success",
+			"already_logged_by_you": true,
+			"log_id":                logID,
+			"taken_at":              sqliteToRFC3339(takenAt),
+			"caregiver_name":        name,
+			"avatar_color":          avatar,
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusConflict) // HTTP 409 Conflict
 	json.NewEncoder(w).Encode(map[string]interface{}{

@@ -10,6 +10,8 @@ import { formatShortDate, formatTime, lastGivenText, localDateString, parseServe
 import { Auto } from "./Ltr";
 import { DoctorCallButton } from "./CrisisActions";
 import { DOSE_COPY, VOMIT_MINUTES } from "@/lib/doseWarnings";
+import { enqueue, isNetworkError, removeFromOutbox } from "@/lib/outbox";
+import { useOutbox } from "./OutboxBar";
 import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History, Undo2, Ban, SkipForward } from "lucide-react";
 
 const UNDO_SECONDS = 10;
@@ -77,6 +79,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const log = serverLog ?? (localLog && !voidedIds.includes(localLog.id) ? localLog : undefined);
   const isLogged = !!log; // taken OR skipped: either way the slot is locked server-side
   const isTaken = log?.status === "taken";
+  // Saved on this phone but not sent yet (issue #16): amber, never green.
+  const outbox = useOutbox();
+  const queued = !log
+    ? outbox.find((e) => e.kind === "dose" && e.dose?.medication_id === medication.id && e.dose.slot === slot && e.dose.scheduled_date === scheduledDate)
+    : undefined;
   // Given = some medicine went in (taken or partial): holds the slot and the interval.
   const isGiven = isTaken || log?.status === "partial";
   const vomited = log?.events?.find((e) => e.type === "vomited");
@@ -213,18 +220,19 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
       navigator.vibrate?.(40);
     }
 
+    const doseBody = {
+      medication_id: medication.id,
+      slot,
+      scheduled_date: scheduledDate,
+      status,
+      ...(opts.notes ? { notes: opts.notes } : {}),
+      ...(opts.givenAt ? { given_at: opts.givenAt } : {}),
+      ...(opts.override ? { override_interval: true, override_reason: overrideReason.trim() } : {}),
+    };
     try {
       const res = await fetchApi<{ log_id?: string; taken_at?: string; caregiver_name?: string; avatar_color?: string }>("/medications/log", {
         method: "POST",
-        body: JSON.stringify({
-          medication_id: medication.id,
-          slot,
-          scheduled_date: scheduledDate,
-          status,
-          ...(opts.notes ? { notes: opts.notes } : {}),
-          ...(opts.givenAt ? { given_at: opts.givenAt } : {}),
-          ...(opts.override ? { override_interval: true, override_reason: overrideReason.trim() } : {}),
-        }),
+        body: JSON.stringify(doseBody),
       });
       setOverrideOpen(false);
       setOverrideReason("");
@@ -244,7 +252,22 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
       if (res?.log_id) setUndo({ logId: res.log_id, until: Date.now() + UNDO_SECONDS * 1000 });
       onLoggedSuccess?.();
     } catch (err: any) {
-      if (err.data?.error === "DOSE_TOO_SOON") {
+      if (isNetworkError(err)) {
+        // Offline (issue #16): keep it on this phone, honestly marked as not sent.
+        // given_at = the moment of the tap, so a late send records the real time.
+        await enqueue({
+          kind: "dose",
+          endpoint: "/medications/log",
+          body: { ...doseBody, given_at: doseBody.given_at ?? new Date().toISOString() },
+          caregiver_id: currentCaregiver.id,
+          caregiver_name: currentCaregiver.name,
+          label_ar: medication.name_ar,
+          label_en: medication.name_en,
+          dose: { medication_id: medication.id, slot, scheduled_date: scheduledDate },
+        }).catch(() => {});
+        setAskWhen(false);
+        setSkipOpen(false);
+      } else if (err.data?.error === "DOSE_TOO_SOON") {
         // Same medication given recently on another card (e.g. last night's bedtime dose).
         setTooSoon({ takenAt: err.data.last_taken_at, by: err.data.caregiver_name, nextAllowedAt: err.data.next_allowed_at });
         if (typeof navigator !== "undefined" && "vibrate" in navigator) {
@@ -399,7 +422,20 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
 
           {/* Action Button / Double-Dose Locked Badge */}
           <div className="shrink-0">
-            {isLogged && log ? (
+            {queued ? (
+              <div role="status" data-testid="dose-queued" className="flex max-w-44 flex-col items-end gap-1">
+                <span className="rounded-xl border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                  {ar ? "محفوظة على هذا الهاتف — لم تُرسل بعد" : "Saved on this phone — not sent yet"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeFromOutbox(queued.id)}
+                  className="min-h-12 rounded-xl px-2 text-sm font-semibold text-slate-600 dark:text-slate-300"
+                >
+                  {ar ? "إلغاء" : "Cancel"}
+                </button>
+              </div>
+            ) : isLogged && log ? (
               <div className="flex flex-col items-end gap-1" role="status">
                 <div
                   className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-xs ${
@@ -500,7 +536,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 )}
               </button>
             )}
-            {!isLogged && !isViewer(currentCaregiver?.role) && !skipOpen && (
+            {!isLogged && !queued && !isViewer(currentCaregiver?.role) && !skipOpen && (
               <button
                 type="button"
                 onClick={() => {

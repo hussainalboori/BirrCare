@@ -551,6 +551,21 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	// Issue #16: idempotent retries from the offline outbox. A repeated
+	// client_request_id returns the first row instead of saving a duplicate.
+	for _, table := range []string{"vitals_logs", "handover_notes"} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'client_request_id'", table).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE " + table + " ADD COLUMN client_request_id TEXT"); err != nil {
+				return fmt.Errorf("failed adding %s.client_request_id: %w", table, err)
+			}
+		}
+		if _, err := database.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_" + table + "_client_request ON " + table + "(client_request_id) WHERE client_request_id IS NOT NULL"); err != nil {
+			return fmt.Errorf("failed creating %s client_request_id index: %w", table, err)
+		}
+	}
+
 	// Issue #15: a reading's values can never be changed in place, only corrected by a
 	// new row, and a reading can be superseded once. (Created after any rebuild above,
 	// which would have dropped them.)

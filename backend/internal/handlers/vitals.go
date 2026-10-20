@@ -145,6 +145,8 @@ type LogVitalsRequest struct {
 	Notes          string   `json:"notes,omitempty"`
 	// F.A.S.T. stroke check (vital_type 'fast', issue #13). Any true answer is positive.
 	FastResult *FastResult `json:"fast_result,omitempty"`
+	// Set by the offline outbox (issue #16): resending it returns the first reading.
+	ClientRequestID string `json:"client_request_id,omitempty"`
 }
 
 type FastResult struct {
@@ -187,6 +189,13 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 
 	if code, msg := validateMeasurements(&req); code != "" {
 		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	if len(req.ClientRequestID) > 64 {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST_ID", "client_request_id is too long")
+		return
+	}
+	if h.replyIfDuplicateVital(w, req.ClientRequestID) {
 		return
 	}
 
@@ -239,10 +248,13 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
 	if _, err := tx.Exec(`
-		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes, fastJSON); err != nil {
+		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, client_request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes, fastJSON, nullIfEmpty(req.ClientRequestID)); err != nil {
 		tx.Rollback()
+		if isUniqueViolation(err) && h.replyIfDuplicateVital(w, req.ClientRequestID) {
+			return // the same tap arrived twice at once
+		}
 		internalError(w, "failed to log vitals", err)
 		return
 	}
@@ -416,4 +428,34 @@ func raiseVitalAlerts(tx *sql.Tx, vitalID, caregiverID, bpStatus string, req *Lo
 		}
 	}
 	return firstID, firstKind, nil
+}
+
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// replyIfDuplicateVital answers 200 with the first reading when this
+// client_request_id was already saved (an outbox resend after a lost response).
+func (h *VitalsHandler) replyIfDuplicateVital(w http.ResponseWriter, clientRequestID string) bool {
+	if clientRequestID == "" {
+		return false
+	}
+	var id, vitalType, recordedAt string
+	var sys, dia sql.NullInt64
+	if err := h.DB.QueryRow(`SELECT id, COALESCE(vital_type, ''), recorded_at, systolic, diastolic FROM vitals_logs WHERE client_request_id = ?`,
+		clientRequestID).Scan(&id, &vitalType, &recordedAt, &sys, &dia); err != nil {
+		return false
+	}
+	var bpStatus string
+	if sys.Valid && dia.Valid {
+		bpStatus = CalculateBPStatus(int(sys.Int64), int(dia.Int64))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id": id, "vital_type": vitalType, "bp_status": bpStatus, "recorded_at": sqliteToRFC3339(recordedAt), "duplicate": true,
+	})
+	return true
 }

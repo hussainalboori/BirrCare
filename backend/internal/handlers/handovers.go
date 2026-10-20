@@ -68,6 +68,8 @@ type CreateHandoverRequest struct {
 	ShiftType  string `json:"shift_type"` // 'morning', 'evening', 'night' or a shift id (e.g. "shift_4h_1")
 	Summary    string `json:"summary"`
 	UrgentFlag bool   `json:"urgent_flag"`
+	// Set by the offline outbox (issue #16): resending it returns the first note.
+	ClientRequestID string `json:"client_request_id,omitempty"`
 }
 
 func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +101,14 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if len(req.ClientRequestID) > 64 {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST_ID", "client_request_id is too long")
+		return
+	}
+	if h.replyIfDuplicateNote(w, req.ClientRequestID) {
+		return
+	}
+
 	id := uuid.New().String()
 	urgentVal := 0
 	if req.UrgentFlag {
@@ -107,11 +117,14 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	now := time.Now().UTC()
 
 	_, err := h.DB.Exec(`
-		INSERT INTO handover_notes (id, caregiver_id, created_at, shift_type, summary, urgent_flag)
-		VALUES (?, ?, datetime('now'), ?, ?, ?)
-	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal)
+		INSERT INTO handover_notes (id, caregiver_id, created_at, shift_type, summary, urgent_flag, client_request_id)
+		VALUES (?, ?, datetime('now'), ?, ?, ?, ?)
+	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal, nullIfEmpty(req.ClientRequestID))
 
 	if err != nil {
+		if isUniqueViolation(err) && h.replyIfDuplicateNote(w, req.ClientRequestID) {
+			return
+		}
 		internalError(w, "failed to create handover", err)
 		return
 	}
@@ -140,4 +153,18 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		"id":         id,
 		"created_at": now.Format(time.RFC3339),
 	})
+}
+
+// replyIfDuplicateNote answers 200 with the first note for a repeated client_request_id.
+func (h *HandoverHandler) replyIfDuplicateNote(w http.ResponseWriter, clientRequestID string) bool {
+	if clientRequestID == "" {
+		return false
+	}
+	var id, createdAt string
+	if err := h.DB.QueryRow(`SELECT id, created_at FROM handover_notes WHERE client_request_id = ?`, clientRequestID).Scan(&id, &createdAt); err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "created_at": sqliteToRFC3339(createdAt), "duplicate": true})
+	return true
 }

@@ -8,6 +8,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
+import { OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { localDateString } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import { Calendar, CheckCircle2, Clock, Sparkles, Brain } from "lucide-react";
@@ -60,6 +61,13 @@ export default function MedicationsPage() {
   };
 
   // Real-time SSE listener: instantly refresh schedule when any sibling logs a dose
+  // A dose saved offline was sent (or refused): refresh the cards (issue #16).
+  useEffect(() => {
+    const onResult = () => loadSchedule(selectedDate);
+    window.addEventListener(OUTBOX_RESULT_EVENT, onResult);
+    return () => window.removeEventListener(OUTBOX_RESULT_EVENT, onResult);
+  }, [selectedDate, loadSchedule]);
+
   const onDoseChanged = (event: { payload?: unknown }) => {
     const date = (event.payload as { scheduled_date?: string } | undefined)?.scheduled_date;
     if (!date || date === selectedDate) loadSchedule(selectedDate);

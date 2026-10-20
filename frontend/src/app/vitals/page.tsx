@@ -8,6 +8,7 @@ import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
 import { CrisisActions } from "@/components/CrisisActions";
 import { ClinicalThresholds } from "@/components/ClinicalThresholds";
+import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { CorrectionNote, CorrectVital } from "@/components/VitalCorrection";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
@@ -116,6 +117,13 @@ export default function VitalsPage() {
   const liveCrisis =
     (selectedKind === "bp" || selectedKind === "full") &&
     ((typedSys >= 180 && typedSys <= 300) || (typedDia >= 120 && typedDia <= 200));
+
+  // A reading saved offline was sent: show it.
+  useEffect(() => {
+    const onResult = () => loadVitals();
+    window.addEventListener(OUTBOX_RESULT_EVENT, onResult);
+    return () => window.removeEventListener(OUTBOX_RESULT_EVENT, onResult);
+  }, [loadVitals]);
 
   // Entering a crisis: bring the call buttons to the top. Focus stays put, so the
   // diastolic can still be typed after systolic 180+ (auto-advance).
@@ -238,10 +246,26 @@ export default function VitalsPage() {
         if (alertness) payload.alertness_level = alertness;
       }
 
-      await fetchApi("/vitals", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      // The same id is reused if this has to be resent from the outbox (issue #16).
+      const requestId = newRequestId();
+      try {
+        await fetchApi("/vitals", {
+          method: "POST",
+          body: JSON.stringify({ ...payload, client_request_id: requestId }),
+        });
+      } catch (err) {
+        if (!isNetworkError(err)) throw err;
+        await enqueue({
+          id: requestId,
+          kind: "vital",
+          endpoint: "/vitals",
+          body: payload,
+          caregiver_id: currentCaregiver.id,
+          caregiver_name: currentCaregiver.name,
+          label_ar: payload.systolic ? `قراءة ${payload.systolic}/${payload.diastolic}` : "قراءة",
+          label_en: payload.systolic ? `reading ${payload.systolic}/${payload.diastolic}` : "reading",
+        });
+      }
 
       if (payload.systolic && classifyBloodPressure(payload.systolic, payload.diastolic).status === "CRISIS") {
         window.scrollTo({ top: 0, behavior: "smooth" });

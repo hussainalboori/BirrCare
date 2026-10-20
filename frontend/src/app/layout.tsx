@@ -7,6 +7,7 @@ import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { CaregiverProvider } from "@/context/CaregiverContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
+import { OutboxBar } from "@/components/OutboxBar";
 import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 
@@ -43,12 +44,13 @@ export default async function RootLayout({
 
   return (
     <html lang={locale} dir={dir}>
-      <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+env(safe-area-inset-bottom))]">
+      <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+var(--outbox-h,0px)+env(safe-area-inset-bottom))]">
         <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
             <EmergencySetupBanner />
             <AlertCenter />
             <SseToast />
+            <OutboxBar />
             <PinPadModal />
             {children}
             <Navigation />

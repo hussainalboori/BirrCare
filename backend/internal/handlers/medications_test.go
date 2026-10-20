@@ -106,9 +106,11 @@ func TestDoubleDosingLock(t *testing.T) {
 		t.Fatalf("Expected 201 Created for first dose, got %d: %s", rec1.Code, rec1.Body.String())
 	}
 
-	// 2. Second Simultaneous or Subsequent Dose Log - MUST BE LOCKED WITH 409 Conflict
+	// 2. A sibling's tap on the same dose - MUST BE LOCKED WITH 409 Conflict
+	// (the same caregiver's repeat is "already logged by you", see dose_retry_test.go)
+	sibling := &models.Caregiver{ID: "cg_ali", Name: "علي", Role: models.RoleAdmin, AvatarColor: "#2563eb"}
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/medications/log", bytes.NewReader(bodyBytes))
-	req2 = req2.WithContext(authContext(req2.Context(), dummyCaregiver))
+	req2 = req2.WithContext(authContext(req2.Context(), sibling))
 	rec2 := httptest.NewRecorder()
 
 	medHandler.LogDose(rec2, req2)

@@ -66,7 +66,7 @@ func fireConcurrentDoses(t *testing.T, hs []*handlers.MedicationHandler, n int) 
 func assertExactlyOneWinner(t *testing.T, database *sql.DB, results []doseResult) {
 	t.Helper()
 	var winners []doseResult
-	conflicts := 0
+	conflicts, ownRetries := 0, 0
 	for _, r := range results {
 		if strings.Contains(strings.ToLower(r.raw), "locked") || strings.Contains(strings.ToLower(r.raw), "busy") {
 			t.Fatalf("got a SQLite lock/busy error: %d %s", r.code, r.raw)
@@ -76,12 +76,24 @@ func assertExactlyOneWinner(t *testing.T, database *sql.DB, results []doseResult
 			winners = append(winners, r)
 		case http.StatusConflict:
 			conflicts++
+		case http.StatusOK:
+			// Issue #16: the winner's own repeated tap is "already logged by you", not a conflict.
+			if r.body["already_logged_by_you"] != true {
+				t.Fatalf("200 without already_logged_by_you: %s", r.raw)
+			}
+			ownRetries++
 		default:
 			t.Fatalf("unexpected status %d: %s", r.code, r.raw)
 		}
 	}
-	if len(winners) != 1 || conflicts != len(results)-1 {
-		t.Fatalf("expected exactly 1 success and %d conflicts, got %d successes and %d conflicts", len(results)-1, len(winners), conflicts)
+	if len(winners) != 1 || conflicts+ownRetries != len(results)-1 {
+		t.Fatalf("expected exactly 1 success and %d conflicts/own retries, got %d successes, %d conflicts, %d own retries",
+			len(results)-1, len(winners), conflicts, ownRetries)
+	}
+	for _, r := range results {
+		if r.code == http.StatusOK && r.body["caregiver_name"] != winners[0].body["caregiver_name"] {
+			t.Fatalf("already_logged_by_you returned to someone other than the winner: %s", r.raw)
+		}
 	}
 
 	winnerName := winners[0].body["caregiver_name"]

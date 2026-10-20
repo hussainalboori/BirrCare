@@ -13,6 +13,7 @@ Main capabilities:
   - **Same medicine across cards:** a minimum interval blocks, for example, last night's bedtime dose being repeated at 03:45.
 - **Honest dose records.** A dose can be recorded as taken, partly taken, refused or skipped with a reason, and "vomited N min later" can be added afterwards. Partial and vomited doses show a "call the doctor or pharmacist" warning; the app never suggests a re-dose.
 - **Mis-tap recovery.** A 10-second Undo after every tap. Later, the person who recorded it can cancel within 10 minutes, or an admin any time with a reason. Cancelled entries are kept, struck through, and never count as given.
+- **Works through dropped Wi-Fi.** A tap that can't reach the server is saved on that phone and shown in amber as "saved on this phone — not sent yet", never as given. It is sent when the connection returns, with the tap time. A dose waiting more than 30 minutes is only sent after the caregiver confirms, because a sibling may have given it meanwhile. Resends never create duplicates.
 - **Stroke vitals.** Blood pressure, pulse, blood sugar (mmol/L) and alertness (`alert`, `confused`, `restless`, `drowsy`), with a colour-coded BP badge and a crisis screen with one-tap call buttons. Nothing is pre-filled: an unmeasured sugar or unassessed alertness is stored as empty, never as a default.
 - **Insulin.** An admin enters the doctor's correction scale or fixed dose; the app looks it up but never calculates a dose, refuses correction insulin below 3.9 mmol/L, and locks a second injection inside the plan's minimum interval.
 - **Shift handovers and duty roster.** Handover notes (with an urgent flag), shift presets (24h, 4h, 8h, 12h or custom) and daily assignments.
@@ -208,7 +209,8 @@ Responses:
 | Status | Meaning |
 |---|---|
 | `201` | Recorded; the body includes `log_id`. |
-| `409 DOSE_ALREADY_LOGGED` | This card already has an active entry; the body says who recorded it and when. |
+| `200` | `already_logged_by_you: true`: the same caregiver already recorded this card with the same status (e.g. a resend after a lost response). The body has the existing `log_id` and `taken_at`. |
+| `409 DOSE_ALREADY_LOGGED` | This card already has an active entry from someone else (or with a different status); the body says who recorded it and when. |
 | `409 DOSE_TOO_SOON` | `taken`/`partial` within the interval of another given dose of that medication; the body has `caregiver_name`, `last_taken_at`, `hours_since`, `min_hours`, `next_allowed_at`. |
 | `400` | Invalid input or slot not scheduled. `USE_EVENT` for `status: "vomited"`. |
 | `403` | Viewer, or a non-admin override. |
@@ -224,7 +226,7 @@ The interval check runs inside the same immediate-lock transaction as the insert
 | PUT | `/vitals/{id}/last-normal` | `{last_normal_at}` (RFC3339, last 7 days) on a F.A.S.T. check: when she was last seen normal, for the paramedics. |
 | GET · PUT | `/settings/clinical` | `{bp_low_systolic, bp_low_diastolic}`: the doctor's low-BP limit (default 90/60). PUT is admin only (70–120 / 40–80). |
 | GET | `/vitals?limit=` | Latest readings (default 30, max 100). `alertness_level` is `null` when not assessed; `suspect_default_sugar: true` marks an old reading that may be the former form's pre-filled 6.4. |
-| POST | `/vitals` | Log any of: `systolic` + `diastolic` (both together), `pulse`, `blood_sugar` (1–45 mmol/L), `alertness_level`, `notes`, optional `vital_type` (`bp`, `sugar`, `alertness`, `full`). At least BP, sugar or alertness is required. A missing alertness is stored as `NULL`, never as `alert`. A F.A.S.T. stroke check is `vital_type: "fast"` with `fast_result: {face, arm, speech}`. Alerts are raised in the same transaction for: a crisis, low BP, `confused`/`drowsy`, or any "yes" in F.A.S.T. |
+| POST | `/vitals` | Log any of: `systolic` + `diastolic` (both together), `pulse`, `blood_sugar` (1–45 mmol/L), `alertness_level`, `notes`, optional `vital_type` (`bp`, `sugar`, `alertness`, `full`). At least BP, sugar or alertness is required. A missing alertness is stored as `NULL`, never as `alert`. Optional `client_request_id` (up to 64 chars): a resend with the same id returns `200` with the first reading instead of a duplicate. A F.A.S.T. stroke check is `vital_type: "fast"` with `fast_result: {face, arm, speech}`. Alerts are raised in the same transaction for: a crisis, low BP, `confused`/`drowsy`, or any "yes" in F.A.S.T. |
 
 **Insulin**
 
@@ -255,7 +257,7 @@ Push payloads are deliberately generic for the lock screen, e.g. "Blood pressure
 | Method | Path | Description |
 |---|---|---|
 | GET | `/handovers?limit=` | Latest notes (default 20, max 100). |
-| POST | `/handovers` | `{shift_type, summary, urgent_flag}`; `shift_type` is a shift id or label (default `morning`). |
+| POST | `/handovers` | `{shift_type, summary, urgent_flag, client_request_id?}`; `shift_type` is a shift id or label (default `morning`). A resend with the same `client_request_id` returns `200` with the first note. |
 | GET | `/export/summary?days=` | Doctor summary for the last N household-local days, today included (default 7, max 90). Adherence is measured against **expected** doses from each schedule (slots × days of week, from the day the medication was added; today's doses only once due). `per_medication` has expected / taken / partial / vomited / refused / skipped / **not_recorded**, rate, missed dates and earlier dosages, with critical medications first. Unrecorded doses are never counted as taken. Also `daily_bp` per local day, the alertness distribution (with `not_assessed`) and `unverified_sugar_count`. Cancelled doses don't count. Any query failure returns `500`, never an empty report. |
 | GET | `/shifts` | Shift definitions (everyone). |
 | POST | `/shifts` · PUT `/shifts/{id}` · DELETE `/shifts/{id}` | Manage shifts (Super Admin; delete is a soft delete). |

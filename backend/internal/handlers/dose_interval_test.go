@@ -143,7 +143,7 @@ func TestDoseIntervalConcurrent(t *testing.T) {
 		switch c {
 		case http.StatusCreated:
 			created++
-		case http.StatusConflict:
+		case http.StatusConflict, http.StatusOK: // OK = the winner's own repeat (issue #16)
 		default:
 			t.Fatalf("unexpected status %d", c)
 		}

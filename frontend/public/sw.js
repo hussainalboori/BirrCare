@@ -1,9 +1,47 @@
-/* Birrcare service worker: shows alert push notifications on a locked phone (issue #12).
+/* Birrcare service worker: alert push notifications on a locked phone (issue #12) and
+ * an offline app shell (issue #16).
  * The payload is generic on purpose ("Blood pressure alert — open Birrcare"): no
  * names or readings on the lock screen. Opening the app shows the details. */
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+// App shell for offline use (issue #16): pages, scripts, styles, fonts and images
+// are fetched from the network first and the last good copy is kept, so the app
+// still opens when the Wi-Fi drops. The API (/api/) is never cached: health data
+// and dose state always come live, and unsent taps wait in the outbox instead.
+const SHELL_CACHE = "birrcare-shell-v1";
+
+self.addEventListener("activate", (event) =>
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("birrcare-shell-") && k !== SHELL_CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  )
+);
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname === "/sw.js") return;
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        if (res.ok && res.type === "basic") {
+          const copy = res.clone();
+          caches.open(SHELL_CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(async () => {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        if (req.mode === "navigate") return (await caches.match("/")) || Response.error();
+        return Response.error();
+      })
+  );
+});
 
 self.addEventListener("push", (event) => {
   let msg = { title: "Birrcare", body: "Alert — open Birrcare", tag: "birrcare-alert", url: "/" };

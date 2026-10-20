@@ -8,6 +8,7 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { HandoverNote, ShiftType, Shift } from "@/lib/types";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import { ClipboardList, Plus, AlertTriangle, Clock, Send, Loader2 } from "lucide-react";
@@ -61,6 +62,12 @@ export default function HandoversPage() {
     }
   }, []);
 
+  // A note saved offline was sent: show it (issue #16).
+  useEffect(() => {
+    window.addEventListener(OUTBOX_RESULT_EVENT, loadHandovers);
+    return () => window.removeEventListener(OUTBOX_RESULT_EVENT, loadHandovers);
+  }, [loadHandovers]);
+
   useEffect(() => {
     loadHandovers();
   }, [loadHandovers]);
@@ -106,15 +113,25 @@ export default function HandoversPage() {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     setIsSubmitting(true);
+    const note = { shift_type: shiftType, summary: summary.trim(), urgent_flag: urgentFlag };
+    // The same id is reused if this has to be resent from the outbox (issue #16).
+    const requestId = newRequestId();
     try {
-      await fetchApi("/handovers", {
-        method: "POST",
-        body: JSON.stringify({
-          shift_type: shiftType,
-          summary: summary.trim(),
-          urgent_flag: urgentFlag,
-        }),
-      });
+      try {
+        await fetchApi("/handovers", { method: "POST", body: JSON.stringify({ ...note, client_request_id: requestId }) });
+      } catch (err) {
+        if (!isNetworkError(err)) throw err;
+        await enqueue({
+          id: requestId,
+          kind: "note",
+          endpoint: "/handovers",
+          body: note,
+          caregiver_id: currentCaregiver.id,
+          caregiver_name: currentCaregiver.name,
+          label_ar: "ملاحظة تسليم",
+          label_en: "handover note",
+        });
+      }
 
       setSummary("");
       setUrgentFlag(false);
