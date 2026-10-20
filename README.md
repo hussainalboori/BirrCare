@@ -64,7 +64,7 @@ Copy `.env.example` to `.env`; Docker Compose reads it and passes the values to 
 | `SUPER_ADMIN_USER` | `admin` | Name of the Super Admin seeded when the database is empty. |
 | `SUPER_ADMIN_PIN` | `1234` | 4-digit PIN for that seeded account. |
 | `APP_TIMEZONE` | `UTC` in Compose (process local zone otherwise) | IANA zone of the household, e.g. `Asia/Riyadh`. Decides which day a dose belongs to and the export's date range. |
-| `EMERGENCY_NUMBER` | empty | Call button shown on a BP crisis. `.env.example` suggests `997`. Empty hides the button. |
+| `EMERGENCY_NUMBER` | empty | Emergency call button on a BP crisis, e.g. `997`. Also built into the frontend image as the offline fallback. If empty, the button uses `112` and admins see a "not configured" banner. Rebuild after changing it. |
 | `DOCTOR_NAME`, `DOCTOR_PHONE` | empty | Doctor call button on a BP crisis and on partial or vomited doses. |
 | `CF_ACCESS_TEAM_DOMAIN` | empty | Cloudflare Zero Trust team domain, e.g. `yourteam.cloudflareaccess.com`. |
 | `CF_ACCESS_AUD` | empty | Access application AUD tag. Cloudflare sign-in is enabled only when both CF values are set. |

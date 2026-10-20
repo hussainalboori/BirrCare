@@ -32,6 +32,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Fallback for the emergency call button when the backend can't be reached.
+        - NEXT_PUBLIC_DEFAULT_EMERGENCY=${EMERGENCY_NUMBER:-112}
     container_name: birrcare_frontend
     restart: unless-stopped
     ports:

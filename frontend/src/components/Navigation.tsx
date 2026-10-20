@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/context/LanguageContext";
-import { Pill, Activity, ClipboardList, FileSpreadsheet, Syringe } from "lucide-react";
+import { Pill, Activity, ClipboardList, FileSpreadsheet, Syringe, HeartPulse } from "lucide-react";
 
 export function Navigation() {
   const pathname = usePathname();
@@ -43,12 +43,32 @@ export function Navigation() {
     },
   ];
 
+  // Quick BP (issue #11): straight to the two blood-pressure fields from any page.
+  const quickBP = (
+    <Link
+      key="quick-bp"
+      href="/vitals?quick=bp"
+      onClick={(e) => {
+        if (pathname.startsWith("/vitals")) {
+          e.preventDefault();
+          window.dispatchEvent(new Event("birrcare:quick-bp"));
+        }
+      }}
+      className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-1 rounded-2xl px-1.5 py-1.5 font-bold text-rose-700 active:scale-95 dark:text-rose-300"
+    >
+      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-600 text-white shadow-sm">
+        <HeartPulse className="h-5 w-5 stroke-[2.5]" />
+      </div>
+      <span className="text-[11px] leading-none">{locale === "ar" ? "قياس الضغط" : "Quick BP"}</span>
+    </Link>
+  );
+
   return (
     <nav className="fixed bottom-0 start-0 end-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 pb-safe">
       <div className="mx-auto flex max-w-md items-center justify-around px-2 py-2">
-        {links.map((link) => {
+        {links.flatMap((link, i) => {
           const Icon = link.icon;
-          return (
+          return [i === 2 ? quickBP : null, (
             <Link
               key={link.href}
               href={link.href}
@@ -70,7 +90,7 @@ export function Navigation() {
               </div>
               <span className="text-[11px] leading-none">{link.label}</span>
             </Link>
-          );
+          )];
         })}
       </div>
     </nav>

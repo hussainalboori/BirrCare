@@ -6,7 +6,6 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { installAudioUnlock, playAlert } from "@/lib/alertSound";
 import { DOSE_COPY } from "@/lib/doseWarnings";
-import { CrisisActions } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { Pill, Activity, ClipboardList, UserCheck, X, AlertTriangle, Syringe } from "lucide-react";
 
@@ -69,6 +68,12 @@ export function SseToast() {
 
       const crisis = isCrisis(event);
       const amber = isAmber(event);
+      if (crisis) {
+        // The sticky CrisisBar shows it on every page with the call buttons; here only the alarm.
+        playAlert("crisis");
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.([400, 150, 400, 150, 400]);
+        return;
+      }
       const urgentNote = event.type === "NOTE_ADDED" && !!(event.payload as NotePayload | undefined)?.urgent_flag;
 
       setToast({ event, id: Date.now() });
@@ -217,11 +222,6 @@ export function SseToast() {
           </button>
         </div>
 
-        {crisis && (
-          <div className="mt-3 max-h-[60dvh] overflow-y-auto rounded-xl bg-white p-3 dark:bg-slate-900">
-            <CrisisActions />
-          </div>
-        )}
       </div>
     </div>
   );

@@ -60,7 +60,7 @@ Edit `.env`. The values that matter in production:
 |---|---|
 | `APP_TIMEZONE` | The household's IANA zone, e.g. `Asia/Riyadh`. Decides which day a dose belongs to. Without it the server runs in UTC and early-morning doses land on the wrong day. |
 | `SUPER_ADMIN_USER` / `SUPER_ADMIN_PIN` | Name and **non-default** 4-digit PIN for the first account. Only used when the database is empty. |
-| `EMERGENCY_NUMBER` | Local emergency number (e.g. `997` in Saudi Arabia). Shown as a call button on a blood-pressure crisis. |
+| `EMERGENCY_NUMBER` | Local emergency number (e.g. `997` in Saudi Arabia). Shown as a call button on a blood-pressure crisis. It is also built into the app as the fallback for when a phone can't reach the server, so `./scripts/deploy.sh` (which rebuilds) is needed after changing it. If it's empty, the button uses `112` and admins see a red "not configured" banner. |
 | `DOCTOR_NAME`, `DOCTOR_PHONE` | The doctor's call button: on a BP crisis and on partial or vomited doses. Empty hides the button. |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | From step 6, if you want Cloudflare sign-in to map to caregivers by email. Leave empty to use PIN login only. |
 | `SESSION_SECRET` | Optional. Leave empty and one is generated and stored in the database on first boot. If you set it, use `openssl rand -base64 48`. Changing it later signs everyone out. |

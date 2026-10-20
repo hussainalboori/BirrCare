@@ -54,6 +54,24 @@ describe("vitals form (issue #10)", () => {
     expect(body).not.toHaveProperty("alertness_level");
   });
 
+  it("issue #11: BP 185/115 with an empty pulse saves, with no pulse in the payload", async () => {
+    render(<VitalsPage />);
+    await openKind(t.vitalBPTitle);
+    fireEvent.change(screen.getByLabelText(t.systolic), { target: { value: "185" } });
+    fireEvent.change(screen.getByLabelText(t.diastolic), { target: { value: "115" } });
+    // The crisis view with the call buttons is already on screen before saving.
+    expect(await screen.findByTestId("live-crisis")).toBeTruthy();
+    expect(screen.getAllByRole("link").some((a) => a.getAttribute("href")?.startsWith("tel:"))).toBe(true);
+    expect(postedBodies()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    await waitFor(() => expect(postedBodies()).toHaveLength(1));
+    const body = postedBodies()[0];
+    expect(body).toMatchObject({ vital_type: "bp", systolic: 185, diastolic: 115 });
+    expect(body).not.toHaveProperty("pulse");
+    expect(window.alert).not.toHaveBeenCalled();
+  });
+
   it("after saving sugar 14.2, reopening Full starts with an empty sugar field", async () => {
     render(<VitalsPage />);
     await openKind(t.vitalSugarTitle);

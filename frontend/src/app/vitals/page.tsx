@@ -40,6 +40,9 @@ export default function VitalsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Synchronous double-submit guard (vitals have no server-side uniqueness constraint).
   const inFlightRef = useRef(false);
+  const modalBodyRef = useRef<HTMLDivElement>(null);
+  const systolicRef = useRef<HTMLInputElement>(null);
+  const diastolicRef = useRef<HTMLInputElement>(null);
 
   // Modal & Selection State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -102,6 +105,36 @@ export default function VitalsPage() {
     },
   });
 
+  // Live crisis (issue #11): as soon as 180+ systolic or 120+ diastolic is typed, the
+  // call buttons move to the top of the form. Calling never waits for the save.
+  const typedSys = Number(systolic), typedDia = Number(diastolic);
+  const liveCrisis =
+    (selectedKind === "bp" || selectedKind === "full") &&
+    ((typedSys >= 180 && typedSys <= 300) || (typedDia >= 120 && typedDia <= 200));
+
+  // Entering a crisis: bring the call buttons to the top. Focus stays put, so the
+  // diastolic can still be typed after systolic 180+ (auto-advance).
+  useEffect(() => {
+    if (!liveCrisis) return;
+    modalBodyRef.current?.scrollTo?.({ top: 0 });
+  }, [liveCrisis]);
+
+  // Quick BP from the bottom bar: /vitals?quick=bp, or an event when already here.
+  const openQuickBP = useCallback(() => {
+    if (!currentCaregiver || isViewer(currentCaregiver.role)) return;
+    setIsModalOpen(true);
+    setSelectedKind("bp");
+    setTimeout(() => systolicRef.current?.focus(), 50);
+  }, [currentCaregiver]);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("quick") === "bp" && currentCaregiver) {
+      window.history.replaceState(null, "", "/vitals");
+      openQuickBP();
+    }
+    window.addEventListener("birrcare:quick-bp", openQuickBP);
+    return () => window.removeEventListener("birrcare:quick-bp", openQuickBP);
+  }, [openQuickBP, currentCaregiver]);
+
   const handleOpenModal = () => {
     if (!currentCaregiver) {
       openPinModal();
@@ -139,14 +172,17 @@ export default function VitalsPage() {
     if (kind === "bp" || kind === "full") {
       const sys = Number(systolic), dia = Number(diastolic), pul = Number(pulse);
       const inRange = (v: number, lo: number, hi: number) => Number.isInteger(v) && v >= lo && v <= hi;
-      if (!inRange(sys, 50, 300) || !inRange(dia, 30, 200) || !inRange(pul, 30, 220) || dia >= sys) {
+      // Pulse is optional: in a crisis nobody should be stopped for not counting it.
+      if (!inRange(sys, 50, 300) || !inRange(dia, 30, 200) || dia >= sys || (pulse.trim() !== "" && !inRange(pul, 30, 220))) {
         alert(
           locale === "ar"
-            ? "يرجى التحقق من قيم الضغط والنبض (الانقباضي 50–300، الانبساطي 30–200 وأقل من الانقباضي، النبض 30–220)"
-            : "Please check BP/pulse values (systolic 50–300, diastolic 30–200 and below systolic, pulse 30–220)"
+            ? "يرجى التحقق من قيم الضغط (الانقباضي 50–300، الانبساطي 30–200 وأقل من الانقباضي)، والنبض 30–220 إن أدخلته"
+            : "Please check the BP values (systolic 50–300, diastolic 30–200 and below systolic), and pulse 30–220 if entered"
         );
         return;
       }
+      // Keep the "what to do now" panel even if the save below fails.
+      if (classifyBloodPressure(sys, dia).status === "CRISIS") setSavedCrisis({ systolic: sys, diastolic: dia });
     }
 
     inFlightRef.current = true;
@@ -167,7 +203,7 @@ export default function VitalsPage() {
       if (kind === "bp") {
         payload.systolic = Number(systolic);
         payload.diastolic = Number(diastolic);
-        payload.pulse = Number(pulse);
+        if (pulse.trim() !== "") payload.pulse = Number(pulse);
       } else if (kind === "sugar") {
         if (!sugarVal || isNaN(sugarVal)) {
           alert(locale === "ar" ? "يرجى إدخال قيمة صحيحة لسكر الدم" : "Please enter a valid blood sugar reading");
@@ -183,7 +219,7 @@ export default function VitalsPage() {
       } else if (kind === "full") {
         payload.systolic = Number(systolic);
         payload.diastolic = Number(diastolic);
-        payload.pulse = Number(pulse);
+        if (pulse.trim() !== "") payload.pulse = Number(pulse);
         // Only what was actually measured / tapped: no sugar or alertness is invented.
         if (sugarVal !== undefined && !isNaN(sugarVal)) payload.blood_sugar = sugarVal;
         if (alertness) payload.alertness_level = alertness;
@@ -195,7 +231,6 @@ export default function VitalsPage() {
       });
 
       if (payload.systolic && classifyBloodPressure(payload.systolic, payload.diastolic).status === "CRISIS") {
-        setSavedCrisis({ systolic: payload.systolic, diastolic: payload.diastolic });
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       handleCloseModal(); // also clears every field, so the next check starts empty
@@ -351,7 +386,19 @@ export default function VitalsPage() {
               </div>
 
               {/* Modal Body */}
-              <div className="flex-1 overflow-y-auto p-5">
+              {/* Crisis: the call buttons are pinned here, outside the scrolling body, so
+                  typing (which scrolls to the focused field) can never push them away. */}
+              {liveCrisis && (
+                <div data-testid="live-crisis" role="alert" className="border-b-2 border-rose-600 bg-rose-50 p-3 dark:bg-rose-950/60">
+                  <p className="mb-2 text-center text-sm font-black text-rose-800 dark:text-rose-200">
+                    {locale === "ar" ? "ضغط دم خطير" : "Blood pressure crisis"}{" "}
+                    <Ltr className="text-2xl">{systolic || "--"}/{diastolic || "--"}</Ltr>
+                  </p>
+                  <CrisisActions compact />
+                </div>
+              )}
+
+              <div ref={modalBodyRef} className="flex-1 overflow-y-auto p-5">
                 {/* STEP 1: PICK KIND */}
                 {selectedKind === null ? (
                   <div className="space-y-3">
@@ -466,6 +513,17 @@ export default function VitalsPage() {
                 ) : (
                   /* STEP 2: FOCUSED FORM FOR THE SELECTED VITAL */
                   <form onSubmit={handleSubmit} className="space-y-4">
+                    {liveCrisis && (
+                      <section data-testid="live-crisis-steps" className="space-y-3 rounded-2xl border-2 border-rose-600 bg-rose-50 p-4 dark:bg-rose-950/50">
+                        <p className="text-center text-5xl font-black text-rose-700 dark:text-rose-300">
+                          <Ltr>{systolic || "--"}/{diastolic || "--"}</Ltr>
+                        </p>
+                        <CrisisActions calls={false} />
+                        <p className="text-center text-xs font-semibold text-rose-800 dark:text-rose-200">
+                          {locale === "ar" ? "ثم احفظ القراءة في الأسفل" : "Then save the reading below"}
+                        </p>
+                      </section>
+                    )}
                     {/* Switcher button */}
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-xs font-semibold text-slate-500">
@@ -505,8 +563,14 @@ export default function VitalsPage() {
                               required
                               placeholder="120"
                               aria-label={t.systolic}
+                              ref={systolicRef}
                               value={systolic}
-                              onChange={(e) => setSystolic(e.target.value)}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 3);
+                                setSystolic(v);
+                                // 3 digits (120), or 2 when the first is 4–9 (95): jump to diastolic.
+                                if (v.length === 3 || (v.length === 2 && Number(v[0]) >= 4)) diastolicRef.current?.focus();
+                              }}
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-rose-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
                             />
                           </div>
@@ -526,6 +590,7 @@ export default function VitalsPage() {
                               required
                               placeholder="80"
                               aria-label={t.diastolic}
+                              ref={diastolicRef}
                               value={diastolic}
                               onChange={(e) => setDiastolic(e.target.value)}
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold text-slate-900 focus:border-rose-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white shadow-xs"
@@ -545,7 +610,7 @@ export default function VitalsPage() {
                       <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
                         <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
                           <Activity className="h-3.5 w-3.5 text-emerald-500" />
-                          <span>{locale === "ar" ? "معدل النبض (Pulse)" : "Heart Rate (Pulse)"}</span>
+                          <span>{locale === "ar" ? "معدل النبض (اختياري)" : "Heart Rate (optional)"}</span>
                         </label>
                         <div className="flex flex-wrap items-center gap-3">
                           <div className="relative min-w-32 flex-1">
@@ -556,7 +621,6 @@ export default function VitalsPage() {
                               enterKeyHint="done"
                               min="30"
                               max="220"
-                              required
                               placeholder="75"
                               aria-label={t.pulse}
                               value={pulse}

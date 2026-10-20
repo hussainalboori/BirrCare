@@ -9,6 +9,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Baked into the client: the emergency call button's number when the server's
+# /contacts can't be reached (offline) or has none (issue #11).
+ARG NEXT_PUBLIC_DEFAULT_EMERGENCY=112
+ENV NEXT_PUBLIC_DEFAULT_EMERGENCY=${NEXT_PUBLIC_DEFAULT_EMERGENCY}
 RUN npm run build
 
 FROM node:24-alpine3.24 AS runner

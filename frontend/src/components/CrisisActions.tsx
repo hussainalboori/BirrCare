@@ -6,22 +6,70 @@ import { fetchApi } from "@/lib/api";
 import { Ltr } from "./Ltr";
 import { Phone, Siren } from "lucide-react";
 
-interface Contacts {
+export interface Contacts {
   emergency_number?: string;
   doctor_name?: string;
   doctor_phone?: string;
 }
 
+/**
+ * Emergency number used when the server has none or can't be reached (offline,
+ * Wi-Fi blip): the last number this phone received, else a build-time default
+ * (NEXT_PUBLIC_DEFAULT_EMERGENCY, set from EMERGENCY_NUMBER when the image is
+ * built), else 112 (the GSM emergency number most mobile networks route).
+ * Calling must never depend on the network (issue #11).
+ */
+export const BUILD_EMERGENCY_NUMBER = process.env.NEXT_PUBLIC_DEFAULT_EMERGENCY || "112";
+const CACHE_KEY = "birrcare_contacts";
+
+function cachedContacts(): Contacts {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}") as Contacts;
+  } catch {
+    return {};
+  }
+}
+
 // Fetched once per page load and shared by every crisis view.
-let contactsPromise: Promise<Contacts> | null = null;
-function loadContacts(): Promise<Contacts> {
+let contactsPromise: Promise<Contacts | null> | null = null;
+function loadContacts(): Promise<Contacts | null> {
   if (!contactsPromise) {
-    contactsPromise = fetchApi<Contacts>("/contacts").catch(() => {
-      contactsPromise = null; // retry next time instead of caching the failure
-      return {};
-    });
+    contactsPromise = fetchApi<Contacts>("/contacts")
+      .then((c) => {
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(c ?? {}));
+        } catch {}
+        return c ?? {};
+      })
+      .catch(() => {
+        contactsPromise = null; // retry next time instead of caching the failure
+        return null;
+      });
   }
   return contactsPromise;
+}
+
+/**
+ * Contacts for the call buttons. Starts from this phone's cached copy so the
+ * buttons render instantly and offline; `configured` is false only when the
+ * server answered and has no EMERGENCY_NUMBER (for the admin setup banner).
+ */
+export function useContacts(): Contacts & { emergency: string; configured: boolean | null } {
+  const [contacts, setContacts] = useState<Contacts>({});
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setContacts(cachedContacts());
+    loadContacts().then((c) => {
+      if (!alive || c === null) return;
+      setContacts(c);
+      setConfigured(!!c.emergency_number);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return { ...contacts, emergency: contacts.emergency_number || BUILD_EMERGENCY_NUMBER, configured };
 }
 
 const STEPS = {
@@ -44,18 +92,6 @@ const STEPS = {
  * oversized one-tap call buttons. Numbers come from EMERGENCY_NUMBER /
  * DOCTOR_PHONE in the backend .env.
  */
-function useContacts(): Contacts {
-  const [contacts, setContacts] = useState<Contacts>({});
-  useEffect(() => {
-    let alive = true;
-    loadContacts().then((c) => alive && setContacts(c));
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return contacts;
-}
-
 /** One-tap call to the doctor (DOCTOR_PHONE). Renders nothing when no number is set. */
 export function DoctorCallButton() {
   const { locale } = useLanguage();
@@ -76,15 +112,46 @@ export function DoctorCallButton() {
   );
 }
 
-export function CrisisActions({ compact = false }: { compact?: boolean }) {
+/**
+ * compact: call buttons only. calls={false}: the steps only (when the buttons are
+ * already pinned elsewhere, e.g. the vitals form header).
+ */
+export function CrisisActions({ compact = false, calls = true }: { compact?: boolean; calls?: boolean }) {
   const { locale } = useLanguage();
   const contacts = useContacts();
 
   const steps = STEPS[locale];
   const doctorLabel = contacts.doctor_name || (locale === "ar" ? "الطبيب" : "Doctor");
 
+  // Call buttons come first and are never hidden: the emergency one always has a
+  // number (see useContacts), so calling never waits for a save or the network.
   return (
     <div className="space-y-3">
+      {calls && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <a
+            href={`tel:${contacts.emergency}`}
+            className="flex min-h-16 items-center justify-center gap-2 rounded-2xl bg-rose-700 px-4 text-lg font-black text-white shadow-lg shadow-rose-500/30 active:scale-95"
+          >
+            <Siren className="h-6 w-6" />
+            <span>{locale === "ar" ? "اتصل بالإسعاف" : "Call emergency"}</span>
+            <Ltr>{contacts.emergency}</Ltr>
+          </a>
+          {contacts.doctor_phone && (
+            <a
+              href={`tel:${contacts.doctor_phone}`}
+              className="flex min-h-16 items-center justify-center gap-2 rounded-2xl border-2 border-rose-700 bg-white px-4 text-lg font-black text-rose-800 active:scale-95 dark:bg-slate-900 dark:text-rose-200"
+            >
+              <Phone className="h-6 w-6" />
+              <span>
+                {locale === "ar" ? "اتصل بـ" : "Call "}
+                <bdi>{doctorLabel}</bdi>
+              </span>
+            </a>
+          )}
+        </div>
+      )}
+
       {!compact && (
         <ol className="list-decimal space-y-1.5 ps-5 text-sm font-semibold leading-relaxed text-rose-900 dark:text-rose-200">
           {steps.map((s) => (
@@ -92,31 +159,6 @@ export function CrisisActions({ compact = false }: { compact?: boolean }) {
           ))}
         </ol>
       )}
-
-      <div className="grid gap-2 sm:grid-cols-2">
-        {contacts.emergency_number && (
-          <a
-            href={`tel:${contacts.emergency_number}`}
-            className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 text-base font-black text-white shadow-lg shadow-rose-500/30 active:scale-95"
-          >
-            <Siren className="h-5 w-5" />
-            <span>{locale === "ar" ? "اتصل بالإسعاف" : "Call emergency"}</span>
-            <Ltr>{contacts.emergency_number}</Ltr>
-          </a>
-        )}
-        {contacts.doctor_phone && (
-          <a
-            href={`tel:${contacts.doctor_phone}`}
-            className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 border-rose-600 bg-white px-4 text-base font-black text-rose-700 active:scale-95 dark:bg-slate-900 dark:text-rose-300"
-          >
-            <Phone className="h-5 w-5" />
-            <span>
-              {locale === "ar" ? "اتصل بـ" : "Call "}
-              <bdi>{doctorLabel}</bdi>
-            </span>
-          </a>
-        )}
-      </div>
     </div>
   );
 }
