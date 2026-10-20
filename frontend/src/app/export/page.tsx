@@ -141,6 +141,13 @@ export default function DoctorExportPage() {
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
                   {locale === "ar" ? "سكر الدم" : "Blood Sugar"}
+                  {summary.vitals_stats.unverified_sugar_count ? (
+                    <>
+                      {" · "}
+                      <Ltr>{summary.vitals_stats.unverified_sugar_count}</Ltr>{" "}
+                      {locale === "ar" ? "قراءة غير مؤكدة مستبعدة" : "unverified excluded"}
+                    </>
+                  ) : null}
                 </span>
               </div>
 
@@ -194,9 +201,12 @@ export default function DoctorExportPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
                 {t.cognitiveDistribution}
               </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                 {Object.entries(summary.alertness_distribution).map(([level, count]) => {
-                  const meta = ALERTNESS_METAS[level as keyof typeof ALERTNESS_METAS];
+                  const meta =
+                    level === "not_assessed"
+                      ? { labelAr: "لم تُقيَّم", labelEn: "Not assessed" }
+                      : ALERTNESS_METAS[level as keyof typeof ALERTNESS_METAS];
                   return (
                     <div key={level} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
                       <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
@@ -240,13 +250,24 @@ export default function DoctorExportPage() {
                         </td>
                         <td className="py-2 pe-3 font-semibold text-blue-700 dark:text-blue-300">
                           {v.blood_sugar ? <Ltr>{Number(v.blood_sugar.toFixed(1))} mmol/L</Ltr> : "--"}
+                          {v.blood_sugar && v.suspect_default_sugar ? (
+                            <span className="ms-1 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              {locale === "ar" ? "غير مؤكد" : "unverified"}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="py-2 pe-3 text-slate-700 dark:text-slate-300">
                           {v.pulse != null ? <Ltr>{v.pulse} bpm</Ltr> : "--"}
                         </td>
                         <td className="py-2">
                           <span className="px-2 py-0.5 rounded-sm bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold">
-                            {locale === "ar" ? ALERTNESS_METAS[v.alertness_level]?.labelAr : ALERTNESS_METAS[v.alertness_level]?.labelEn}
+                            {v.alertness_level
+                              ? locale === "ar"
+                                ? ALERTNESS_METAS[v.alertness_level]?.labelAr
+                                : ALERTNESS_METAS[v.alertness_level]?.labelEn
+                              : locale === "ar"
+                              ? "لم تُقيَّم"
+                              : "Not assessed"}
                           </span>
                         </td>
                         <td className="py-2 text-slate-600 dark:text-slate-400">{v.caregiver_name}</td>

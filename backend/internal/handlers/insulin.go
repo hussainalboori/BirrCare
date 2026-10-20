@@ -527,7 +527,7 @@ func (h *InsulinHandler) LogInsulin(w http.ResponseWriter, r *http.Request) {
 		vitalID = &id
 		if _, err := tx.Exec(`
 			INSERT INTO vitals_logs (id, caregiver_id, recorded_at, blood_sugar, alertness_level, vital_type, notes)
-			VALUES (?, ?, ?, ?, 'alert', 'sugar', ?)
+			VALUES (?, ?, ?, ?, NULL, 'sugar', ?)
 		`, id, caregiver.ID, now.Format(sqliteTimeLayout), *req.BloodSugar, "[Insulin check] "+plan.NameEn); err != nil {
 			tx.Rollback()
 			internalError(w, "failed to record blood sugar", err)

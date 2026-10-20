@@ -54,10 +54,22 @@ export default function VitalsPage() {
   const [systolic, setSystolic] = useState<string>("");
   const [diastolic, setDiastolic] = useState<string>("");
   const [pulse, setPulse] = useState<string>("");
-  const [bloodSugar, setBloodSugar] = useState<string>("6.4");
+  // Sugar and alertness start empty too: a pre-filled 6.4 / "alert" was saved as if it
+  // had been measured or assessed (issue #10). Only what the caregiver enters is sent.
+  const [bloodSugar, setBloodSugar] = useState<string>("");
   const [sugarTiming, setSugarTiming] = useState<BloodSugarTiming>("random");
-  const [alertness, setAlertness] = useState<AlertnessLevel>("alert");
+  const [alertness, setAlertness] = useState<AlertnessLevel | null>(null);
   const [notes, setNotes] = useState<string>("");
+
+  const resetForm = () => {
+    setSystolic("");
+    setDiastolic("");
+    setPulse("");
+    setBloodSugar("");
+    setSugarTiming("random");
+    setAlertness(null);
+    setNotes("");
+  };
   // Last saved crisis reading: keeps the "what to do now" panel on screen after the modal closes.
   const [savedCrisis, setSavedCrisis] = useState<{ systolic: number; diastolic: number } | null>(null);
 
@@ -106,7 +118,7 @@ export default function VitalsPage() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedKind(null);
-    setNotes("");
+    resetForm();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -141,7 +153,7 @@ export default function VitalsPage() {
     setIsSubmitting(true);
 
     try {
-      const sugarVal = bloodSugar ? parseFloat(bloodSugar) : undefined;
+      const sugarVal = bloodSugar.trim() ? parseFloat(bloodSugar) : undefined;
       const combinedNotes =
         (kind === "sugar" || kind === "full") && sugarTiming !== "random" && sugarVal
           ? `[${sugarTiming === "fasting" ? (locale === "ar" ? "صائم" : "Fasting") : (locale === "ar" ? "بعد الأكل" : "Post-meal")}] ${notes.trim()}`
@@ -163,13 +175,18 @@ export default function VitalsPage() {
         }
         payload.blood_sugar = sugarVal;
       } else if (kind === "alertness") {
+        if (!alertness) {
+          alert(locale === "ar" ? "اختر حالة الوعي التي لاحظتها" : "Choose the alertness you observed");
+          return; // finally{} releases the submit guard
+        }
         payload.alertness_level = alertness;
       } else if (kind === "full") {
         payload.systolic = Number(systolic);
         payload.diastolic = Number(diastolic);
         payload.pulse = Number(pulse);
-        payload.blood_sugar = sugarVal && !isNaN(sugarVal) ? sugarVal : undefined;
-        payload.alertness_level = alertness;
+        // Only what was actually measured / tapped: no sugar or alertness is invented.
+        if (sugarVal !== undefined && !isNaN(sugarVal)) payload.blood_sugar = sugarVal;
+        if (alertness) payload.alertness_level = alertness;
       }
 
       await fetchApi("/vitals", {
@@ -181,10 +198,7 @@ export default function VitalsPage() {
         setSavedCrisis({ systolic: payload.systolic, diastolic: payload.diastolic });
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
-      handleCloseModal();
-      setSystolic("");
-      setDiastolic("");
-      setPulse("");
+      handleCloseModal(); // also clears every field, so the next check starts empty
       loadVitals();
     } catch (err: any) {
       alert(err.message || "Failed to record vitals");
@@ -656,6 +670,9 @@ export default function VitalsPage() {
                           <Brain className="h-3.5 w-3.5 text-purple-500" />
                           <span>{t.alertnessLevel}</span>
                         </label>
+                        <p className="-mt-1 mb-2 text-xs text-slate-500 dark:text-slate-400">
+                          {locale === "ar" ? "اختر فقط إذا لاحظت حالتها الآن. اتركه فارغاً إن لم تقيّمه." : "Choose only if you observed her now. Leave empty if not assessed."}
+                        </p>
 
                         <div className="grid grid-cols-2 gap-2">
                           {(["alert", "confused", "restless", "drowsy"] as AlertnessLevel[]).map((level) => {
@@ -665,7 +682,7 @@ export default function VitalsPage() {
                               <button
                                 type="button"
                                 key={level}
-                                onClick={() => setAlertness(level)}
+                                onClick={() => setAlertness(isSelected ? null : level)}
                                 aria-pressed={isSelected}
                                 className={`flex min-h-12 flex-col text-start p-2.5 rounded-xl border transition-all ${
                                   isSelected
@@ -837,7 +854,7 @@ export default function VitalsPage() {
             </div>
           ) : (
             filteredVitals.map((vital) => {
-              const alertnessMeta = ALERTNESS_METAS[vital.alertness_level];
+              const alertnessMeta = vital.alertness_level ? ALERTNESS_METAS[vital.alertness_level] : undefined;
               const dateStr = formatShortDate(vital.recorded_at, locale);
               const timeStr = formatTime(vital.recorded_at, locale);
 
@@ -899,6 +916,11 @@ export default function VitalsPage() {
                   {hasSugar && (
                     <div className="my-2 p-2.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-950/50">
                       <BloodSugarBadge sugar={vital.blood_sugar!} showDetails={false} />
+                      {vital.suspect_default_sugar && (
+                        <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                          {locale === "ar" ? "غير مؤكد: ربما القيمة المعبأة مسبقاً في النموذج القديم" : "Unverified: may be the old form's pre-filled value"}
+                        </p>
+                      )}
                     </div>
                   )}
 

@@ -43,6 +43,8 @@ type VitalsStats struct {
 	CrisisCount   int      `json:"crisis_count"`
 	ElevatedCount int      `json:"elevated_count"`
 	AvgBloodSugar *float64 `json:"avg_blood_sugar,omitempty"`
+	// Readings flagged as possibly the old form's pre-filled 6.4; left out of the average.
+	UnverifiedSugarCount int `json:"unverified_sugar_count"`
 }
 
 type MedDoseCounts struct {
@@ -81,7 +83,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	// 1. Vitals stats
 	rows, err := h.DB.Query(`
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
-		       c.name, c.avatar_color
+		       c.name, c.avatar_color, v.suspect_default_sugar
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		WHERE v.recorded_at >= ?
@@ -89,7 +91,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	`, startDateStr)
 
 	var stats VitalsStats
-	alertnessMap := map[string]int{"alert": 0, "confused": 0, "restless": 0, "drowsy": 0}
+	alertnessMap := map[string]int{"alert": 0, "confused": 0, "restless": 0, "drowsy": 0, "not_assessed": 0}
 	recentVitals := []models.VitalsLog{} // never null in JSON: the report maps over it
 	var sumSys, sumDia, sumPulse, sumSugar float64
 	var bpCount, pulseCount, sugarCount int
@@ -103,7 +105,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			var notes, vitalType sql.NullString
 			var sugar sql.NullFloat64
 			var recordedAtStr string
-			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
+			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar); err != nil {
 				continue
 			}
 			if sys.Valid && dia.Valid {
@@ -151,19 +153,29 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			}
 			if sugar.Valid {
 				v.BloodSugar = &sugar.Float64
-				sumSugar += sugar.Float64
-				sugarCount++
+				// An unverified (possibly pre-filled) 6.4 must not shape the average.
+				if v.SuspectDefaultSugar {
+					stats.UnverifiedSugarCount++
+				} else {
+					sumSugar += sugar.Float64
+					sugarCount++
+				}
 			}
 			if vitalType.Valid {
 				v.VitalType = vitalType.String
 			}
+			normalizeAlertness(&v)
 			if notes.Valid {
 				v.Notes = notes.String
 			}
 			v.RecordedAt, _ = time.Parse("2006-01-02 15:04:05", recordedAtStr)
 
 			stats.TotalReadings++
-			alertnessMap[v.AlertnessLevel]++
+			if v.AlertnessLevel == nil {
+				alertnessMap["not_assessed"]++
+			} else {
+				alertnessMap[*v.AlertnessLevel]++
+			}
 			recentVitals = append(recentVitals, v)
 		}
 		rows.Close() // release the single pooled connection before the next query

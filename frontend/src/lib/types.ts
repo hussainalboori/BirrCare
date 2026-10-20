@@ -154,7 +154,10 @@ export interface VitalsLog {
   diastolic?: number;
   pulse?: number;
   blood_sugar?: number;
-  alertness_level: AlertnessLevel;
+  /** null = not assessed (never defaulted to "alert"). */
+  alertness_level: AlertnessLevel | null;
+  /** The sugar may be the old form's pre-filled 6.4, not a measurement. */
+  suspect_default_sugar?: boolean;
   notes?: string;
   bp_status?: BPStatus;
   sugar_status?: BloodSugarStatus;
@@ -200,6 +203,8 @@ export interface DoctorSummary {
     crisis_count: number;
     elevated_count: number;
     avg_blood_sugar?: number;
+    /** Readings flagged as possibly the old pre-filled 6.4; left out of the average. */
+    unverified_sugar_count?: number;
   };
   adherence: {
     total_scheduled: number;
@@ -221,7 +226,7 @@ export interface DoctorSummary {
     refused: number;
     skipped: number;
   }[];
-  alertness_distribution: Record<AlertnessLevel, number>;
+  alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
   insulin_logs?: InsulinLog[];

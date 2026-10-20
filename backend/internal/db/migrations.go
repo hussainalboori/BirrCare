@@ -89,9 +89,12 @@ CREATE TABLE IF NOT EXISTS vitals_logs (
     diastolic INTEGER CHECK (diastolic IS NULL OR diastolic BETWEEN 30 AND 200),
     pulse INTEGER CHECK (pulse IS NULL OR pulse BETWEEN 30 AND 220),
     blood_sugar REAL,
-    alertness_level TEXT DEFAULT 'alert' CHECK (alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
+    -- NULL = not assessed. Never default to 'alert': that records a cognitive state nobody checked.
+    alertness_level TEXT CHECK (alertness_level IS NULL OR alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
     vital_type TEXT DEFAULT 'full',
-    notes TEXT
+    notes TEXT,
+    -- 1 = a 'full' reading saved with 6.4, the value the old form pre-filled (issue #10).
+    suspect_default_sugar INTEGER NOT NULL DEFAULT 0
 );
 
 -- 5. Shift Handover Notes
@@ -417,6 +420,44 @@ func Migrate(database *sql.DB) error {
 		`
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating vitals_logs table: %w", err)
+		}
+	}
+
+	// 4b. Issue #10: alertness is NULL when not assessed (drop DEFAULT 'alert'), and
+	// flag - never rewrite - full readings whose 6.4 sugar may be the old form's
+	// pre-filled value. The flag is set once, during this rebuild only, so a real
+	// 6.4 measured later is never marked.
+	var vitalsSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='vitals_logs'").Scan(&vitalsSQL)
+	if !strings.Contains(vitalsSQL, "suspect_default_sugar") {
+		log.Println("Migrating vitals_logs: alertness NULL when not assessed, flag pre-filled 6.4 sugar readings...")
+		migrationSQL := `
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS vitals_logs_v3;
+			CREATE TABLE vitals_logs_v3 (
+				id TEXT PRIMARY KEY,
+				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+				recorded_at TEXT DEFAULT (datetime('now')),
+				systolic INTEGER CHECK (systolic IS NULL OR systolic BETWEEN 50 AND 300),
+				diastolic INTEGER CHECK (diastolic IS NULL OR diastolic BETWEEN 30 AND 200),
+				pulse INTEGER CHECK (pulse IS NULL OR pulse BETWEEN 30 AND 220),
+				blood_sugar REAL,
+				alertness_level TEXT CHECK (alertness_level IS NULL OR alertness_level IN ('alert', 'confused', 'restless', 'drowsy')),
+				vital_type TEXT DEFAULT 'full',
+				notes TEXT,
+				suspect_default_sugar INTEGER NOT NULL DEFAULT 0
+			);
+			INSERT INTO vitals_logs_v3 (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, suspect_default_sugar)
+			SELECT id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes,
+			       CASE WHEN blood_sugar = 6.4 AND vital_type = 'full' THEN 1 ELSE 0 END
+			FROM vitals_logs;
+			DROP TABLE vitals_logs;
+			ALTER TABLE vitals_logs_v3 RENAME TO vitals_logs;
+			CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
+			PRAGMA foreign_keys = ON;
+		`
+		if _, err := database.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed migrating vitals_logs (alertness/suspect sugar): %w", err)
 		}
 	}
 

@@ -59,7 +59,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.DB.Query(`
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
-		       c.name, c.avatar_color
+		       c.name, c.avatar_color, v.suspect_default_sugar
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		ORDER BY v.recorded_at DESC
@@ -79,7 +79,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		var bloodSugar sql.NullFloat64
 		var recordedAtStr string
 
-		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor); err != nil {
+		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar); err != nil {
 			continue
 		}
 		if sys.Valid && dia.Valid {
@@ -100,6 +100,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		if vitalType.Valid {
 			v.VitalType = vitalType.String
 		}
+		normalizeAlertness(&v)
 		if notes.Valid {
 			v.Notes = notes.String
 		}
@@ -194,8 +195,10 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_ALERTNESS", "alertness_level must be alert, confused, restless or drowsy")
 		return
 	}
-	if req.AlertnessLevel == "" {
-		req.AlertnessLevel = "alert" // TODO(clinical): store NULL when not assessed; see audit report
+	// Not assessed is stored as NULL, never as "alert" (issue #10).
+	var alertness *string
+	if req.AlertnessLevel != "" {
+		alertness = &req.AlertnessLevel
 	}
 	if len(req.Notes) > maxNotesLen {
 		writeJSONError(w, http.StatusBadRequest, "NOTES_TOO_LONG", "notes are too long")
@@ -213,7 +216,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	_, err := h.DB.Exec(`
 		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
 		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, req.AlertnessLevel, vitalType, req.Notes)
+	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes)
 
 	if err != nil {
 		internalError(w, "failed to log vitals", err)
@@ -230,7 +233,11 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	if req.BloodSugar != nil {
 		auditDetails += fmt.Sprintf(", Sugar: %.1f mmol/L (%s)", *req.BloodSugar, sugarStatus)
 	}
-	auditDetails += fmt.Sprintf(", Alertness: %s", req.AlertnessLevel)
+	if alertness != nil {
+		auditDetails += fmt.Sprintf(", Alertness: %s", *alertness)
+	} else {
+		auditDetails += ", Alertness: not assessed"
+	}
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
 	// Broadcast SSE event
@@ -247,7 +254,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"pulse":           req.Pulse,
 		"blood_sugar":     req.BloodSugar,
 		"sugar_status":    sugarStatus,
-		"alertness_level": req.AlertnessLevel,
+		"alertness_level": alertness,
 		"bp_status":       bpStatus,
 		"notes":           req.Notes,
 		"caregiver_name":  caregiver.Name,
@@ -263,4 +270,13 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"sugar_status": sugarStatus,
 		"recorded_at":  now.Format(time.RFC3339),
 	})
+}
+
+// normalizeAlertness reports alertness as not assessed (nil) on blood-pressure-only
+// and sugar-only readings: those forms never asked about it, and rows saved before
+// issue #10 carry the old 'alert' default there. Stored data is left unchanged.
+func normalizeAlertness(v *models.VitalsLog) {
+	if v.VitalType == "bp" || v.VitalType == "sugar" {
+		v.AlertnessLevel = nil
+	}
 }

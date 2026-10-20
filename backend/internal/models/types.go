@@ -128,20 +128,23 @@ type ScheduledDose struct {
 
 // VitalsLog represents cardiovascular and cognitive metrics critical for stroke recovery.
 type VitalsLog struct {
-	ID             string    `json:"id"`
-	CaregiverID    string    `json:"caregiver_id"`
-	CaregiverName  string    `json:"caregiver_name,omitempty"`
-	AvatarColor    string    `json:"avatar_color,omitempty"`
-	RecordedAt     time.Time `json:"recorded_at"`
-	VitalType      string    `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full'
-	Systolic       *int      `json:"systolic,omitempty"`
-	Diastolic      *int      `json:"diastolic,omitempty"`
-	Pulse          *int      `json:"pulse,omitempty"`
-	BloodSugar     *float64  `json:"blood_sugar,omitempty"`
-	AlertnessLevel string    `json:"alertness_level"` // 'alert', 'confused', 'restless', 'drowsy'
-	Notes          string    `json:"notes,omitempty"`
-	BPStatus       string    `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
-	SugarStatus    string    `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+	ID            string    `json:"id"`
+	CaregiverID   string    `json:"caregiver_id"`
+	CaregiverName string    `json:"caregiver_name,omitempty"`
+	AvatarColor   string    `json:"avatar_color,omitempty"`
+	RecordedAt    time.Time `json:"recorded_at"`
+	VitalType     string    `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full'
+	Systolic      *int      `json:"systolic,omitempty"`
+	Diastolic     *int      `json:"diastolic,omitempty"`
+	Pulse         *int      `json:"pulse,omitempty"`
+	BloodSugar    *float64  `json:"blood_sugar,omitempty"`
+	// nil (JSON null) = not assessed. 'alert', 'confused', 'restless', 'drowsy'.
+	AlertnessLevel *string `json:"alertness_level"`
+	Notes          string  `json:"notes,omitempty"`
+	// The sugar may be the old form's pre-filled 6.4, not a measurement (issue #10).
+	SuspectDefaultSugar bool   `json:"suspect_default_sugar,omitempty"`
+	BPStatus            string `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	SugarStatus         string `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
 }
 
 // HandoverNote captures shift transitions and urgent flags between siblings.
