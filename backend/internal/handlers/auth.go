@@ -137,7 +137,7 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.completeLogin(w, req.CaregiverID, "Switched profile via PIN keypad")
+	h.completeLogin(w, r, req.CaregiverID, "Switched profile via PIN keypad")
 }
 
 func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, caregiverID string) {
@@ -165,7 +165,7 @@ func (h *AuthHandler) revokeOtherSessions(w http.ResponseWriter, caregiverID str
 
 // completeLogin issues the session, audits and broadcasts the switch, and returns
 // the caregiver. Shared by the PIN step and the authenticator step.
-func (h *AuthHandler) completeLogin(w http.ResponseWriter, caregiverID, auditDetail string) {
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, caregiverID, auditDetail string) {
 	var name, avatarColor, role, preferredLang string
 	var totpEnabled bool
 	if err := h.DB.QueryRow(`
@@ -175,6 +175,14 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, caregiverID, auditDet
 		return
 	}
 
+	// Switching profile on a shared tablet replaces the previous person's cookie;
+	// revoke it too, so a copy of it stops working.
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie.Value != "" {
+		if err := auth.RevokeSession(h.DB, cookie.Value); err != nil {
+			internalError(w, "failed to revoke previous session", err)
+			return
+		}
+	}
 	h.setSessionCookie(w, caregiverID)
 	audit.Log(h.DB, caregiverID, "CAREGIVER_SWITCH", "caregiver", caregiverID, auditDetail)
 
@@ -208,6 +216,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if c := auth.GetCaregiverFromContext(r.Context()); c != nil {
 		audit.Log(h.DB, c.ID, "LOGOUT", "caregiver", c.ID, "Logged out")
 	}
+	// Clearing the cookie only helps this browser; also refuse the token itself.
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie.Value != "" {
+		if err := auth.RevokeSession(h.DB, cookie.Value); err != nil {
+			internalError(w, "failed to sign out", err)
+			return
+		}
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    "",
@@ -221,6 +236,19 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"logged_out"}`))
+}
+
+// SignOutOtherDevices keeps this device signed in and signs out every other one
+// (a lost phone, a cookie left on a shared tablet).
+func (h *AuthHandler) SignOutOtherDevices(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+		internalError(w, "failed to revoke sessions", err)
+		return
+	}
+	audit.Log(h.DB, caregiver.ID, "SIGN_OUT_OTHER_DEVICES", "caregiver", caregiver.ID, "Signed out all other devices")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 type ChangePinRequest struct {

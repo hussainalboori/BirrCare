@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { fetchApi } from "@/lib/api";
 import { PinKeypad } from "./PinKeypad";
-import { X, KeyRound, CheckCircle2 } from "lucide-react";
+import { X, KeyRound, CheckCircle2, LogOut } from "lucide-react";
 
 type Step = "current" | "new" | "confirm" | "done";
 
@@ -25,9 +25,11 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
   const [newPin, setNewPin] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [others, setOthers] = useState<"idle" | "confirm" | "busy" | "done" | "error">("idle");
 
   useEffect(() => {
     if (isOpen) {
+      setOthers("idle");
       setStep("current");
       setPin("");
       setCurrentPin("");
@@ -80,6 +82,18 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Lost phone or a shared tablet: keep this device signed in, sign out the rest.
+  const signOutOthers = async () => {
+    setOthers("busy");
+    try {
+      await fetchApi("/auth/sign-out-others", { method: "POST" });
+      setOthers("done");
+      buzz(40);
+    } catch {
+      setOthers("error");
     }
   };
 
@@ -183,6 +197,57 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
               </p>
             }
           />
+        )}
+
+        {step === "current" && (
+          <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+            {others === "done" ? (
+              <p role="status" className="flex items-center justify-center gap-1.5 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4" />
+                {ar ? "تم تسجيل الخروج من أجهزتك الأخرى" : "Your other devices are signed out"}
+              </p>
+            ) : others === "confirm" || others === "busy" ? (
+              <div className="space-y-2">
+                <p className="text-center text-sm text-slate-600 dark:text-slate-300">
+                  {ar ? "سيُطلب رمزك مرة أخرى على كل جهاز آخر. هذا الجهاز يبقى مسجّلاً." : "Every other device will ask for your PIN again. This device stays signed in."}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOthers("idle")}
+                    disabled={others === "busy"}
+                    className="min-h-12 flex-1 rounded-2xl border border-slate-200 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300"
+                  >
+                    {ar ? "إلغاء" : "Cancel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={signOutOthers}
+                    disabled={others === "busy"}
+                    className="min-h-12 flex-1 rounded-2xl bg-rose-600 text-sm font-bold text-white disabled:opacity-50 active:scale-95"
+                  >
+                    {ar ? "نعم، سجّل الخروج" : "Yes, sign them out"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOthers("confirm")}
+                  className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                >
+                  <LogOut className="h-4 w-4 rtl:rotate-180" />
+                  {ar ? "تسجيل الخروج من أجهزتي الأخرى" : "Sign out my other devices"}
+                </button>
+                <p role={others === "error" ? "alert" : undefined} className={`mt-1.5 text-center text-xs ${others === "error" ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}`}>
+                  {others === "error"
+                    ? ar ? "تعذر الاتصال بالخادم، حاول مجدداً" : "Could not reach the server, please retry"
+                    : ar ? "إذا ضاع هاتفك أو نسيت الخروج من جهاز مشترك" : "If a phone is lost or you stayed signed in on a shared device"}
+                </p>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

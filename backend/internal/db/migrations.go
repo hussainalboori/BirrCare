@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS app_settings (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Signed-out session cookies, refused until they would have expired anyway.
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+);
+
 -- 8. Caregiver Work Shifts (Configured by Super Admin)
 CREATE TABLE IF NOT EXISTS shifts (
     id TEXT PRIMARY KEY,

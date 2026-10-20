@@ -381,3 +381,84 @@ func TestSuperAdminTwoFactor(t *testing.T) {
 		t.Fatalf("after disabling, PIN login works again: %d", r.StatusCode)
 	}
 }
+
+// Issue #2: a copied session cookie must stop working after logout, "sign out
+// other devices", a PIN reset, a role change and a deactivation.
+func TestSessionRevocation(t *testing.T) {
+	t.Setenv("SUPER_ADMIN_PIN", "2468")
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	sessionOf := func(r *http.Response) *http.Cookie {
+		for _, c := range r.Cookies() {
+			if c.Name == auth.SessionCookieName && c.Value != "" {
+				return c
+			}
+		}
+		t.Fatalf("no session cookie (status %d)", r.StatusCode)
+		return nil
+	}
+	login := func(id, pin string) *http.Cookie {
+		return sessionOf(do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": id, "pin": pin}, nil))
+	}
+	me := func(c *http.Cookie) int { return do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, c).StatusCode }
+	expect := func(what string, c *http.Cookie, want int) {
+		t.Helper()
+		if got := me(c); got != want {
+			t.Fatalf("%s: want %d, got %d", what, want, got)
+		}
+	}
+	tick := func() { time.Sleep(1100 * time.Millisecond) } // session timestamps have 1s resolution
+	admin := login("cg_superadmin", "2468")
+
+	// Logout refuses that exact token, not just the browser's copy.
+	phone, tablet := login("cg_fatima", "1234"), login("cg_fatima", "1234")
+	tick()
+	tablet2 := login("cg_fatima", "1234")
+	do(t, "POST", srv.URL+"/api/v1/auth/logout", nil, nil, tablet2)
+	expect("logged-out cookie", tablet2, http.StatusUnauthorized)
+	expect("other device after logout", phone, http.StatusOK)
+
+	// Switching profile on a shared tablet revokes the previous person's cookie.
+	shared := login("cg_ali", "1234")
+	r0 := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_fatima", "pin": "1234"}, nil, shared)
+	sessionOf(r0)
+	expect("previous person's cookie after a profile switch", shared, http.StatusUnauthorized)
+
+	// Sign out other devices: this device gets a fresh cookie, the rest stop working.
+	r := do(t, "POST", srv.URL+"/api/v1/auth/sign-out-others", nil, nil, phone)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("sign-out-others: %d", r.StatusCode)
+	}
+	phone = sessionOf(r)
+	expect("other device after sign-out-others", tablet, http.StatusUnauthorized)
+	expect("device that signed the others out", phone, http.StatusOK)
+
+	// A super admin resetting the PIN locks out the old cookie.
+	tick()
+	if r := do(t, "POST", srv.URL+"/api/v1/users/cg_fatima/reset-pin", map[string]string{"new_pin": "4826"}, nil, admin); r.StatusCode != http.StatusOK {
+		t.Fatalf("reset-pin: %d", r.StatusCode)
+	}
+	expect("cookie after PIN reset", phone, http.StatusUnauthorized)
+
+	// Editing the name keeps sessions; changing the role revokes them.
+	phone = login("cg_fatima", "4826")
+	tick()
+	if r := do(t, "PUT", srv.URL+"/api/v1/users/cg_fatima", map[string]string{"name": "فاطمة م", "role": "caregiver"}, nil, admin); r.StatusCode != http.StatusOK {
+		t.Fatalf("update name: %d", r.StatusCode)
+	}
+	expect("cookie after same-role edit", phone, http.StatusOK)
+	if r := do(t, "PUT", srv.URL+"/api/v1/users/cg_fatima", map[string]string{"role": "viewer"}, nil, admin); r.StatusCode != http.StatusOK {
+		t.Fatalf("update role: %d", r.StatusCode)
+	}
+	expect("cookie after role change", phone, http.StatusUnauthorized)
+
+	// Deactivate then re-enable: the old cookie must not come back.
+	phone = login("cg_fatima", "4826")
+	tick()
+	for i := 0; i < 2; i++ {
+		if r := do(t, "DELETE", srv.URL+"/api/v1/users/cg_fatima", nil, nil, admin); r.StatusCode != http.StatusOK {
+			t.Fatalf("toggle-active: %d", r.StatusCode)
+		}
+	}
+	expect("cookie after deactivate + reactivate", phone, http.StatusUnauthorized)
+	login("cg_fatima", "4826")
+}

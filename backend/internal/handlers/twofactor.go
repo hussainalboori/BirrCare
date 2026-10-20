@@ -139,7 +139,7 @@ func (h *AuthHandler) VerifyTwoFactor(w http.ResponseWriter, r *http.Request) {
 	if usedRecovery {
 		audit.Log(h.DB, caregiverID, "RECOVERY_CODE_USED", "caregiver", caregiverID, "Signed in with a one-time recovery code")
 	}
-	h.completeLogin(w, caregiverID, "Switched profile via PIN + authenticator")
+	h.completeLogin(w, r, caregiverID, "Switched profile via PIN + authenticator")
 }
 
 type pinOnlyRequest struct {

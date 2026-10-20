@@ -103,9 +103,15 @@ func sign(payload string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// GenerateSessionToken signs caregiverID:timestamp
+// GenerateSessionToken signs caregiverID:timestamp:nonce. The nonce makes every
+// login's token unique, so logging out one device never revokes another device's
+// cookie issued in the same second.
 func GenerateSessionToken(caregiverID string) string {
-	payload := fmt.Sprintf("%s:%d", caregiverID, time.Now().Unix())
+	nonce := make([]byte, 8)
+	if _, err := rand.Read(nonce); err != nil {
+		panic("auth: cannot read crypto/rand: " + err.Error())
+	}
+	payload := fmt.Sprintf("%s:%d:%s", caregiverID, time.Now().Unix(), hex.EncodeToString(nonce))
 	return fmt.Sprintf("%s:%s", payload, sign(payload))
 }
 
@@ -118,13 +124,14 @@ func ParseSessionToken(token string) (string, error) {
 // ParseSessionTokenIssued is ParseSessionToken plus the token's issue time, so the
 // middleware can refuse sessions issued before the caregiver revoked them.
 func ParseSessionTokenIssued(token string) (string, int64, error) {
+	// id:ts:nonce:sig, or id:ts:sig for cookies issued before the nonce was added.
 	parts := strings.Split(token, ":")
-	if len(parts) != 3 {
+	if len(parts) != 3 && len(parts) != 4 {
 		return "", 0, errors.New("invalid session token format")
 	}
-	caregiverID, ts, providedSig := parts[0], parts[1], parts[2]
+	caregiverID, ts, providedSig := parts[0], parts[1], parts[len(parts)-1]
 
-	expectedSig := sign(caregiverID + ":" + ts)
+	expectedSig := sign(strings.Join(parts[:len(parts)-1], ":"))
 	if !hmac.Equal([]byte(providedSig), []byte(expectedSig)) {
 		return "", 0, errors.New("invalid signature")
 	}
@@ -139,6 +146,34 @@ func ParseSessionTokenIssued(token string) (string, int64, error) {
 	}
 
 	return caregiverID, issued, nil
+}
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// RevokeSession signs out one session token (logout), so a copy of the cookie
+// left on a shared tablet stops working. Unparseable tokens are already useless.
+func RevokeSession(database *sql.DB, token string) error {
+	_, issued, err := ParseSessionTokenIssued(token)
+	if err != nil {
+		return nil
+	}
+	now := time.Now().Unix()
+	if _, err := database.Exec("DELETE FROM revoked_sessions WHERE expires_at < ?", now); err != nil {
+		return err
+	}
+	_, err = database.Exec("INSERT OR IGNORE INTO revoked_sessions (token_hash, expires_at) VALUES (?, ?)",
+		tokenHash(token), issued+int64(SessionTTL.Seconds()))
+	return err
+}
+
+// sessionRevoked fails closed: if the lookup errors, the cookie is not trusted.
+func sessionRevoked(database *sql.DB, token string) bool {
+	var one int
+	err := database.QueryRow("SELECT 1 FROM revoked_sessions WHERE token_hash = ?", tokenHash(token)).Scan(&one)
+	return !errors.Is(err, sql.ErrNoRows)
 }
 
 // Config controls which identity sources the middleware trusts.
@@ -209,9 +244,9 @@ func MiddlewareWithConfig(database *sql.DB, cfg Config) func(http.Handler) http.
 
 			// 1. Check Session Cookie
 			if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
-				if caregiverID, issued, err := ParseSessionTokenIssued(cookie.Value); err == nil {
+				if caregiverID, issued, err := ParseSessionTokenIssued(cookie.Value); err == nil && !sessionRevoked(database, cookie.Value) {
 					caregiver = getCaregiverByID(database, caregiverID)
-					// Revoked: PIN changed or 2FA turned on/off after this cookie was issued.
+					// Revoked: PIN, role or 2FA changed, or "sign out other devices", after this cookie was issued.
 					if caregiver != nil && issued < caregiver.SessionsValidAfter {
 						caregiver = nil
 					}

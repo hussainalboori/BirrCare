@@ -212,9 +212,11 @@ func (h *UsersHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		    role = COALESCE(NULLIF(?, ''), role),
 		    avatar_color = COALESCE(NULLIF(?, ''), avatar_color),
 		    preferred_lang = COALESCE(NULLIF(?, ''), preferred_lang),
-		    phone = COALESCE(NULLIF(?, ''), phone)
+		    phone = COALESCE(NULLIF(?, ''), phone),
+		    -- A role change signs the user out everywhere, so old sessions can't keep old powers.
+		    sessions_valid_after = CASE WHEN ? <> '' AND ? <> role THEN ? ELSE sessions_valid_after END
 	`
-	args := []interface{}{req.Name, req.Role, req.AvatarColor, req.PreferredLang, req.Phone}
+	args := []interface{}{req.Name, req.Role, req.AvatarColor, req.PreferredLang, req.Phone, req.Role, req.Role, time.Now().Unix()}
 	if strings.TrimSpace(req.Email) != "" {
 		query += ", email = ?"
 		args = append(args, strings.TrimSpace(req.Email))
@@ -334,7 +336,8 @@ func (h *UsersHandler) ToggleUserActive(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, err := h.DB.Exec("UPDATE caregivers SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?", userID)
+	// Sessions from before a deactivation must not come back if the user is re-enabled.
+	_, err := h.DB.Exec("UPDATE caregivers SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END, sessions_valid_after = ? WHERE id = ?", time.Now().Unix(), userID)
 	if err != nil {
 		internalError(w, "failed to toggle user status", err)
 		return

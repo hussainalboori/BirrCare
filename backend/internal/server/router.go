@@ -129,6 +129,7 @@ func NewRouter(o Options) http.Handler {
 
 				api.Get("/auth/me", authHandler.GetMe)
 				api.Post("/auth/change-pin", authHandler.ChangePIN)
+				api.Post("/auth/sign-out-others", authHandler.SignOutOtherDevices)
 				api.Post("/auth/2fa/setup", authHandler.SetupTwoFactor)
 				api.Post("/auth/2fa/enable", authHandler.EnableTwoFactor)
 				api.Post("/auth/2fa/disable", authHandler.DisableTwoFactor)

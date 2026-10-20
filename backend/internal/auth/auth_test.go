@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"birrcare/backend/internal/db"
 )
 
 func TestSessionTokenRejectsLegacyDefaultSecret(t *testing.T) {
@@ -214,5 +216,77 @@ func TestCFAccessVerify(t *testing.T) {
 	other.team = ti.team
 	if _, err := v.Verify(context.Background(), other.sign(t, "RS256", base())); err == nil {
 		t.Error("jwt signed by a foreign key accepted")
+	}
+}
+
+func TestSessionTokensAreUniqueAndLegacyFormatStillParses(t *testing.T) {
+	SetSessionSecret([]byte(strings.Repeat("k", 32)))
+	a, b := GenerateSessionToken("cg_ali"), GenerateSessionToken("cg_ali")
+	if a == b {
+		t.Fatal("two logins in the same second got the same token; logging out one would revoke the other")
+	}
+	payload := fmt.Sprintf("cg_ali:%d", time.Now().Unix())
+	if id, err := ParseSessionToken(payload + ":" + sign(payload)); err != nil || id != "cg_ali" {
+		t.Fatalf("pre-nonce cookie rejected: %v", err)
+	}
+	parts := strings.Split(a, ":")
+	parts[2] = "0000000000000000"
+	if _, err := ParseSessionToken(strings.Join(parts, ":")); err == nil {
+		t.Fatal("token with a swapped nonce accepted")
+	}
+}
+
+// Issue #2: the middleware refuses a logged-out token and tokens issued before
+// sessions_valid_after (PIN reset, role change, "sign out other devices").
+func TestMiddlewareRefusesRevokedSessions(t *testing.T) {
+	SetSessionSecret([]byte(strings.Repeat("k", 32)))
+	database, err := db.InitDB(t.TempDir() + "/birrcare.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO caregivers (id, name, role, pin_hash) VALUES ('cg_ali', 'Ali', 'caregiver', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	handler := MiddlewareWithConfig(database, Config{})(RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	status := func(token string) int {
+		req := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	tokenAt := func(issued int64) string {
+		payload := fmt.Sprintf("cg_ali:%d:%016x", issued, issued)
+		return payload + ":" + sign(payload)
+	}
+
+	now := time.Now().Unix()
+	stolen, kept := GenerateSessionToken("cg_ali"), GenerateSessionToken("cg_ali")
+	if status(stolen) != http.StatusOK {
+		t.Fatal("fresh session rejected")
+	}
+	if err := RevokeSession(database, stolen); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(stolen); got != http.StatusUnauthorized {
+		t.Fatalf("logged-out token: want 401, got %d", got)
+	}
+	if got := status(kept); got != http.StatusOK {
+		t.Fatalf("other device's token after logout: want 200, got %d", got)
+	}
+
+	before, after := tokenAt(now-60), tokenAt(now)
+	if _, err := database.Exec(`UPDATE caregivers SET sessions_valid_after = ? WHERE id = 'cg_ali'`, now-30); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(before); got != http.StatusUnauthorized {
+		t.Fatalf("token issued before PIN reset: want 401, got %d", got)
+	}
+	if got := status(after); got != http.StatusOK {
+		t.Fatalf("token issued after PIN reset: want 200, got %d", got)
 	}
 }
