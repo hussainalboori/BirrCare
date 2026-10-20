@@ -92,6 +92,12 @@ export interface MedicationLog {
   notes?: string;
   caregiver_name?: string;
   avatar_color?: string;
+  /** When it was tapped (the undo window counts from here). */
+  recorded_at?: string;
+  /** Set when the entry was cancelled (mis-tap); it never counts as given. */
+  voided_at?: string;
+  voided_by_name?: string;
+  void_reason?: string;
 }
 
 /** Most recent taken dose of a medication, on any date. */
@@ -109,6 +115,8 @@ export interface ScheduledDose {
   slot: string;
   time?: string;
   log?: MedicationLog;
+  /** Cancelled entries for this card, shown struck through. */
+  voided_logs?: MedicationLog[];
   /** Interval lock (cross-midnight double doses): independent of the date shown. */
   last_taken?: LastDose;
   interval_hours?: number;

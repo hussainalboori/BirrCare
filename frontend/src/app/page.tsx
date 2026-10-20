@@ -58,11 +58,13 @@ export default function MedicationsPage() {
   };
 
   // Real-time SSE listener: instantly refresh schedule when any sibling logs a dose
+  const onDoseChanged = (event: { payload?: unknown }) => {
+    const date = (event.payload as { scheduled_date?: string } | undefined)?.scheduled_date;
+    if (!date || date === selectedDate) loadSchedule(selectedDate);
+  };
   const { status: connectionStatus } = useLiveSync({
-    onMedLogged: (event) => {
-      const date = (event.payload as { scheduled_date?: string } | undefined)?.scheduled_date;
-      if (!date || date === selectedDate) loadSchedule(selectedDate);
-    },
+    onMedLogged: onDoseChanged,
+    onMedVoided: onDoseChanged,
     // After reconnect / returning from background: re-hydrate (and roll over to the new day).
     onResync: () => {
       const today = localDateString();

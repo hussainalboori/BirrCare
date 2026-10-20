@@ -171,7 +171,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		SELECT COUNT(CASE WHEN status = 'taken' THEN 1 END),
 		       COUNT(CASE WHEN status = 'skipped' THEN 1 END)
 		FROM medication_logs
-		WHERE scheduled_date >= ?
+		WHERE scheduled_date >= ? AND voided_at IS NULL -- a voided mis-tap was never given
 	`, startDateStr).Scan(&totalTaken, &totalSkipped)
 
 	totalScheduled := totalTaken + totalSkipped

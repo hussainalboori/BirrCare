@@ -195,7 +195,11 @@ func TestMigrateRefusesDBWithoutDoseConstraint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err := database.Exec(`CREATE TABLE medication_logs (id TEXT PRIMARY KEY, medication_id TEXT, caregiver_id TEXT, slot TEXT, scheduled_date TEXT, taken_at TEXT, status TEXT, notes TEXT)`); err != nil {
+	// A legacy table without the UNIQUE constraint that already holds a double dose:
+	// the rebuild cannot add the lock, so boot must be refused.
+	if _, err := database.Exec(`CREATE TABLE medication_logs (id TEXT PRIMARY KEY, medication_id TEXT, caregiver_id TEXT, slot TEXT, scheduled_date TEXT, taken_at TEXT, status TEXT, notes TEXT);
+		INSERT INTO medication_logs VALUES ('a', 'm', 'c', 'morning', '2026-10-19', '2026-10-19 08:00:00', 'taken', ''),
+		                                   ('b', 'm', 'c', 'morning', '2026-10-19', '2026-10-19 08:01:00', 'taken', '')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Migrate(database); err == nil || !strings.Contains(err.Error(), "double-dose") {

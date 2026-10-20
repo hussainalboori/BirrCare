@@ -9,6 +9,8 @@ export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 interface UseLiveSyncOptions {
   onEvent?: (event: SSEEvent) => void;
   onMedLogged?: (event: SSEEvent) => void;
+  /** A dose entry was cancelled (MED_VOIDED). */
+  onMedVoided?: (event: SSEEvent) => void;
   onVitalLogged?: (event: SSEEvent) => void;
   onNoteAdded?: (event: SSEEvent) => void;
   onCaregiverSwitched?: (event: SSEEvent) => void;
@@ -120,6 +122,9 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
         switch (parsed.type) {
           case "MED_LOGGED":
             o.onMedLogged?.(parsed);
+            break;
+          case "MED_VOIDED":
+            o.onMedVoided?.(parsed);
             break;
           case "VITAL_LOGGED":
             o.onVitalLogged?.(parsed);

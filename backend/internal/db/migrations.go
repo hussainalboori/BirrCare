@@ -49,16 +49,21 @@ CREATE TABLE IF NOT EXISTS medications (
 );
 
 -- 3. Medication Intake Logs (Double-Dose Prevention)
+-- One ACTIVE row per dose: enforced by the partial unique index uq_med_dose_active
+-- (created in Migrate). A mis-tap is voided, never deleted, and stays as history.
 CREATE TABLE IF NOT EXISTS medication_logs (
     id TEXT PRIMARY KEY,
     medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
     caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
     slot TEXT NOT NULL,
     scheduled_date TEXT NOT NULL,  -- 'YYYY-MM-DD'
-    taken_at TEXT DEFAULT (datetime('now')),
+    taken_at TEXT DEFAULT (datetime('now')),      -- when the dose was given
+    recorded_at TEXT DEFAULT (datetime('now')),   -- when it was tapped (undo window)
     status TEXT NOT NULL CHECK (status IN ('taken', 'skipped')),
     notes TEXT,
-    CONSTRAINT uq_med_dose UNIQUE (medication_id, scheduled_date, slot)
+    voided_at TEXT,
+    voided_by TEXT REFERENCES caregivers(id),
+    void_reason TEXT
 );
 
 -- 4. Stroke Vitals & Mental Alertness Logs
@@ -186,6 +191,12 @@ CREATE INDEX IF NOT EXISTS idx_shift_assignments_date ON shift_assignments(date)
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.
 func Migrate(database *sql.DB) error {
+	// Whether medication_logs is created by this run (fresh database): only then, or
+	// right after rebuilding it, may Migrate create the dose-lock index. If it later
+	// goes missing or is replaced, boot is refused rather than silently "repaired".
+	var medLogsExisted int
+	_ = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='medication_logs'").Scan(&medLogsExisted)
+
 	if _, err := database.Exec(SchemaSQL); err != nil {
 		return fmt.Errorf("failed executing schema: %w", err)
 	}
@@ -258,6 +269,50 @@ func Migrate(database *sql.DB) error {
 		log.Println("Migrating medications table: adding slot_times column...")
 		_, _ = database.Exec(`ALTER TABLE medications ADD COLUMN slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}'`)
 		_, _ = database.Exec(`UPDATE medications SET slot_times = '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}' WHERE slot_times IS NULL OR slot_times = ''`)
+	}
+
+	// Voidable dose logs (issue #8): rebuild medication_logs without the table-level
+	// UNIQUE, add void/recorded_at columns, and enforce one ACTIVE row per dose with a
+	// partial unique index. Existing rows are kept as-is (recorded_at = taken_at).
+	var medLogsSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='medication_logs'").Scan(&medLogsSQL)
+	createDoseIndex := medLogsExisted == 0
+	if !strings.Contains(medLogsSQL, "voided_at") {
+		log.Println("Migrating medication_logs: voidable doses with a partial unique index...")
+		migrationSQL := `
+			PRAGMA foreign_keys = OFF;
+			CREATE TABLE IF NOT EXISTS medication_logs_v2 (
+				id TEXT PRIMARY KEY,
+				medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+				slot TEXT NOT NULL,
+				scheduled_date TEXT NOT NULL,
+				taken_at TEXT DEFAULT (datetime('now')),
+				recorded_at TEXT DEFAULT (datetime('now')),
+				status TEXT NOT NULL CHECK (status IN ('taken', 'skipped')),
+				notes TEXT,
+				voided_at TEXT,
+				voided_by TEXT REFERENCES caregivers(id),
+				void_reason TEXT
+			);
+			INSERT OR IGNORE INTO medication_logs_v2 (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes)
+			SELECT id, medication_id, caregiver_id, slot, scheduled_date, taken_at, taken_at, status, notes FROM medication_logs;
+			DROP TABLE medication_logs;
+			ALTER TABLE medication_logs_v2 RENAME TO medication_logs;
+			CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
+			PRAGMA foreign_keys = ON;
+		`
+		if _, err := database.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed migrating medication_logs table: %w", err)
+		}
+		createDoseIndex = true
+	}
+	if createDoseIndex {
+		// Fails (and so does boot) if legacy data already holds duplicate active doses.
+		if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_med_dose_active
+			ON medication_logs(medication_id, scheduled_date, slot) WHERE voided_at IS NULL`); err != nil {
+			return fmt.Errorf("SAFETY: cannot create the double-dose lock uq_med_dose_active: %w", err)
+		}
 	}
 
 	// Minimum interval between doses (issue #7): NULL = derived from the schedule.
@@ -425,24 +480,30 @@ func seedSuperAdmin(database *sql.DB) error {
 	return nil
 }
 
-// verifyDoseUniqueConstraint asserts medication_logs has a UNIQUE index covering
-// exactly (medication_id, scheduled_date, slot).
+// verifyDoseUniqueConstraint asserts medication_logs has the double-dose lock:
+// a UNIQUE index on exactly (medication_id, scheduled_date, slot) that is PARTIAL
+// on "voided_at IS NULL" (one active row per dose; voided mis-taps don't block the
+// real entry). Boot is refused if it is missing, or replaced by a non-partial one.
 func verifyDoseUniqueConstraint(database *sql.DB) error {
-	rows, err := database.Query(`SELECT name FROM pragma_index_list('medication_logs') WHERE "unique" = 1`)
+	rows, err := database.Query(`SELECT name, partial FROM pragma_index_list('medication_logs') WHERE "unique" = 1`)
 	if err != nil {
 		return fmt.Errorf("failed inspecting medication_logs indexes: %w", err)
 	}
-	var names []string
+	type idx struct {
+		name    string
+		partial bool
+	}
+	var list []idx
 	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err == nil {
-			names = append(names, n)
+		var i idx
+		if err := rows.Scan(&i.name, &i.partial); err == nil {
+			list = append(list, i)
 		}
 	}
 	rows.Close() // release the single pooled connection before the next query
 
-	for _, n := range names {
-		cols, err := database.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, n)
+	for _, i := range list {
+		cols, err := database.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, i.name)
 		if err != nil {
 			continue
 		}
@@ -454,11 +515,20 @@ func verifyDoseUniqueConstraint(database *sql.DB) error {
 			}
 		}
 		cols.Close()
-		if strings.Join(got, ",") == "medication_id,scheduled_date,slot" {
-			return nil
+		if strings.Join(got, ",") != "medication_id,scheduled_date,slot" {
+			continue
 		}
+		if !i.partial {
+			return fmt.Errorf("SAFETY: medication_logs unique index %q is not partial on voided_at IS NULL - a voided mis-tap would block the real dose", i.name)
+		}
+		var def string
+		_ = database.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, i.name).Scan(&def)
+		if !strings.Contains(strings.Join(strings.Fields(strings.ToLower(def)), " "), "where voided_at is null") {
+			return fmt.Errorf("SAFETY: medication_logs unique index %q must be partial on exactly voided_at IS NULL", i.name)
+		}
+		return nil
 	}
-	return fmt.Errorf("SAFETY: medication_logs is missing UNIQUE(medication_id, scheduled_date, slot) - double-dose lock disabled")
+	return fmt.Errorf("SAFETY: medication_logs is missing UNIQUE(medication_id, scheduled_date, slot) WHERE voided_at IS NULL - double-dose lock disabled")
 }
 
 func seedShifts(database *sql.DB) error {

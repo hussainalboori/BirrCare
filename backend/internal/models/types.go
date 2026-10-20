@@ -93,6 +93,11 @@ type MedicationLog struct {
 	Notes         string     `json:"notes,omitempty"`
 	CaregiverName string     `json:"caregiver_name,omitempty"`
 	AvatarColor   string     `json:"avatar_color,omitempty"`
+	RecordedAt    string     `json:"recorded_at,omitempty"` // RFC3339: when it was tapped (undo window)
+	// Set when the entry was voided (mis-tap); voided entries never count as given.
+	VoidedAt     string `json:"voided_at,omitempty"`
+	VoidedByName string `json:"voided_by_name,omitempty"`
+	VoidReason   string `json:"void_reason,omitempty"`
 }
 
 // ScheduledDose merges a medication with its log status for a specific slot on a given date.
@@ -101,6 +106,8 @@ type ScheduledDose struct {
 	Slot       string         `json:"slot"`
 	Time       string         `json:"time,omitempty"` // scheduled dose clock time, e.g. "08:00"
 	Log        *MedicationLog `json:"log,omitempty"`
+	// Voided entries for this card (struck through in the UI).
+	VoidedLogs []MedicationLog `json:"voided_logs,omitempty"`
 	// Interval lock (issue #7), independent of the date being viewed.
 	LastTaken     *LastDose `json:"last_taken,omitempty"`
 	IntervalHours float64   `json:"interval_hours"`

@@ -8,7 +8,22 @@ import { fetchApi } from "@/lib/api";
 import { canManageMedications, isViewer } from "@/lib/permissions";
 import { formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
 import { Auto } from "./Ltr";
-import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History } from "lucide-react";
+import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History, Undo2, Ban, SkipForward } from "lucide-react";
+
+const UNDO_SECONDS = 10;
+const OWN_CANCEL_MS = 10 * 60_000; // matches the backend's undoWindow
+
+const SKIP_REASONS: { ar: string; en: string }[] = [
+  { ar: "رفضت أخذه", en: "Refused" },
+  { ar: "نائمة", en: "Asleep" },
+  { ar: "الطبيب أوقفه", en: "Doctor said hold" },
+  { ar: "نفد الدواء", en: "Out of stock" },
+];
+const CANCEL_REASONS: { ar: string; en: string }[] = [
+  { ar: "ضغطت على البطاقة الخطأ", en: "Tapped the wrong card" },
+  { ar: "لم تُعطَ فعلاً", en: "Not actually given" },
+  { ar: "سُجّلت مرتين", en: "Recorded twice" },
+];
 
 interface MedicationSlotCardProps {
   dose: ScheduledDose;
@@ -34,18 +49,44 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const [askWhen, setAskWhen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
+  // Mis-tap recovery (issue #8): 10-second undo bar, later cancel with a reason, and skip.
+  const [undo, setUndo] = useState<{ logId: string; until: number } | null>(null);
+  const [undoLeft, setUndoLeft] = useState(0);
+  const [voidedIds, setVoidedIds] = useState<string[]>([]);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [skipOpen, setSkipOpen] = useState(false);
   // Re-render every 30 s so "4 h 15 min ago" stays true and the lock lifts on time.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, []);
+  useEffect(() => {
+    if (!undo) return;
+    const tick = () => {
+      const left = Math.ceil((undo.until - Date.now()) / 1000);
+      if (left <= 0) setUndo(null);
+      else setUndoLeft(left);
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [undo]);
 
   const { medication, slot } = dose;
-  const log = dose.log ?? localLog ?? undefined;
+  // A just-cancelled entry stays hidden until the schedule re-fetch drops it.
+  const serverLog = dose.log && !voidedIds.includes(dose.log.id) ? dose.log : undefined;
+  const log = serverLog ?? (localLog && !voidedIds.includes(localLog.id) ? localLog : undefined);
   const isLogged = !!log; // taken OR skipped: either way the slot is locked server-side
   const isTaken = log?.status === "taken";
   const ar = locale === "ar";
+
+  // The person who tapped may cancel within 10 minutes; an admin any time (with a reason).
+  const tappedAt = parseServerTime(log?.recorded_at);
+  const ownRecent = !!log && !!currentCaregiver && log.caregiver_id === currentCaregiver.id && !!tappedAt && now.getTime() - tappedAt.getTime() <= OWN_CANCEL_MS;
+  const isAdmin = canManageMedications(currentCaregiver?.role);
+  const canCancel = !!log && log.id !== "local" && (ownRecent || isAdmin);
 
   const lastTaken = tooSoon ? { taken_at: tooSoon.takenAt, caregiver_name: tooSoon.by } : dose.last_taken;
   const nextAllowed = parseServerTime(tooSoon?.nextAllowedAt ?? dose.next_allowed_at);
@@ -56,27 +97,74 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
       }`
     : "";
 
-  const buildLocalLog = (data: { caregiver_name?: string; avatar_color?: string; taken_at?: string; status?: string }): MedicationLog => ({
-    id: "local",
+  const buildLocalLog = (data: {
+    id?: string;
+    caregiver_id?: string;
+    caregiver_name?: string;
+    avatar_color?: string;
+    taken_at?: string;
+    recorded_at?: string;
+    status?: string;
+    notes?: string;
+  }): MedicationLog => ({
+    id: data.id || "local",
     medication_id: medication.id,
-    caregiver_id: "",
+    caregiver_id: data.caregiver_id || "",
     slot,
     scheduled_date: scheduledDate,
     taken_at: data.taken_at,
+    recorded_at: data.recorded_at,
     status: data.status === "skipped" ? "skipped" : "taken",
+    notes: data.notes,
     caregiver_name: data.caregiver_name,
     avatar_color: data.avatar_color,
   });
 
-  const handleLogDose = async (opts: { givenAt?: string; override?: boolean } = {}) => {
+  const voidEntry = async (logId: string, reason: string) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setIsSubmitting(true);
+    try {
+      await fetchApi(`/medications/log/${encodeURIComponent(logId)}/void`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      setVoidedIds((ids) => [...ids, logId]);
+      setUndo(null);
+      setCancelOpen(false);
+      setCancelReason("");
+      setConflictError(null);
+      setTooSoon(null);
+      onLoggedSuccess?.();
+    } catch (err: any) {
+      if (err.data?.error === "VOID_NOT_ALLOWED") {
+        alert(ar ? "مرّت 10 دقائق: اطلب من المسؤول إلغاء التسجيل" : "More than 10 minutes have passed: ask an admin to cancel it");
+      } else if (err.data?.error === "REASON_REQUIRED") {
+        alert(ar ? "اكتب سبب الإلغاء" : "Write why it is being cancelled");
+      } else if (err.data?.error === "ALREADY_VOIDED") {
+        setVoidedIds((ids) => [...ids, logId]);
+        setUndo(null);
+        onLoggedSuccess?.();
+      } else {
+        alert(err.message || "Failed to cancel");
+      }
+    } finally {
+      inFlightRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogDose = async (opts: { givenAt?: string; override?: boolean; status?: "taken" | "skipped"; notes?: string } = {}) => {
     if (isLogged || inFlightRef.current) return;
+    const status = opts.status ?? "taken";
     // Ticked well after its time: ask when it was really given, so a late tick of the
     // morning dose doesn't lock the evening dose until the next morning.
-    if (!opts.givenAt && !opts.override && !askWhen && scheduledAt && lateEnoughToAsk) {
+    if (status === "taken" && !opts.givenAt && !opts.override && !askWhen && scheduledAt && lateEnoughToAsk) {
       setAskWhen(true);
       return;
     }
     setAskWhen(false);
+    setSkipOpen(false);
 
     if (!currentCaregiver) {
       openPinModal();
@@ -98,13 +186,14 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
     }
 
     try {
-      const res = await fetchApi<{ taken_at?: string; caregiver_name?: string; avatar_color?: string }>("/medications/log", {
+      const res = await fetchApi<{ log_id?: string; taken_at?: string; caregiver_name?: string; avatar_color?: string }>("/medications/log", {
         method: "POST",
         body: JSON.stringify({
           medication_id: medication.id,
           slot,
           scheduled_date: scheduledDate,
-          status: "taken",
+          status,
+          ...(opts.notes ? { notes: opts.notes } : {}),
           ...(opts.givenAt ? { given_at: opts.givenAt } : {}),
           ...(opts.override ? { override_interval: true, override_reason: overrideReason.trim() } : {}),
         }),
@@ -114,12 +203,17 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
 
       setLocalLog(
         buildLocalLog({
+          id: res?.log_id,
+          caregiver_id: currentCaregiver.id,
           taken_at: res?.taken_at || new Date().toISOString(),
+          recorded_at: new Date().toISOString(),
           caregiver_name: res?.caregiver_name || currentCaregiver.name,
           avatar_color: res?.avatar_color || currentCaregiver.avatar_color,
-          status: "taken",
+          status,
+          notes: opts.notes,
         })
       );
+      if (res?.log_id) setUndo({ logId: res.log_id, until: Date.now() + UNDO_SECONDS * 1000 });
       onLoggedSuccess?.();
     } catch (err: any) {
       if (err.data?.error === "DOSE_TOO_SOON") {
@@ -137,6 +231,8 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
         // older backends sent "YYYY-MM-DD HH:MM:SS" UTC — parseServerTime accepts both) }
         setLocalLog(
           buildLocalLog({
+            id: err.data?.log_id,
+            caregiver_id: err.data?.caregiver_id,
             caregiver_name: err.data?.caregiver_name,
             avatar_color: err.data?.avatar_color,
             taken_at: err.data?.taken_at,
@@ -295,7 +391,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                     {log.caregiver_name?.slice(0, 1)}
                   </span>
                   <span>
-                    {t.givenBy} <bdi>{log.caregiver_name}</bdi>
+                    {isTaken ? t.givenBy : ar ? "بواسطة" : "by"} <bdi>{log.caregiver_name}</bdi>
                     {formattedTime && (
                       <>
                         {" "}
@@ -304,6 +400,17 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                     )}
                   </span>
                 </div>
+                {!isTaken && log.notes && <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">{log.notes}</p>}
+                {canCancel && !cancelOpen && (
+                  <button
+                    type="button"
+                    onClick={() => setCancelOpen(true)}
+                    className="flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-rose-700 underline-offset-2 hover:underline dark:text-rose-400"
+                  >
+                    <Ban className="h-4 w-4" />
+                    {ar ? "إلغاء التسجيل" : "Cancel entry"}
+                  </button>
+                )}
               </div>
             ) : isIntervalLocked ? (
               <div
@@ -345,8 +452,114 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 )}
               </button>
             )}
+            {!isLogged && !isViewer(currentCaregiver?.role) && !skipOpen && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSkipOpen(true);
+                  setAskWhen(false);
+                }}
+                className="mt-1 flex min-h-12 w-full items-center justify-center gap-1 rounded-xl px-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <SkipForward className="h-4 w-4" />
+                {ar ? "تخطي" : "Skip"}
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Skip with a reason */}
+        {skipOpen && !isLogged && (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+            <p className="mb-2 text-base font-semibold text-slate-800 dark:text-slate-100">{ar ? "لماذا لم تُعطَ الجرعة؟" : "Why is this dose skipped?"}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {SKIP_REASONS.map((r) => (
+                <button
+                  key={r.en}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => handleLogDose({ status: "skipped", notes: ar ? r.ar : r.en })}
+                  className="min-h-12 rounded-xl border border-amber-300 bg-white px-2 text-sm font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300"
+                >
+                  {ar ? r.ar : r.en}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSkipOpen(false)}
+              className="mt-2 min-h-12 w-full rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300"
+            >
+              {ar ? "رجوع" : "Back"}
+            </button>
+          </div>
+        )}
+
+        {/* Cancel a recorded entry */}
+        {cancelOpen && log && (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/40">
+            <p className="mb-2 text-base font-semibold text-rose-900 dark:text-rose-200">
+              {ar ? "لماذا تُلغي هذا التسجيل؟ (يبقى في السجل)" : "Why cancel this entry? (it stays in the history)"}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {CANCEL_REASONS.map((r) => (
+                <button
+                  key={r.en}
+                  type="button"
+                  onClick={() => setCancelReason(ar ? r.ar : r.en)}
+                  className={`min-h-12 rounded-xl border px-3 text-sm font-semibold ${
+                    cancelReason === (ar ? r.ar : r.en)
+                      ? "border-rose-600 bg-rose-600 text-white"
+                      : "border-rose-300 bg-white text-rose-800 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-300"
+                  }`}
+                >
+                  {ar ? r.ar : r.en}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              maxLength={500}
+              placeholder={ar ? "أو اكتب السبب" : "Or write the reason"}
+              className="mt-2 w-full rounded-xl border border-rose-300 bg-white px-3 py-2 text-base text-slate-900 dark:border-rose-800 dark:bg-slate-900 dark:text-white"
+            />
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCancelOpen(false);
+                  setCancelReason("");
+                }}
+                className="min-h-12 flex-1 rounded-xl border border-slate-300 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300"
+              >
+                {ar ? "رجوع" : "Back"}
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || (!ownRecent && !cancelReason.trim())}
+                onClick={() => voidEntry(log.id, cancelReason.trim())}
+                className="min-h-12 flex-1 rounded-xl bg-rose-600 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {ar ? "إلغاء التسجيل" : "Cancel entry"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Cancelled entries stay visible as history */}
+        {(dose.voided_logs ?? []).map((v) => (
+          <p key={v.id} className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            <span className="line-through">
+              {v.status === "skipped" ? (ar ? "تخطي" : "Skipped") : ar ? "أُعطي" : "Given"} {ar ? "بواسطة" : "by"} <bdi>{v.caregiver_name}</bdi>{" "}
+              <Auto>{formatTime(v.taken_at, locale)}</Auto>
+            </span>
+            {" — "}
+            {ar ? "أُلغي بواسطة" : "cancelled by"} <bdi>{v.voided_by_name}</bdi> <Auto>{formatTime(v.voided_at, locale)}</Auto>
+            {v.void_reason && <>: {v.void_reason}</>}
+          </p>
+        ))}
 
         {/* Last given (any date) and the interval lock */}
         {!isLogged && lastTaken?.taken_at && (
@@ -459,6 +672,27 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           </div>
         )}
       </div>
+
+      {/* 10-second undo after a tap (sleepy mis-tap) */}
+      {undo && (
+        <div
+          role="status"
+          className="fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-40 mx-auto flex w-11/12 max-w-md items-center justify-between gap-3 rounded-2xl bg-slate-900 px-4 py-2 text-white shadow-xl"
+        >
+          <span className="text-base font-semibold">
+            {log?.status === "skipped" ? (ar ? "تم تسجيل التخطي" : "Skip recorded") : ar ? "تم التسجيل" : "Recorded"} · <bdi>{medName}</bdi>
+          </span>
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => voidEntry(undo.logId, "Undo")}
+            className="flex min-h-12 shrink-0 items-center gap-1.5 rounded-xl bg-amber-400 px-4 text-base font-bold text-slate-900 disabled:opacity-50"
+          >
+            <Undo2 className="h-5 w-5" />
+            {ar ? "تراجع" : "Undo"} ({undoLeft})
+          </button>
+        </div>
+      )}
 
       {/* Pill Zoom / Verification Lightbox Modal */}
       {isZoomOpen && (

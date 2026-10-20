@@ -109,6 +109,15 @@ export function SseToast() {
       if (name) detail = <><bdi>{name}</bdi>{slot && ` · ${slot}`}</>;
       break;
     }
+    case "MED_VOIDED": {
+      const p = (event.payload || {}) as MedPayload & { reason?: string };
+      Icon = Pill;
+      actionText = locale === "ar" ? `ألغى تسجيل جرعة: ${p.reason || ""}` : `cancelled a dose entry: ${p.reason || ""}`;
+      const name = locale === "ar" ? p.name_ar || p.name_en : p.name_en || p.name_ar;
+      const slot = p.slot ? (t.slots as Record<string, string>)[p.slot] || p.slot : "";
+      if (name) detail = <><bdi>{name}</bdi>{slot && ` · ${slot}`}</>;
+      break;
+    }
     case "VITAL_LOGGED": {
       const p = (event.payload || {}) as VitalPayload;
       Icon = crisis ? AlertTriangle : Activity;

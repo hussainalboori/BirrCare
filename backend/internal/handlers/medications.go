@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -575,10 +576,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	// 2. Fetch all logs for this date
 	logRows, err := h.DB.Query(`
 		SELECT l.id, l.medication_id, l.caregiver_id, l.slot, l.scheduled_date, l.taken_at, l.status, l.notes,
-		       c.name, c.avatar_color
+		       c.name, c.avatar_color, COALESCE(l.recorded_at, ''), COALESCE(l.voided_at, ''), COALESCE(v.name, ''), COALESCE(l.void_reason, '')
 		FROM medication_logs l
 		JOIN caregivers c ON l.caregiver_id = c.id
+		LEFT JOIN caregivers v ON l.voided_by = v.id
 		WHERE l.scheduled_date = ?
+		ORDER BY l.recorded_at
 	`, dateStr)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch medication logs"}`, http.StatusInternalServerError)
@@ -586,15 +589,20 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	}
 	defer logRows.Close()
 
-	// Map key: "medication_id:slot" -> MedicationLog
+	// Map key: "medication_id:slot" -> the ACTIVE MedicationLog; voided ones are history.
 	logsMap := make(map[string]models.MedicationLog)
+	voidedMap := make(map[string][]models.MedicationLog)
 	for logRows.Next() {
 		var l models.MedicationLog
 		var notes sql.NullString
 		var takenAtStr sql.NullString
-		if err := logRows.Scan(&l.ID, &l.MedicationID, &l.CaregiverID, &l.Slot, &l.ScheduledDate, &takenAtStr, &l.Status, &notes, &l.CaregiverName, &l.AvatarColor); err != nil {
+		var recordedAt, voidedAt string
+		if err := logRows.Scan(&l.ID, &l.MedicationID, &l.CaregiverID, &l.Slot, &l.ScheduledDate, &takenAtStr, &l.Status, &notes, &l.CaregiverName, &l.AvatarColor,
+			&recordedAt, &voidedAt, &l.VoidedByName, &l.VoidReason); err != nil {
 			continue
 		}
+		l.RecordedAt = sqliteToRFC3339(recordedAt)
+		l.VoidedAt = sqliteToRFC3339(voidedAt)
 		if notes.Valid {
 			l.Notes = notes.String
 		}
@@ -602,7 +610,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 			t, _ := time.Parse("2006-01-02 15:04:05", takenAtStr.String)
 			l.TakenAt = &t
 		}
-		logsMap[fmt.Sprintf("%s:%s", l.MedicationID, l.Slot)] = l
+		key := fmt.Sprintf("%s:%s", l.MedicationID, l.Slot)
+		if l.VoidedAt != "" {
+			voidedMap[key] = append(voidedMap[key], l)
+		} else {
+			logsMap[key] = l
+		}
 	}
 
 	logRows.Close()
@@ -633,7 +646,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 			log, hasLog := logsMap[key]
 
 			// Only show if scheduled for today OR if there's already a logged dose on this day
-			if !isScheduledToday && !hasLog {
+			if !isScheduledToday && !hasLog && len(voidedMap[key]) == 0 {
 				continue
 			}
 
@@ -647,6 +660,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 				Slot:          slot,
 				Time:          scheduledTime,
 				LastTaken:     lastTaken[m.ID],
+				VoidedLogs:    voidedMap[key],
 				IntervalHours: intervalHours(m.MinHoursBetween, m.FrequencySlots, m.SlotTimes),
 			}
 			if last := item.LastTaken; last != nil && item.IntervalHours > 0 {
@@ -835,7 +849,7 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 
 	// Same card already recorded: report that, not the interval.
 	var existing int
-	if err := tx.QueryRow(`SELECT 1 FROM medication_logs WHERE medication_id = ? AND scheduled_date = ? AND slot = ?`,
+	if err := tx.QueryRow(`SELECT 1 FROM medication_logs WHERE medication_id = ? AND scheduled_date = ? AND slot = ? AND voided_at IS NULL`,
 		req.MedicationID, req.ScheduledDate, req.Slot).Scan(&existing); err == nil {
 		tx.Rollback()
 		h.writeDoseConflict(w, r, req)
@@ -870,9 +884,9 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, status, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), req.Status, req.Notes)
+		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), now.Format(sqliteTimeLayout), req.Status, req.Notes)
 	if err != nil {
 		tx.Rollback() // release the connection BEFORE querying the existing dose
 		if isUniqueViolation(err) {
@@ -946,7 +960,7 @@ func (h *MedicationHandler) writeDoseConflict(w http.ResponseWriter, r *http.Req
 		SELECT l.id, l.caregiver_id, c.name, COALESCE(c.avatar_color, ''), COALESCE(l.taken_at, ''), l.status
 		FROM medication_logs l
 		JOIN caregivers c ON l.caregiver_id = c.id
-		WHERE l.medication_id = ? AND l.scheduled_date = ? AND l.slot = ?
+		WHERE l.medication_id = ? AND l.scheduled_date = ? AND l.slot = ? AND l.voided_at IS NULL
 	`, req.MedicationID, req.ScheduledDate, req.Slot).Scan(&logID, &caregiverID, &name, &avatar, &takenAt, &status)
 	if err != nil {
 		log.Printf("[ERROR] dose conflict lookup failed: %v", err)
@@ -974,4 +988,126 @@ func overrideReasonIf(ok bool, reason string) string {
 		return reason
 	}
 	return ""
+}
+
+type VoidDoseRequest struct {
+	Reason string `json:"reason"`
+}
+
+// undoWindow is how long the caregiver who tapped a dose may cancel it on their
+// own (a sleepy mis-tap). After that only an admin can, with a reason.
+const undoWindow = 10 * time.Minute
+
+// VoidDose cancels a dose entry (issue #8). Nothing is deleted: the row is marked
+// voided and stays as history, and the partial unique index lets the real dose be
+// logged on that card. The void and its audit row commit in one transaction.
+func (h *MedicationHandler) VoidDose(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "Select your profile and enter your PIN")
+		return
+	}
+	if !auth.CanTakeActions(caregiver) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Viewers cannot change dose entries")
+		return
+	}
+	logID := chi.URLParam(r, "id")
+
+	var req VoidDoseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if len(req.Reason) > maxOverrideReasonLen {
+		writeJSONError(w, http.StatusBadRequest, "REASON_TOO_LONG", "reason is too long")
+		return
+	}
+
+	var loggedBy, recordedAt, medID, slot, date, status, nameAr, nameEn string
+	var voidedAt sql.NullString
+	err := h.DB.QueryRowContext(r.Context(), `
+		SELECT l.caregiver_id, COALESCE(l.recorded_at, l.taken_at, ''), l.voided_at, l.medication_id, l.slot, l.scheduled_date, l.status, m.name_ar, m.name_en
+		FROM medication_logs l JOIN medications m ON m.id = l.medication_id
+		WHERE l.id = ?`, logID).Scan(&loggedBy, &recordedAt, &voidedAt, &medID, &slot, &date, &status, &nameAr, &nameEn)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSONError(w, http.StatusNotFound, "LOG_NOT_FOUND", "dose entry not found")
+		return
+	} else if err != nil {
+		internalError(w, "failed to look up dose entry", err)
+		return
+	}
+	if voidedAt.Valid {
+		writeJSONError(w, http.StatusConflict, "ALREADY_VOIDED", "this entry was already cancelled")
+		return
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	tapped, err := time.Parse(sqliteTimeLayout, recordedAt)
+	ownUndo := err == nil && loggedBy == caregiver.ID && now.Sub(tapped) <= undoWindow
+	if !ownUndo {
+		if !auth.CanManageMedications(caregiver) {
+			writeJSONError(w, http.StatusForbidden, "VOID_NOT_ALLOWED",
+				"Only the person who recorded it can cancel within 10 minutes; after that, ask an admin")
+			return
+		}
+		if req.Reason == "" {
+			writeJSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "Write why this entry is being cancelled")
+			return
+		}
+	}
+	if req.Reason == "" {
+		req.Reason = "Undo"
+	}
+
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to cancel dose entry", err)
+		return
+	}
+	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
+	res, err := tx.Exec(`UPDATE medication_logs SET voided_at = ?, voided_by = ?, void_reason = ? WHERE id = ? AND voided_at IS NULL`,
+		now.Format(sqliteTimeLayout), caregiver.ID, req.Reason, logID)
+	if err != nil {
+		tx.Rollback()
+		internalError(w, "failed to cancel dose entry", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		tx.Rollback()
+		writeJSONError(w, http.StatusConflict, "ALREADY_VOIDED", "this entry was already cancelled")
+		return
+	}
+	if err := audit.Record(tx, caregiver.ID, "MED_VOIDED", "medication_log", logID,
+		fmt.Sprintf("Cancelled %s entry for med %s (slot %s, date %s, recorded by %s). Reason: %s", status, medID, slot, date, loggedBy, req.Reason)); err != nil {
+		tx.Rollback()
+		internalError(w, "failed to write audit trail", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit", err)
+		return
+	}
+
+	h.Broker.Broadcast("MED_VOIDED", models.ActorInfo{
+		ID:          caregiver.ID,
+		Name:        caregiver.Name,
+		AvatarColor: caregiver.AvatarColor,
+	}, map[string]interface{}{
+		"log_id":         logID,
+		"medication_id":  medID,
+		"name_ar":        nameAr,
+		"name_en":        nameEn,
+		"slot":           slot,
+		"scheduled_date": date,
+		"status":         status,
+		"reason":         req.Reason,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "voided",
+		"log_id":    logID,
+		"voided_at": now.Format(time.RFC3339),
+	})
 }
