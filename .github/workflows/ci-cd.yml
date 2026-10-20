@@ -147,7 +147,7 @@ jobs:
       # Backend Container Metadata & Push
       - name: Extract metadata for Backend
         id: meta-backend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/birrcare-backend
           tags: |
@@ -168,7 +168,7 @@ jobs:
       # Frontend Container Metadata & Push
       - name: Extract metadata for Frontend
         id: meta-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/birrcare-frontend
           tags: |
