@@ -82,6 +82,7 @@ func NewRouter(o Options) http.Handler {
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(limitBody(o.MaxBodyBytes))
+	r.Use(securityHeaders)
 
 	// CORS only matters for local dev (prod is same-origin through the Next.js proxy).
 	// Never reflect arbitrary origins with credentials.
@@ -183,4 +184,19 @@ func NewRouter(o Options) http.Handler {
 	})
 
 	return r
+}
+
+// securityHeaders hardens every API response: JSON is never sniffed as HTML,
+// never framed, and health data is never kept in browser or proxy caches.
+// Handlers may override Cache-Control (the SSE stream sets no-cache).
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }

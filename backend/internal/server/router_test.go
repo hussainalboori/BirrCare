@@ -541,3 +541,21 @@ func TestPINLockoutSparesTrustedDevices(t *testing.T) {
 		t.Fatalf("after a PIN reset the phone is no longer trusted, got %d", r.StatusCode)
 	}
 }
+
+// Issue #5: API responses carry hardening headers; the SSE stream keeps its own caching.
+func TestSecurityHeaders(t *testing.T) {
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	for _, path := range []string{"/api/v1/caregivers", "/api/v1/auth/me", "/api/v1/does-not-exist"} {
+		r := do(t, "GET", srv.URL+path, nil, nil)
+		for k, want := range map[string]string{
+			"X-Content-Type-Options":  "nosniff",
+			"X-Frame-Options":         "DENY",
+			"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+			"Cache-Control":           "no-store",
+		} {
+			if got := r.Header.Get(k); got != want {
+				t.Fatalf("%s %s: want %q, got %q", path, k, want, got)
+			}
+		}
+	}
+}
