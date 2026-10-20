@@ -485,3 +485,59 @@ func TestPublicCaregiverListIsMinimal(t *testing.T) {
 		}
 	}
 }
+
+// Issue #4: wrong PINs from an unknown client must not lock the family's own
+// phones out; they get their own budget once they have signed in before.
+func TestPINLockoutSparesTrustedDevices(t *testing.T) {
+	t.Setenv("SUPER_ADMIN_PIN", "2468")
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	pin := func(id, p string, cookies ...*http.Cookie) *http.Response {
+		return do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": id, "pin": p}, nil, cookies...)
+	}
+	cookie := func(r *http.Response, name string) *http.Cookie {
+		for _, c := range r.Cookies() {
+			if c.Name == name && c.Value != "" {
+				return c
+			}
+		}
+		t.Fatalf("no %s cookie (status %d)", name, r.StatusCode)
+		return nil
+	}
+
+	r := pin("cg_ali", "1234")
+	phone := cookie(r, auth.DeviceCookieName)
+	if !phone.HttpOnly || phone.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("device cookie must be HttpOnly; SameSite=Strict: %+v", phone)
+	}
+
+	for i := 0; i < 5; i++ {
+		if r := pin("cg_ali", "0000"); r.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("attacker guess %d: want 401, got %d", i, r.StatusCode)
+		}
+	}
+	if r := pin("cg_ali", "1234"); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("unknown clients must be locked after 5 failures, got %d", r.StatusCode)
+	}
+	if r := pin("cg_ali", "1234", phone); r.StatusCode != http.StatusOK {
+		t.Fatalf("Ali's own phone must still sign in, got %d", r.StatusCode)
+	}
+
+	// A device cookie for someone else, or a forged one, gets no separate budget.
+	other := cookie(pin("cg_fatima", "1234"), auth.DeviceCookieName)
+	if r := pin("cg_ali", "1234", other); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("a device trusted only for Fatima must not bypass Ali's lockout, got %d", r.StatusCode)
+	}
+	forged := &http.Cookie{Name: auth.DeviceCookieName, Value: strings.Repeat("a", 32) + ":00"}
+	if r := pin("cg_ali", "1234", forged); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("forged device cookie bypassed the lockout, got %d", r.StatusCode)
+	}
+
+	// A PIN reset forgets trusted devices: the old PIN's devices start over as unknown.
+	admin := cookie(pin("cg_superadmin", "2468"), auth.SessionCookieName)
+	if r := do(t, "POST", srv.URL+"/api/v1/users/cg_ali/reset-pin", map[string]string{"new_pin": "4826"}, nil, admin); r.StatusCode != http.StatusOK {
+		t.Fatalf("reset-pin: %d", r.StatusCode)
+	}
+	if r := pin("cg_ali", "4826", phone); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("after a PIN reset the phone is no longer trusted, got %d", r.StatusCode)
+	}
+}

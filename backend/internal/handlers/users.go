@@ -303,6 +303,11 @@ func (h *UsersHandler) ResetUserPIN(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to reset PIN", err)
 		return
 	}
+	// Devices that knew the old PIN lose their own attempt budget too.
+	if _, err := h.DB.Exec("DELETE FROM trusted_devices WHERE caregiver_id = ?", userID); err != nil {
+		internalError(w, "failed to reset PIN", err)
+		return
+	}
 
 	audit.Log(h.DB, caregiver.ID, "RESET_USER_PIN", "caregiver", userID, "Reset 4-digit PIN for user")
 

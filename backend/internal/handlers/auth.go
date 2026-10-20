@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -79,6 +80,55 @@ func secureCookies() bool {
 	return os.Getenv("APP_ENV") == "production"
 }
 
+// deviceID returns this browser's signed device id, or "".
+func deviceID(r *http.Request) string {
+	if c, err := r.Cookie(auth.DeviceCookieName); err == nil {
+		if id, ok := auth.ParseDeviceToken(c.Value); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+// pinLimitKey keys PIN throttling per (caregiver, device). A device that has
+// entered this caregiver's PIN correctly before gets its own budget; every other
+// client shares one. Someone guessing from elsewhere can then lock out only
+// unknown devices, never the family's own phones.
+func (h *AuthHandler) pinLimitKey(r *http.Request, caregiverID string) string {
+	if id := deviceID(r); id != "" {
+		var one int
+		if h.DB.QueryRow(`SELECT 1 FROM trusted_devices WHERE caregiver_id = ? AND device_hash = ?`, caregiverID, auth.DeviceHash(id)).Scan(&one) == nil {
+			return auth.PINLimitKey(caregiverID, id)
+		}
+	}
+	return auth.PINLimitKey(caregiverID, "")
+}
+
+// trustDevice records that this browser knows caregiverID's PIN, issuing a device
+// cookie first if it has none.
+func (h *AuthHandler) trustDevice(w http.ResponseWriter, r *http.Request, caregiverID string) {
+	id := deviceID(r)
+	if id == "" {
+		var token string
+		token, id = auth.NewDeviceToken()
+		http.SetCookie(w, &http.Cookie{
+			Name:     auth.DeviceCookieName,
+			Value:    token,
+			Path:     "/",
+			Expires:  time.Now().Add(auth.DeviceCookieTTL),
+			MaxAge:   int(auth.DeviceCookieTTL.Seconds()),
+			HttpOnly: true,
+			Secure:   secureCookies(),
+			SameSite: http.SameSiteStrictMode,
+		})
+	}
+	if _, err := h.DB.Exec(`INSERT INTO trusted_devices (caregiver_id, device_hash, last_seen) VALUES (?, ?, ?)
+		ON CONFLICT (caregiver_id, device_hash) DO UPDATE SET last_seen = excluded.last_seen`,
+		caregiverID, auth.DeviceHash(id), time.Now().Unix()); err != nil {
+		log.Printf("[AUTH] failed to record trusted device: %v", err)
+	}
+}
+
 func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	var req VerifyPinRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CaregiverID == "" {
@@ -98,10 +148,11 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Brute-force protection: reserve an attempt BEFORE the comparison so parallel
-	// bursts cannot exceed the budget. Keyed by (existing) caregiver id only, so the
-	// limiter map is bounded by the number of caregivers.
+	// bursts cannot exceed the budget. Keyed per (existing caregiver, trusted device),
+	// so the limiter map is bounded by the trusted_devices table.
 	lim := h.limiter()
-	ok, retryAfter := lim.Begin(req.CaregiverID)
+	key := h.pinLimitKey(r, req.CaregiverID)
+	ok, retryAfter := lim.Begin(key)
 	if !ok {
 		secs := int(math.Ceil(retryAfter.Seconds()))
 		w.Header().Set("Retry-After", strconv.Itoa(secs))
@@ -117,12 +168,13 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 
 	// bcrypt comparison is constant-time with respect to the PIN.
 	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.PIN)); err != nil {
-		lim.Done(req.CaregiverID, false)
+		lim.Done(key, false)
 		audit.Log(h.DB, req.CaregiverID, "PIN_FAILED", "caregiver", req.CaregiverID, "Incorrect PIN entered on keypad")
 		writeJSONError(w, http.StatusUnauthorized, "INCORRECT_PIN", "incorrect PIN")
 		return
 	}
-	lim.Done(req.CaregiverID, true)
+	lim.Done(key, true)
+	h.trustDevice(w, r, req.CaregiverID)
 
 	// Two-factor: a correct PIN alone never signs this account in. Hand back a
 	// short-lived challenge that must be paired with an authenticator code.
@@ -155,8 +207,12 @@ func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, caregiverID string
 
 // revokeOtherSessions invalidates every session cookie issued before now (other
 // phones, a stolen cookie) and gives the current device a fresh one.
-func (h *AuthHandler) revokeOtherSessions(w http.ResponseWriter, caregiverID string) error {
+func (h *AuthHandler) revokeOtherSessions(w http.ResponseWriter, r *http.Request, caregiverID string) error {
 	if _, err := h.DB.Exec("UPDATE caregivers SET sessions_valid_after = ? WHERE id = ?", time.Now().Unix(), caregiverID); err != nil {
+		return err
+	}
+	// The other devices also lose their own PIN-attempt budget (a lost phone).
+	if _, err := h.DB.Exec("DELETE FROM trusted_devices WHERE caregiver_id = ? AND device_hash <> ?", caregiverID, auth.DeviceHash(deviceID(r))); err != nil {
 		return err
 	}
 	h.setSessionCookie(w, caregiverID)
@@ -242,7 +298,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // (a lost phone, a cookie left on a shared tablet).
 func (h *AuthHandler) SignOutOtherDevices(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
-	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+	if err := h.revokeOtherSessions(w, r, caregiver.ID); err != nil {
 		internalError(w, "failed to revoke sessions", err)
 		return
 	}
@@ -293,19 +349,20 @@ func (h *AuthHandler) ChangePIN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lim := h.limiter()
-	ok, retryAfter := lim.Begin(caregiver.ID)
+	key := h.pinLimitKey(r, caregiver.ID)
+	ok, retryAfter := lim.Begin(key)
 	if !ok {
 		writeTooManyAttempts(w, retryAfter)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(req.CurrentPIN)); err != nil {
-		lim.Done(caregiver.ID, false)
+		lim.Done(key, false)
 		audit.Log(h.DB, caregiver.ID, "PIN_FAILED", "caregiver", caregiver.ID, "Incorrect current PIN on change-PIN")
 		// 403, not 401: the session is valid, so the frontend must not treat this as "signed out".
 		writeJSONError(w, http.StatusForbidden, "INCORRECT_PIN", "current PIN is incorrect")
 		return
 	}
-	lim.Done(caregiver.ID, true)
+	lim.Done(key, true)
 
 	if req.NewPIN == req.CurrentPIN {
 		writeJSONError(w, http.StatusBadRequest, "SAME_PIN", "the new PIN is the same as the current one")
@@ -323,7 +380,7 @@ func (h *AuthHandler) ChangePIN(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Log(h.DB, caregiver.ID, "PIN_CHANGED", "caregiver", caregiver.ID, "Changed own 4-digit PIN")
 	// A PIN change usually means the old one leaked: sign every other device out.
-	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+	if err := h.revokeOtherSessions(w, r, caregiver.ID); err != nil {
 		internalError(w, "failed to revoke sessions", err)
 		return
 	}

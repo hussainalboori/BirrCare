@@ -28,25 +28,26 @@ import (
 
 // checkOwnPIN verifies the caregiver's PIN under the login brute-force limiter and
 // writes the error response itself when it fails.
-func (h *AuthHandler) checkOwnPIN(w http.ResponseWriter, caregiverID, pin string) bool {
+func (h *AuthHandler) checkOwnPIN(w http.ResponseWriter, r *http.Request, caregiverID, pin string) bool {
 	var pinHash string
 	if err := h.DB.QueryRow("SELECT pin_hash FROM caregivers WHERE id = ? AND is_active = 1", caregiverID).Scan(&pinHash); err != nil {
 		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
 		return false
 	}
 	lim := h.limiter()
-	ok, retryAfter := lim.Begin(caregiverID)
+	key := h.pinLimitKey(r, caregiverID)
+	ok, retryAfter := lim.Begin(key)
 	if !ok {
 		writeTooManyAttempts(w, retryAfter)
 		return false
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(pin)); err != nil {
-		lim.Done(caregiverID, false)
+		lim.Done(key, false)
 		audit.Log(h.DB, caregiverID, "PIN_FAILED", "caregiver", caregiverID, "Incorrect PIN on 2FA settings")
 		writeJSONError(w, http.StatusForbidden, "INCORRECT_PIN", "PIN is incorrect")
 		return false
 	}
-	lim.Done(caregiverID, true)
+	lim.Done(key, true)
 	return true
 }
 
@@ -162,7 +163,7 @@ func (h *AuthHandler) SetupTwoFactor(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
 		return
 	}
-	if !h.checkOwnPIN(w, caregiver.ID, req.PIN) {
+	if !h.checkOwnPIN(w, r, caregiver.ID, req.PIN) {
 		return
 	}
 	secret, err := auth.NewTOTPSecret()
@@ -231,7 +232,7 @@ func (h *AuthHandler) EnableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audit.Log(h.DB, caregiver.ID, "2FA_ENABLED", "caregiver", caregiver.ID, "Authenticator app enabled; other devices signed out")
-	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+	if err := h.revokeOtherSessions(w, r, caregiver.ID); err != nil {
 		internalError(w, "failed to revoke sessions", err)
 		return
 	}
@@ -256,7 +257,7 @@ func (h *AuthHandler) DisableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
 		return
 	}
-	if !h.checkOwnPIN(w, caregiver.ID, req.PIN) {
+	if !h.checkOwnPIN(w, r, caregiver.ID, req.PIN) {
 		return
 	}
 	lim := h.limiter()
@@ -279,7 +280,7 @@ func (h *AuthHandler) DisableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audit.Log(h.DB, caregiver.ID, "2FA_DISABLED", "caregiver", caregiver.ID, "Authenticator app removed; other devices signed out")
-	if err := h.revokeOtherSessions(w, caregiver.ID); err != nil {
+	if err := h.revokeOtherSessions(w, r, caregiver.ID); err != nil {
 		internalError(w, "failed to revoke sessions", err)
 		return
 	}

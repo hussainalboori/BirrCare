@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS revoked_sessions (
     expires_at INTEGER NOT NULL
 );
 
+-- Devices that entered a caregiver's PIN correctly; each gets its own PIN-attempt
+-- budget, so failures from elsewhere cannot lock the family's phones out.
+CREATE TABLE IF NOT EXISTS trusted_devices (
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+    device_hash TEXT NOT NULL,
+    last_seen INTEGER NOT NULL,
+    PRIMARY KEY (caregiver_id, device_hash)
+);
+
 -- 8. Caregiver Work Shifts (Configured by Super Admin)
 CREATE TABLE IF NOT EXISTS shifts (
     id TEXT PRIMARY KEY,
