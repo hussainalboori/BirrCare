@@ -29,6 +29,11 @@ button, a {
 }
 
 /* Print styling for doctor consultation reports */
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
 @media print {
   header, nav, button, .no-print {
     display: none !important;

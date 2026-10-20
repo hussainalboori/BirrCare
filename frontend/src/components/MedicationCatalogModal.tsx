@@ -78,6 +78,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [daysOfWeek, setDaysOfWeek] = useState<string[]>(ALL_DAY_IDS);
   // Doctor's minimum hours between doses; "" = automatic.
   const [minHours, setMinHours] = useState("");
+  // Anticoagulant / antiplatelet: listed first in the doctor report.
+  const [isCritical, setIsCritical] = useState(false);
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
     morning: "08:00",
     afternoon: "14:00",
@@ -117,6 +119,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setSelectedSlots(["morning"]);
     setDaysOfWeek(ALL_DAY_IDS);
     setMinHours("");
+    setIsCritical(false);
     setSlotTimes({
       morning: "08:00",
       afternoon: "14:00",
@@ -135,6 +138,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstEn(med.instructions_en || "");
     setImageUrl(med.image_url || "/meds/pill-default.svg");
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
+    setIsCritical(!!med.is_critical);
     setSelectedSlots(med.frequency_slots || ["morning"]);
     setDaysOfWeek(med.days_of_week && med.days_of_week.length > 0 ? med.days_of_week : ALL_DAY_IDS);
     const times: Record<string, string> = {};
@@ -186,6 +190,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
             min_hours_between: minHours.trim() === "" ? null : Number(minHours),
+            is_critical: isCritical,
           }),
         });
       } else {
@@ -203,6 +208,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
             min_hours_between: minHours.trim() === "" ? null : Number(minHours),
+            is_critical: isCritical,
           }),
         });
       }
@@ -443,6 +449,12 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     : `Leave empty for automatic (${autoIntervalHours(selectedSlots, slotTimes)} h for this schedule). 0 turns the lock off.`}
                 </p>
               </div>
+
+              {/* CRITICAL MEDICATION (doctor report) */}
+              <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                <input type="checkbox" checked={isCritical} onChange={(e) => setIsCritical(e.target.checked)} className="h-5 w-5" />
+                {locale === "ar" ? "دواء حرج (مميّع للدم أو مضاد للصفائح): يظهر أولاً في تقرير الطبيب" : "Critical medicine (blood thinner / antiplatelet): listed first in the doctor report"}
+              </label>
 
               {/* DAYS OF WEEK SELECTION */}
               <div className="mb-4">

@@ -102,7 +102,7 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0)
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -119,7 +119,7 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var slotsJSON string
 		var createdAtStr string
 
-		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours); err != nil {
+		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical); err != nil {
 			continue
 		}
 		m.MinHoursBetween = nullableFloat(minHours)
@@ -169,6 +169,8 @@ type CreateMedicationRequest struct {
 	ImageURL       string            `json:"image_url,omitempty"`
 	// Doctor's minimum hours between doses; omitted/null = automatic.
 	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
+	// Anticoagulant / antiplatelet: listed first in the doctor report.
+	IsCritical bool `json:"is_critical,omitempty"`
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -214,9 +216,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	timesJSON, _ := json.Marshal(slotTimes)
 
 	_, err := h.DB.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, is_critical, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, req.IsCritical, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -256,6 +258,7 @@ type UpdateMedicationRequest struct {
 	IsActive       *bool             `json:"is_active,omitempty"`
 	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
+	IsCritical      *bool           `json:"is_critical,omitempty"`
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +332,13 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		normalizedTimes := normalizeSlotTimes(req.SlotTimes, currentSlots)
 		timesJSON, _ := json.Marshal(normalizedTimes)
 		_, _ = h.DB.Exec("UPDATE medications SET slot_times = ? WHERE id = ?", string(timesJSON), medID)
+	}
+
+	if req.IsCritical != nil {
+		if _, err := h.DB.Exec("UPDATE medications SET is_critical = ? WHERE id = ?", *req.IsCritical, medID); err != nil {
+			internalError(w, "failed to update medication", err)
+			return
+		}
 	}
 
 	if setMinHours {
@@ -826,12 +836,12 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Medication must exist, be active, and actually be scheduled in this slot.
-	var nameAr, nameEn, slotsJSON string
+	var nameAr, nameEn, slotsJSON, dosage string
 	var timesJSON sql.NullString
 	var minHoursCol sql.NullFloat64
 	err := h.DB.QueryRowContext(r.Context(),
-		"SELECT name_ar, name_en, frequency_slots, slot_times, min_hours_between FROM medications WHERE id = ? AND is_active = 1",
-		req.MedicationID).Scan(&nameAr, &nameEn, &slotsJSON, &timesJSON, &minHoursCol)
+		"SELECT name_ar, name_en, frequency_slots, slot_times, min_hours_between, dosage FROM medications WHERE id = ? AND is_active = 1",
+		req.MedicationID).Scan(&nameAr, &nameEn, &slotsJSON, &timesJSON, &minHoursCol, &dosage)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSONError(w, http.StatusNotFound, "MEDICATION_NOT_FOUND", "medication not found or inactive")
 		return
@@ -900,9 +910,9 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), now.Format(sqliteTimeLayout), req.Status, req.Notes)
+		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes, dosage_snapshot)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), now.Format(sqliteTimeLayout), req.Status, req.Notes, dosage)
 	if err != nil {
 		tx.Rollback() // release the connection BEFORE querying the existing dose
 		if isUniqueViolation(err) {

@@ -185,7 +185,7 @@ Base path `/api/v1`. Derived from `backend/internal/server/router.go` and the ha
 | Method | Path | Description |
 |---|---|---|
 | GET | `/medications` | Medication catalogue. |
-| POST | `/medications` · PUT `/medications/{id}` · DELETE `/medications/{id}` | Manage medications (admin). Accepts `min_hours_between`: `null` = automatic, `0` = no interval lock, up to `72`. |
+| POST | `/medications` · PUT `/medications/{id}` · DELETE `/medications/{id}` | Manage medications (admin). Accepts `min_hours_between` (`null` = automatic, `0` = no interval lock, up to `72`) and `is_critical` (anticoagulant / antiplatelet: listed first in the doctor report). |
 | PUT | `/medications/{id}/schedule` | Days of week and clock time per slot (admin). |
 | GET | `/medications/schedule?date=YYYY-MM-DD` | Doses for a day (default: today in `APP_TIMEZONE`), see [Your first API call](#your-first-api-call). |
 | POST | `/medications/log` | Record a dose, see below. |
@@ -255,7 +255,7 @@ Push payloads are deliberately generic for the lock screen, e.g. "Blood pressure
 |---|---|---|
 | GET | `/handovers?limit=` | Latest notes (default 20, max 100). |
 | POST | `/handovers` | `{shift_type, summary, urgent_flag}`; `shift_type` is a shift id or label (default `morning`). |
-| GET | `/export/summary?days=` | Doctor summary for the last N days (default 7, max 90). Includes `medication_counts` per medication (taken, partial, vomited, refused, skipped), an alertness distribution with a `not_assessed` bucket, and `unverified_sugar_count`; cancelled doses and unverified sugar readings are left out of the figures. |
+| GET | `/export/summary?days=` | Doctor summary for the last N household-local days, today included (default 7, max 90). Adherence is measured against **expected** doses from each schedule (slots × days of week, from the day the medication was added; today's doses only once due). `per_medication` has expected / taken / partial / vomited / refused / skipped / **not_recorded**, rate, missed dates and earlier dosages, with critical medications first. Unrecorded doses are never counted as taken. Also `daily_bp` per local day, the alertness distribution (with `not_assessed`) and `unverified_sugar_count`. Cancelled doses don't count. Any query failure returns `500`, never an empty report. |
 | GET | `/shifts` | Shift definitions (everyone). |
 | POST | `/shifts` · PUT `/shifts/{id}` · DELETE `/shifts/{id}` | Manage shifts (Super Admin; delete is a soft delete). |
 | POST | `/shifts/presets` | `{preset}`: `24h`, `4h`, `8h` or `12h` (Super Admin). |

@@ -8,7 +8,7 @@ import { DoctorSummary } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { ALERTNESS_METAS } from "@/lib/clinical";
 import { formatDateTime } from "@/lib/datetime";
-import { Ltr } from "@/components/Ltr";
+import { Auto, Ltr } from "@/components/Ltr";
 import { FileSpreadsheet, Printer, Activity, Heart, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function DoctorExportPage() {
@@ -16,6 +16,8 @@ export default function DoctorExportPage() {
   const [days, setDays] = useState<number>(7);
   const [summary, setSummary] = useState<DoctorSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Detailed readings, insulin and notes print on extra pages only when asked.
+  const [printDetails, setPrintDetails] = useState(false);
 
   const loadSummary = useCallback(async (d: number) => {
     try {
@@ -60,7 +62,7 @@ export default function DoctorExportPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
@@ -71,6 +73,11 @@ export default function DoctorExportPage() {
               <option value={14}>{locale === "ar" ? "آخر 14 يوماً" : "Last 14 Days"}</option>
               <option value={30}>{locale === "ar" ? "آخر 30 يوماً" : "Last 30 Days"}</option>
             </select>
+
+            <label className="flex min-h-12 items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={printDetails} onChange={(e) => setPrintDetails(e.target.checked)} className="h-5 w-5" />
+              {locale === "ar" ? "اطبع التفاصيل أيضاً" : "Print details too"}
+            </label>
 
             <button
               type="button"
@@ -96,7 +103,7 @@ export default function DoctorExportPage() {
                     {locale === "ar" ? "تقرير المتابعة العائلية لمريض الجلطة الدماغية" : "Post-Stroke Family Care Recovery Report"}
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    {t.coveredPeriod}: <Ltr>{summary.start_date} → {summary.end_date}</Ltr> ({summary.days_covered} {locale === "ar" ? "أيام" : "days"})
+                    {t.coveredPeriod}: <Ltr>{summary.start_date} → {summary.end_date}</Ltr> ({summary.days_covered} {locale === "ar" ? (summary.days_covered <= 10 ? "أيام" : "يوماً") : "days"})
                   </p>
                 </div>
                 <div className="text-end">
@@ -104,20 +111,142 @@ export default function DoctorExportPage() {
                     Birrcare (رعاية بر)
                   </span>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    <Ltr>{formatDateTime(summary.generated_at, locale)}</Ltr>
+                    <Auto>{formatDateTime(summary.generated_at, locale)}</Auto>
                   </p>
                 </div>
               </div>
             </div>
 
+            {/* Medications against the expected doses (issue #14). Critical ones first; a
+                dose nobody recorded is "not recorded" in red, never counted as taken. */}
+            {(summary.per_medication ?? []).length > 0 && (
+              <div className="mb-5 print:mb-3 break-inside-avoid">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  {locale === "ar" ? "الأدوية: الجرعات المتوقعة مقابل المُعطاة" : "Medications: expected vs given"}
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-start text-xs print:text-[9pt]">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "الدواء" : "Medication"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "المتوقع" : "Expected"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "أُعطيت" : "Given"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "جزئية / استفراغ" : "Partial / vomited"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "رفض / تخطي" : "Refused / skipped"}</th>
+                        <th className="py-1.5 text-start font-semibold text-rose-700 dark:text-rose-300">{locale === "ar" ? "لم تُسجّل" : "Not recorded"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "الالتزام" : "Taken %"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {(summary.per_medication ?? []).map((m) => (
+                        <tr key={m.medication_id} className={m.not_recorded ? "bg-rose-50 dark:bg-rose-950/30" : undefined}>
+                          <td className="py-1.5 pe-2 align-top">
+                            <span className="font-semibold">
+                              {m.is_critical && <span className="me-1 rounded bg-rose-700 px-1 text-[9px] font-bold text-white">{locale === "ar" ? "حرج" : "critical"}</span>}
+                              <bdi>{locale === "ar" ? m.name_ar : m.name_en}</bdi> <Auto className="text-slate-500">{m.dosage}</Auto>
+                            </span>
+                            {(m.past_dosages ?? []).length > 0 && (
+                              <span className="block text-[10px] text-amber-700 dark:text-amber-400">
+                                {locale === "ar" ? "جرعة سابقة في الفترة: " : "Earlier dose in period: "}
+                                <Auto>{m.past_dosages!.join(", ")}</Auto>
+                              </span>
+                            )}
+                            {m.missed_dates.length > 0 && (
+                              <span className="block text-[10px] text-rose-700 dark:text-rose-300">
+                                {locale === "ar" ? "أيام فيها جرعة غير مُعطاة: " : "Days with a dose not given: "}
+                                <Ltr>{m.missed_dates.map((d) => d.slice(5)).join(", ")}</Ltr>
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-1.5 pe-2 align-top"><Ltr>{m.expected}</Ltr></td>
+                          <td className="py-1.5 pe-2 align-top"><Ltr>{m.taken}</Ltr></td>
+                          <td className={`py-1.5 pe-2 align-top ${m.partial || m.vomited ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}>
+                            <Ltr>{m.partial} / {m.vomited}</Ltr>
+                          </td>
+                          <td className="py-1.5 pe-2 align-top"><Ltr>{m.refused} / {m.skipped}</Ltr></td>
+                          <td className={`py-1.5 pe-2 align-top ${m.not_recorded ? "font-black text-rose-700 dark:text-rose-300" : ""}`}><Ltr>{m.not_recorded}</Ltr></td>
+                          <td className="py-1.5 align-top font-bold"><Ltr>{m.expected ? `${Math.round(m.rate)}%` : "--"}</Ltr></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Blood pressure per household day, with a small trend line */}
+            {(summary.daily_bp ?? []).length > 0 && (() => {
+              const rows = summary.daily_bp!;
+              const lo = 60, hi = 200, w = 300, h = 44;
+              const x = (i: number) => (rows.length === 1 ? w / 2 : (i * w) / (rows.length - 1));
+              const y = (v: number) => h - ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * h;
+              const line = (key: "avg_sys" | "avg_dia") => rows.map((r, i) => `${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(" ");
+              return (
+                <div className="mb-5 print:mb-3 break-inside-avoid">
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "ضغط الدم يومياً" : "Blood pressure by day"}
+                  </h3>
+                  <svg viewBox={`-4 -4 ${w + 8} ${h + 8}`} className="mb-2 h-12 w-full print:mb-1 print:h-10" role="img" aria-label={locale === "ar" ? "اتجاه ضغط الدم" : "Blood pressure trend"} style={{ direction: "ltr" }}>
+                    <line x1="0" x2={w} y1={y(140)} y2={y(140)} stroke="#f97316" strokeDasharray="3 3" strokeWidth="0.8" />
+                    <polyline points={line("avg_sys")} fill="none" stroke="#be123c" strokeWidth="2" />
+                    <polyline points={line("avg_dia")} fill="none" stroke="#2563eb" strokeWidth="1.5" />
+                  </svg>
+                  {/* On paper: one column per day, so 14 days take a few lines instead of a page. */}
+                  <table className="hidden w-full table-fixed text-center text-[8pt] print:table" dir="ltr">
+                    <tbody>
+                      {(
+                        [
+                          [locale === "ar" ? "اليوم" : "Day", (r: (typeof rows)[number]) => r.date.slice(5)],
+                          [locale === "ar" ? "المتوسط" : "Avg", (r: (typeof rows)[number]) => `${Math.round(r.avg_sys)}/${Math.round(r.avg_dia)}`],
+                          [locale === "ar" ? "الأعلى" : "Max", (r: (typeof rows)[number]) => String(r.max_sys)],
+                          [locale === "ar" ? "القراءات" : "n", (r: (typeof rows)[number]) => String(r.readings)],
+                        ] as const
+                      ).map(([label, cell]) => (
+                        <tr key={label} className="border-b border-slate-200">
+                          <th className="w-14 py-0.5 text-start font-semibold">{label}</th>
+                          {rows.map((r) => (
+                            <td key={r.date} className={`py-0.5 ${label !== (locale === "ar" ? "اليوم" : "Day") && (r.max_sys >= 180 || r.min_sys < 90) ? "font-bold text-rose-700" : ""}`}>
+                              {cell(r)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <table className="w-full text-start text-xs print:hidden">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "اليوم" : "Day"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "المتوسط" : "Average"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "الانقباضي (أدنى–أعلى)" : "Systolic (min–max)"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "القراءات" : "Readings"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {rows.map((r) => (
+                        <tr key={r.date} className={r.max_sys >= 180 ? "bg-rose-50 dark:bg-rose-950/30" : undefined}>
+                          <td className="py-1 pe-2"><Ltr>{r.date.slice(5)}</Ltr></td>
+                          <td className="py-1 pe-2 font-bold"><Ltr>{Math.round(r.avg_sys)}/{Math.round(r.avg_dia)}</Ltr></td>
+                          <td className={`py-1 pe-2 ${r.max_sys >= 180 || r.min_sys < 90 ? "font-bold text-rose-700 dark:text-rose-300" : ""}`}>
+                            <Ltr>{r.min_sys}–{r.max_sys}</Ltr>
+                          </td>
+                          <td className="py-1"><Ltr>{r.readings}</Ltr></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
             {/* Key Clinical Summary Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 gap-3 print:gap-2 mb-6 print:mb-3">
               {/* BP Average */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-[11px] font-semibold text-slate-500 block mb-1">
                   {locale === "ar" ? "متوسط ضغط الدم" : "Avg Blood Pressure"}
                 </span>
-                <span className="text-lg font-black text-slate-900 dark:text-white">
+                <span className="text-lg print:text-base font-black text-slate-900 dark:text-white">
                   {/* Spaced slash inside RTL text reorders to "80 / 120" unless isolated */}
                   <Ltr>{Math.round(summary.vitals_stats.avg_systolic)} / {Math.round(summary.vitals_stats.avg_diastolic)}</Ltr>
                 </span>
@@ -128,12 +257,12 @@ export default function DoctorExportPage() {
               </div>
 
               {/* Blood Sugar Average */}
-              <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-950/60 dark:bg-blue-950/20">
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 print:p-2 dark:border-blue-950/60 dark:bg-blue-950/20">
                 <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300 block mb-1 flex items-center gap-1">
                   <Activity className="h-3.5 w-3.5 text-blue-500" />
                   {locale === "ar" ? "متوسط السكر" : "Avg Glucose"}
                 </span>
-                <span className="text-lg font-black text-blue-900 dark:text-blue-100">
+                <span className="text-lg print:text-base font-black text-blue-900 dark:text-blue-100">
                   <Ltr>
                     {summary.vitals_stats.avg_blood_sugar ? summary.vitals_stats.avg_blood_sugar.toFixed(1) : "--"}{" "}
                     <span className="text-xs font-normal">mmol/L</span>
@@ -152,26 +281,31 @@ export default function DoctorExportPage() {
               </div>
 
               {/* Medication Adherence */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
                   {t.adherenceRate}
                 </span>
-                <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+                <span className="text-lg print:text-base font-black text-emerald-600 dark:text-emerald-400">
                   <Ltr>{Math.round(summary.adherence.adherence_rate)}%</Ltr>
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
-                  {summary.adherence.total_taken} {locale === "ar" ? "جرعة أُعطيت" : "doses taken"}
+                  <Ltr>{summary.adherence.total_taken}/{summary.adherence.total_scheduled}</Ltr> {locale === "ar" ? "جرعة أُعطيت" : "doses given"}
+                  {summary.adherence.total_not_recorded ? (
+                    <span className="block font-bold text-rose-700 dark:text-rose-300">
+                      <Ltr>{summary.adherence.total_not_recorded}</Ltr> {locale === "ar" ? "لم تُسجّل" : "not recorded"}
+                    </span>
+                  ) : null}
                 </span>
               </div>
 
               {/* Average Pulse */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <Heart className="h-3.5 w-3.5 text-rose-500" />
                   {locale === "ar" ? "متوسط النبض" : "Average Pulse"}
                 </span>
-                <span className="text-lg font-black text-slate-900 dark:text-white">
+                <span className="text-lg print:text-base font-black text-slate-900 dark:text-white">
                   <Ltr>
                     {Math.round(summary.vitals_stats.avg_pulse)} <span className="text-xs font-normal">bpm</span>
                   </Ltr>
@@ -182,12 +316,12 @@ export default function DoctorExportPage() {
               </div>
 
               {/* Crisis Episodes */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                   {locale === "ar" ? "أزمات الضغط" : "Crisis Readings"}
                 </span>
-                <span className={`text-lg font-black ${summary.vitals_stats.crisis_count > 0 ? "text-rose-600" : "text-slate-900 dark:text-white"}`}>
+                <span className={`text-lg print:text-base font-black ${summary.vitals_stats.crisis_count > 0 ? "text-rose-600" : "text-slate-900 dark:text-white"}`}>
                   {summary.vitals_stats.crisis_count}
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">
@@ -197,23 +331,23 @@ export default function DoctorExportPage() {
             </div>
 
             {/* Cognitive State Taxonomy Distribution */}
-            <div className="mb-6 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
+            <div className="mb-6 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 print:mb-2 print:p-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3 print:mb-1">
                 {t.cognitiveDistribution}
               </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 print:grid-cols-5 gap-2 print:gap-1">
                 {Object.entries(summary.alertness_distribution).map(([level, count]) => {
                   const meta =
                     level === "not_assessed"
                       ? { labelAr: "لم تُقيَّم", labelEn: "Not assessed" }
                       : ALERTNESS_METAS[level as keyof typeof ALERTNESS_METAS];
                   return (
-                    <div key={level} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                    <div key={level} className="p-3 print:p-1 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
                       <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
                         {locale === "ar" ? meta?.labelAr : meta?.labelEn}
                       </span>
-                      <span className="text-base font-bold text-slate-900 dark:text-white mt-1 block">
-                        {count} {locale === "ar" ? "مرات" : "times"}
+                      <span className="text-base print:text-xs font-bold text-slate-900 dark:text-white mt-1 print:mt-0 block">
+                        {count} {locale === "ar" ? (count >= 3 && count <= 10 ? "مرات" : "مرة") : count === 1 ? "time" : "times"}
                       </span>
                     </div>
                   );
@@ -221,7 +355,9 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
-            {/* Recent Vitals Table */}
+            {/* Details: on screen always; printed only when asked, on a new page, so the
+                default printout is the one-page A4 summary above. */}
+            <div className={printDetails ? "print:break-before-page" : "print:hidden"}>
             <div className="mb-6">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
                 {locale === "ar" ? "آخر القياسات الحيوية التفصيلية" : "Detailed Vitals Records"}
@@ -278,41 +414,6 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
-            {/* Per medication: full, partial, vomited, refused, skipped (never counted as fully given) */}
-            {(summary.medication_counts ?? []).length > 0 && (
-              <div className="mb-6 break-inside-avoid">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
-                  {locale === "ar" ? "الجرعات لكل دواء" : "Doses per medication"}
-                </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-start text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400">
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "الدواء" : "Medication"}</th>
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "كاملة" : "Full"}</th>
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "جزئية" : "Partial"}</th>
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "استفرغت" : "Vomited"}</th>
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "رفضت" : "Refused"}</th>
-                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "تُخطّيت" : "Skipped"}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {(summary.medication_counts ?? []).map((m) => (
-                        <tr key={m.medication_id} className={m.partial || m.vomited ? "bg-orange-50 dark:bg-orange-950/30" : undefined}>
-                          <td className="py-2 pe-3 font-semibold"><bdi>{locale === "ar" ? m.name_ar : m.name_en}</bdi></td>
-                          <td className="py-2 pe-3"><Ltr>{m.taken}</Ltr></td>
-                          <td className={`py-2 pe-3 ${m.partial ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}><Ltr>{m.partial}</Ltr></td>
-                          <td className={`py-2 pe-3 ${m.vomited ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}><Ltr>{m.vomited}</Ltr></td>
-                          <td className="py-2 pe-3"><Ltr>{m.refused}</Ltr></td>
-                          <td className="py-2 pe-3"><Ltr>{m.skipped}</Ltr></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
             {/* Insulin vs sugar: what the scale said, what was given, and why it differed */}
             {summary.insulin_logs && summary.insulin_logs.length > 0 && (() => {
               const logs = summary.insulin_logs;
@@ -368,12 +469,14 @@ export default function DoctorExportPage() {
               );
             })()}
 
+            </div>
+
             {/* Doctor Examination Notes Area */}
-            <div className="mt-8 border-t-2 border-dashed border-slate-300 pt-6">
+            <div className="mt-8 border-t-2 border-dashed border-slate-300 pt-6 print:mt-3 print:pt-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.doctorNotesPlaceholder}
               </h4>
-              <div className="h-28 rounded-2xl border border-slate-200 p-4 bg-slate-50/50 print:border-slate-400" />
+              <div className="h-28 print:h-16 rounded-2xl border border-slate-200 p-4 bg-slate-50/50 print:border-slate-400" />
               <div className="mt-4 flex justify-between text-xs text-slate-400">
                 <span>{locale === "ar" ? "توقيع الطبيب المعالج: ___________________" : "Attending Physician Signature: ___________________"}</span>
                 <span>{locale === "ar" ? "التاريخ: ____ / ____ / ________" : "Date: ____ / ____ / ________"}</span>

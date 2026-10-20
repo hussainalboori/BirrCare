@@ -76,6 +76,8 @@ export interface Medication {
   image_url?: string;
   /** Doctor's minimum hours between doses; null = automatic, 0 = no lock. */
   min_hours_between?: number | null;
+  /** Anticoagulant / antiplatelet: listed first in the doctor report. */
+  is_critical?: boolean;
   is_active: boolean;
   created_by?: string;
   created_at: string;
@@ -217,19 +219,30 @@ export interface DoctorSummary {
     total_partial?: number;
     total_refused?: number;
     total_vomited?: number;
+    total_not_recorded?: number;
     adherence_rate: number;
   };
   /** Per medication: given fully, partly, later vomited, refused, skipped. */
-  medication_counts?: {
+  /** Per medication against the doses the schedule expected; critical ones first. */
+  per_medication?: {
     medication_id: string;
     name_ar: string;
     name_en: string;
+    dosage: string;
+    past_dosages?: string[];
+    is_critical: boolean;
+    expected: number;
     taken: number;
     partial: number;
     vomited: number;
     refused: number;
     skipped: number;
+    not_recorded: number;
+    rate: number;
+    missed_dates: string[];
   }[];
+  /** Blood pressure per household-local day. */
+  daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
   alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];

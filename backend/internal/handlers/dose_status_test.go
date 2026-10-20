@@ -136,12 +136,12 @@ func TestExportCountsPartialVomitedRefused(t *testing.T) {
 	rec := httptest.NewRecorder()
 	exp.ExportDoctorSummary(rec, httptest.NewRequest(http.MethodGet, "/api/v1/export/summary?days=7", nil))
 	var out struct {
-		Adherence        handlers.MedAdherence    `json:"adherence"`
-		MedicationCounts []handlers.MedDoseCounts `json:"medication_counts"`
+		Adherence     handlers.MedAdherence `json:"adherence"`
+		PerMedication []handlers.MedReport  `json:"per_medication"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	byID := map[string]handlers.MedDoseCounts{}
-	for _, c := range out.MedicationCounts {
+	byID := map[string]handlers.MedReport{}
+	for _, c := range out.PerMedication {
 		byID[c.MedicationID] = c
 	}
 	if a := byID["med_aspirin"]; a.Taken != 1 || a.Vomited != 1 || a.Refused != 1 {
@@ -150,7 +150,7 @@ func TestExportCountsPartialVomitedRefused(t *testing.T) {
 	if w := byID["med_warfarin"]; w.Partial != 1 || w.Taken != 0 {
 		t.Fatalf("warfarin counts: %+v", w)
 	}
-	if out.Adherence.TotalPartial != 1 || out.Adherence.TotalVomited != 1 || out.Adherence.TotalRefused != 1 || out.Adherence.TotalScheduled != 3 {
+	if out.Adherence.TotalPartial != 1 || out.Adherence.TotalVomited != 1 || out.Adherence.TotalRefused != 1 {
 		t.Fatalf("adherence totals: %+v", out.Adherence)
 	}
 }

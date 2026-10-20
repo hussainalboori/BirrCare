@@ -68,10 +68,12 @@ type Medication struct {
 	ImageURL       string            `json:"image_url,omitempty"`
 	// MinHoursBetween is the doctor's minimum gap between doses; nil = automatic
 	// (derived from the schedule), 0 = no interval lock.
-	MinHoursBetween *float64  `json:"min_hours_between"`
-	IsActive        bool      `json:"is_active"`
-	CreatedBy       string    `json:"created_by,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	MinHoursBetween *float64 `json:"min_hours_between"`
+	// Anticoagulant / antiplatelet: listed first in the doctor report (issue #14).
+	IsCritical bool      `json:"is_critical"`
+	IsActive   bool      `json:"is_active"`
+	CreatedBy  string    `json:"created_by,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // LastDose is the most recent taken dose of a medication, on any date.

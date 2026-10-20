@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS medication_logs (
     notes TEXT,
     voided_at TEXT,
     voided_by TEXT REFERENCES caregivers(id),
-    void_reason TEXT
+    void_reason TEXT,
+    dosage_snapshot TEXT  -- the medication's dosage when this dose was recorded (issue #14)
 );
 
 -- Follow-ups on a given dose, e.g. vomited 10 minutes later (issue #9).
@@ -377,6 +378,21 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_med_dose_active
 			ON medication_logs(medication_id, scheduled_date, slot) WHERE voided_at IS NULL`); err != nil {
 			return fmt.Errorf("SAFETY: cannot create the double-dose lock uq_med_dose_active: %w", err)
+		}
+	}
+
+	// Issue #14: dose recorded with its dosage at the time; critical medications
+	// (anticoagulants, antiplatelets) listed first in the doctor report.
+	for _, c := range []struct{ table, col, def string }{
+		{"medication_logs", "dosage_snapshot", "TEXT"},
+		{"medications", "is_critical", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", c.table, c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE " + c.table + " ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding %s.%s: %w", c.table, c.col, err)
+			}
 		}
 	}
 

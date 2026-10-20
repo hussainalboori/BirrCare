@@ -22,11 +22,14 @@ type DoctorSummaryResponse struct {
 	EndDate     string       `json:"end_date"`
 	VitalsStats VitalsStats  `json:"vitals_stats"`
 	Adherence   MedAdherence `json:"adherence"`
-	// Per medication: how many doses were given fully, partly, vomited, refused, skipped.
-	MedicationCounts []MedDoseCounts       `json:"medication_counts"`
-	Alertness        map[string]int        `json:"alertness_distribution"`
-	RecentNotes      []models.HandoverNote `json:"recent_notes"`
-	RecentVitals     []models.VitalsLog    `json:"recent_vitals"`
+	// Per medication, against the doses the schedule expected (issue #14). Critical
+	// medications (anticoagulants, antiplatelets) come first.
+	PerMedication []MedReport `json:"per_medication"`
+	// Blood pressure per household-local day.
+	DailyBP      []DailyBP             `json:"daily_bp"`
+	Alertness    map[string]int        `json:"alertness_distribution"`
+	RecentNotes  []models.HandoverNote `json:"recent_notes"`
+	RecentVitals []models.VitalsLog    `json:"recent_vitals"`
 	// Every injection with the reading and what the scale said, so the doctor can
 	// see how the scale is performing and adjust it.
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
@@ -51,25 +54,16 @@ type VitalsStats struct {
 	UnverifiedSugarCount int `json:"unverified_sugar_count"`
 }
 
-type MedDoseCounts struct {
-	MedicationID string `json:"medication_id"`
-	NameAr       string `json:"name_ar"`
-	NameEn       string `json:"name_en"`
-	Taken        int    `json:"taken"`
-	Partial      int    `json:"partial"`
-	Vomited      int    `json:"vomited"` // given (taken/partial) doses later vomited
-	Refused      int    `json:"refused"`
-	Skipped      int    `json:"skipped"`
-}
-
 type MedAdherence struct {
-	TotalScheduled int     `json:"total_scheduled"`
-	TotalTaken     int     `json:"total_taken"`
-	TotalSkipped   int     `json:"total_skipped"`
-	TotalPartial   int     `json:"total_partial"`
-	TotalRefused   int     `json:"total_refused"`
-	TotalVomited   int     `json:"total_vomited"`
-	AdherenceRate  float64 `json:"adherence_rate"` // e.g., 95.5 (%)
+	TotalScheduled int `json:"total_scheduled"`
+	TotalTaken     int `json:"total_taken"`
+	TotalSkipped   int `json:"total_skipped"`
+	TotalPartial   int `json:"total_partial"`
+	TotalRefused   int `json:"total_refused"`
+	TotalVomited   int `json:"total_vomited"`
+	// Expected doses with no entry at all: never counted as taken.
+	TotalNotRecorded int     `json:"total_not_recorded"`
+	AdherenceRate    float64 `json:"adherence_rate"` // fully taken / expected, e.g. 85.7 (%)
 }
 
 func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Request) {
@@ -79,10 +73,16 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		days = d
 	}
 
-	endDate := time.Now().In(ClinicalLocation())
-	startDate := endDate.AddDate(0, 0, -days)
+	// The last N household-local days, today included. Timestamps are stored in UTC,
+	// so filter from local midnight converted to UTC (not a bare local date string).
+	now := time.Now()
+	loc := ClinicalLocation()
+	endDate := now.In(loc)
+	y, mo, d := endDate.Date()
+	startDate := time.Date(y, mo, d, 0, 0, 0, 0, loc).AddDate(0, 0, -(days - 1))
 	startDateStr := startDate.Format("2006-01-02")
 	endDateStr := endDate.Format("2006-01-02")
+	sinceUTC := startDate.UTC().Format(sqliteTimeLayout)
 
 	// 1. Vitals stats
 	rows, err := h.DB.Query(`
@@ -92,15 +92,21 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		JOIN caregivers c ON v.caregiver_id = c.id
 		WHERE v.recorded_at >= ?
 		ORDER BY v.recorded_at DESC
-	`, startDateStr)
+	`, sinceUTC)
+	if err != nil {
+		internalError(w, "failed to load vitals for the report", err)
+		return
+	}
 
 	var stats VitalsStats
 	alertnessMap := map[string]int{"alert": 0, "confused": 0, "restless": 0, "drowsy": 0, "not_assessed": 0}
 	recentVitals := []models.VitalsLog{} // never null in JSON: the report maps over it
 	var sumSys, sumDia, sumPulse, sumSugar float64
 	var bpCount, pulseCount, sugarCount int
+	type bpDay struct{ sumSys, sumDia, n, maxSys, minSys int }
+	bpDays := map[string]*bpDay{}
 
-	if err == nil {
+	{
 		defer rows.Close()
 		firstBP := true
 		for rows.Next() {
@@ -142,6 +148,20 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 					if d > stats.MaxDiastolic {
 						stats.MaxDiastolic = d
 					}
+				}
+
+				if t, err := time.Parse(sqliteTimeLayout, recordedAtStr); err == nil {
+					day := t.In(loc).Format("2006-01-02")
+					b := bpDays[day]
+					if b == nil {
+						b = &bpDay{minSys: s}
+						bpDays[day] = b
+					}
+					b.sumSys += s
+					b.sumDia += d
+					b.n++
+					b.maxSys = max(b.maxSys, s)
+					b.minSys = min(b.minSys, s)
 				}
 
 				if v.BPStatus == "CRISIS" {
@@ -193,6 +213,17 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			recentVitals = append(recentVitals, v)
 		}
 		rows.Close() // release the single pooled connection before the next query
+		if err := rows.Err(); err != nil {
+			internalError(w, "failed to read vitals for the report", err)
+			return
+		}
+	}
+	dailyBP := []DailyBP{}
+	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
+		key := day.Format("2006-01-02")
+		if b := bpDays[key]; b != nil {
+			dailyBP = append(dailyBP, DailyBP{Date: key, AvgSys: float64(b.sumSys) / float64(b.n), AvgDia: float64(b.sumDia) / float64(b.n), MaxSys: b.maxSys, MinSys: b.minSys, Readings: b.n})
+		}
 	}
 
 	if bpCount > 0 {
@@ -207,56 +238,15 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		stats.AvgBloodSugar = &avgS
 	}
 
-	// 2. Medication adherence, per medication. A voided mis-tap was never given; a
-	// partial or vomited dose is reported as such, never as fully taken.
-	medCounts := []MedDoseCounts{}
-	countRows, err := h.DB.Query(`
-		SELECT m.id, m.name_ar, m.name_en,
-		       COUNT(CASE WHEN l.status = 'taken' THEN 1 END),
-		       COUNT(CASE WHEN l.status = 'partial' THEN 1 END),
-		       COUNT(CASE WHEN EXISTS (SELECT 1 FROM medication_log_events e WHERE e.log_id = l.id AND e.type = 'vomited') THEN 1 END),
-		       COUNT(CASE WHEN l.status = 'refused' THEN 1 END),
-		       COUNT(CASE WHEN l.status = 'skipped' THEN 1 END)
-		FROM medication_logs l JOIN medications m ON m.id = l.medication_id
-		WHERE l.scheduled_date >= ? AND l.voided_at IS NULL
-		GROUP BY m.id ORDER BY m.name_en
-	`, startDateStr)
-	if err == nil {
-		for countRows.Next() {
-			var c MedDoseCounts
-			if err := countRows.Scan(&c.MedicationID, &c.NameAr, &c.NameEn, &c.Taken, &c.Partial, &c.Vomited, &c.Refused, &c.Skipped); err == nil {
-				medCounts = append(medCounts, c)
-			}
-		}
-		countRows.Close() // release the single pooled connection before the next query
-	}
-	var totalTaken, totalSkipped, totalPartial, totalRefused, totalVomited int
-	for _, c := range medCounts {
-		totalTaken += c.Taken
-		totalSkipped += c.Skipped
-		totalPartial += c.Partial
-		totalRefused += c.Refused
-		totalVomited += c.Vomited
-	}
-
-	totalScheduled := totalTaken + totalSkipped + totalPartial + totalRefused
-	var rate float64
-	if totalScheduled > 0 {
-		rate = (float64(totalTaken) / float64(totalScheduled)) * 100.0
-	}
-
-	adherence := MedAdherence{
-		TotalScheduled: totalScheduled,
-		TotalTaken:     totalTaken,
-		TotalSkipped:   totalSkipped,
-		TotalPartial:   totalPartial,
-		TotalRefused:   totalRefused,
-		TotalVomited:   totalVomited,
-		AdherenceRate:  rate,
+	// 2. Medication adherence against expected doses (issue #14).
+	perMedication, adherence, err := buildDoseReport(h.DB, startDate, endDate, now)
+	if err != nil {
+		internalError(w, "failed to compute adherence", err)
+		return
 	}
 
 	// 3. Recent Handover notes
-	noteRows, _ := h.DB.Query(`
+	noteRows, err := h.DB.Query(`
 		SELECT n.id, n.caregiver_id, n.created_at, n.shift_type, n.summary, n.urgent_flag,
 		       c.name, c.avatar_color
 		FROM handover_notes n
@@ -264,7 +254,11 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		WHERE n.created_at >= ?
 		ORDER BY n.created_at DESC
 		LIMIT 15
-	`, startDateStr)
+	`, sinceUTC)
+	if err != nil {
+		internalError(w, "failed to load notes for the report", err)
+		return
+	}
 
 	recentNotes := []models.HandoverNote{}
 	if noteRows != nil {
@@ -289,23 +283,25 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	if noteRows != nil {
 		noteRows.Close()
 	}
-	insulinLogs, err := insulinLogsSince(h.DB, startDateStr)
+	insulinLogs, err := insulinLogsSince(h.DB, sinceUTC)
 	if err != nil {
-		insulinLogs = []InsulinLog{}
+		internalError(w, "failed to load insulin for the report", err)
+		return
 	}
 
 	res := DoctorSummaryResponse{
-		GeneratedAt:      time.Now().UTC(),
-		DaysCovered:      days,
-		StartDate:        startDateStr,
-		EndDate:          endDateStr,
-		VitalsStats:      stats,
-		Adherence:        adherence,
-		MedicationCounts: medCounts,
-		Alertness:        alertnessMap,
-		RecentNotes:      recentNotes,
-		RecentVitals:     recentVitals,
-		InsulinLogs:      insulinLogs,
+		GeneratedAt:   time.Now().UTC(),
+		DaysCovered:   days,
+		StartDate:     startDateStr,
+		EndDate:       endDateStr,
+		VitalsStats:   stats,
+		Adherence:     adherence,
+		PerMedication: perMedication,
+		DailyBP:       dailyBP,
+		Alertness:     alertnessMap,
+		RecentNotes:   recentNotes,
+		RecentVitals:  recentVitals,
+		InsulinLogs:   insulinLogs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

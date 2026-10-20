@@ -247,13 +247,15 @@ func TestExportIgnoresVoidedDoses(t *testing.T) {
 	rec := httptest.NewRecorder()
 	exp.ExportDoctorSummary(rec, httptest.NewRequest(http.MethodGet, "/api/v1/export/summary?days=7", nil))
 	var out struct {
-		Adherence struct {
-			TotalScheduled int `json:"total_scheduled"`
-			TotalTaken     int `json:"total_taken"`
-		} `json:"adherence"`
+		Adherence     handlers.MedAdherence `json:"adherence"`
+		PerMedication []handlers.MedReport  `json:"per_medication"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if out.Adherence.TotalTaken != 1 || out.Adherence.TotalScheduled != 1 {
+	taken := map[string]int{}
+	for _, m := range out.PerMedication {
+		taken[m.MedicationID] = m.Taken
+	}
+	if out.Adherence.TotalTaken != 1 || taken["med_aspirin"] != 0 || taken["med_citicoline"] != 1 {
 		t.Fatalf("voided dose counted in the doctor report: %+v (%s)", out.Adherence, rec.Body.String())
 	}
 }
