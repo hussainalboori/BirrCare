@@ -87,6 +87,12 @@ func MessageFor(kind, alertID, lang string) Message {
 	if ar {
 		body = "تنبيه دواء — افتح رعاية بر"
 	}
+	if kind == "correction" {
+		body = "Correction to an earlier alert — open Birrcare"
+		if ar {
+			body = "تصحيح لتنبيه سابق — افتح رعاية بر"
+		}
+	}
 	if kind == "alertness" || kind == "fast_positive" {
 		body = "Health alert — open Birrcare"
 		if ar {

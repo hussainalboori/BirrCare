@@ -22,7 +22,7 @@ import { Phone, Siren, Check, AlertTriangle } from "lucide-react";
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -103,7 +103,7 @@ export function AlertCenter() {
   };
 
   const p = current.payload;
-  const red = current.kind !== "dose_override" && current.kind !== "vomited";
+  const red = current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction";
   const crisis = current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
@@ -132,6 +132,19 @@ export function AlertCenter() {
           ? ar ? "اتصل بالطبيب الآن، وبالإسعاف إذا كان هذا جديداً." : "Call the doctor now, emergency if this is new."
           : ar ? "إذا كان هذا جديداً: افحص F.A.S.T. الآن واتصل بالطبيب." : "If this is new: do the F.A.S.T. check now and call the doctor.";
       break;
+    case "correction": {
+      // A typo that raised an alert was corrected (issue #15).
+      const was = p.original_systolic != null ? <Ltr>{String(p.original_systolic)}/{String(p.original_diastolic)}</Ltr> : null;
+      title = (
+        <>
+          {ar ? "تصحيح لقراءة سابقة" : "Correction to an earlier reading"}
+          {reading && <>: {ar ? "كانت" : "it was"} {reading}</>}
+          {was && <> ({ar ? "وليس" : "not"} {was})</>}
+        </>
+      );
+      advice = String(p.reason || "");
+      break;
+    }
     case "vomited":
       title = <>{ar ? "استفرغت بعد جرعة" : "Vomited after a dose"}{medName && <>: <bdi>{medName}</bdi></>}</>;
       break;

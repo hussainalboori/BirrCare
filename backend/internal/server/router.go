@@ -170,6 +170,7 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/settings/clinical", clinicalHandler.Get)
 				api.Put("/settings/clinical", clinicalHandler.Put)
 				api.Put("/vitals/{id}/last-normal", vitalsHandler.SetLastNormal)
+				api.Post("/vitals/{id}/correct", vitalsHandler.CorrectVitals)
 
 				// Stroke Vitals
 				api.Get("/vitals", vitalsHandler.ListVitals)

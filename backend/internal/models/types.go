@@ -151,8 +151,24 @@ type VitalsLog struct {
 	// F.A.S.T. stroke check (vital_type 'fast', issue #13) and when she was last seen normal.
 	FastResult   json.RawMessage `json:"fast_result,omitempty"`
 	LastNormalAt string          `json:"last_normal_at,omitempty"` // RFC3339
-	BPStatus     string          `json:"bp_status,omitempty"`      // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
-	SugarStatus  string          `json:"sugar_status,omitempty"`   // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+	// Set on a corrected reading (issue #15): what was first entered, by whom, and why
+	// it was corrected. The original row stays in the database unchanged.
+	Correction  *VitalCorrection `json:"correction,omitempty"`
+	BPStatus    string           `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	SugarStatus string           `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+}
+
+// VitalCorrection describes the reading a correction replaced.
+type VitalCorrection struct {
+	OriginalID           string   `json:"original_id"`
+	OriginalSystolic     *int     `json:"original_systolic,omitempty"`
+	OriginalDiastolic    *int     `json:"original_diastolic,omitempty"`
+	OriginalPulse        *int     `json:"original_pulse,omitempty"`
+	OriginalBloodSugar   *float64 `json:"original_blood_sugar,omitempty"`
+	OriginalAlertness    *string  `json:"original_alertness_level,omitempty"`
+	OriginalLoggedByName string   `json:"original_logged_by_name"`
+	Reason               string   `json:"reason"`
+	CorrectedAt          string   `json:"corrected_at"` // RFC3339
 }
 
 // HandoverNote captures shift transitions and urgent flags between siblings.

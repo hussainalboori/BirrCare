@@ -87,10 +87,14 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	// 1. Vitals stats
 	rows, err := h.DB.Query(`
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
-		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, '')
+		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, ''),
+		       COALESCE(v.supersedes_id, ''), o.systolic, o.diastolic, o.pulse, o.blood_sugar, o.alertness_level, COALESCE(oc.name, ''),
+		       COALESCE(v.correction_reason, ''), COALESCE(v.corrected_at, '')
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
-		WHERE v.recorded_at >= ?
+		LEFT JOIN vitals_logs o ON o.id = v.supersedes_id
+		LEFT JOIN caregivers oc ON oc.id = o.caregiver_id
+		WHERE v.recorded_at >= ? AND v.superseded_by IS NULL -- a corrected reading is replaced by its correction
 		ORDER BY v.recorded_at DESC
 	`, sinceUTC)
 	if err != nil {
@@ -116,7 +120,9 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			var sugar sql.NullFloat64
 			var recordedAtStr string
 			var fastResult, lastNormal string
-			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal); err != nil {
+			var corr correctionScan
+			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal,
+				&corr.id, &corr.sys, &corr.dia, &corr.pulse, &corr.sugar, &corr.alertness, &corr.by, &corr.reason, &corr.at); err != nil {
 				continue
 			}
 			if sys.Valid && dia.Valid {
@@ -196,6 +202,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 				v.FastResult = json.RawMessage(fastResult)
 			}
 			v.LastNormalAt = sqliteToRFC3339(lastNormal)
+			v.Correction = corr.toModel()
 			if v.VitalType == "fast" && (strings.Contains(fastResult, `"face":true`) || strings.Contains(fastResult, `"arm":true`) || strings.Contains(fastResult, `"speech":true`)) {
 				stats.FastPositiveCount++
 			}

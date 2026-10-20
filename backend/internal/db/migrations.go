@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -129,7 +129,13 @@ CREATE TABLE IF NOT EXISTS vitals_logs (
     -- F.A.S.T. stroke check (vital_type 'fast', issue #13): {"face":bool,"arm":bool,"speech":bool}
     fast_result TEXT,
     -- When she was last seen normal, for the paramedics.
-    last_normal_at TEXT
+    last_normal_at TEXT,
+    -- Corrections (issue #15): a corrected reading is a new row; the original keeps
+    -- its values and gets superseded_by. Values are never updated in place.
+    supersedes_id TEXT REFERENCES vitals_logs(id),
+    superseded_by TEXT,
+    correction_reason TEXT,
+    corrected_at TEXT
 );
 
 -- 5. Shift Handover Notes
@@ -510,8 +516,8 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
-	// Issue #13: F.A.S.T. results and "last seen normal" on vitals; more alert kinds.
-	for _, col := range []string{"fast_result", "last_normal_at"} {
+	// Issue #13: F.A.S.T. results and "last seen normal"; issue #15: corrections.
+	for _, col := range []string{"fast_result", "last_normal_at", "supersedes_id", "superseded_by", "correction_reason", "corrected_at"} {
 		var n int
 		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vitals_logs') WHERE name = ?", col).Scan(&n)
 		if n == 0 {
@@ -522,14 +528,14 @@ func Migrate(database *sql.DB) error {
 	}
 	var alertsSQL string
 	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
-	if !strings.Contains(alertsSQL, "'fast_positive'") {
-		log.Println("Migrating alerts: low BP, alertness and F.A.S.T. kinds...")
+	if !strings.Contains(alertsSQL, "'correction'") {
+		log.Println("Migrating alerts: low BP, alertness, F.A.S.T. and correction kinds...")
 		if _, err := database.Exec(`
 			PRAGMA foreign_keys = OFF;
 			DROP TABLE IF EXISTS alerts_v2;
 			CREATE TABLE alerts_v2 (
 				id TEXT PRIMARY KEY,
-				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited')),
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction')),
 				ref_id TEXT,
 				created_by TEXT REFERENCES caregivers(id),
 				payload TEXT NOT NULL DEFAULT '{}',
@@ -543,6 +549,22 @@ func Migrate(database *sql.DB) error {
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts: %w", err)
 		}
+	}
+
+	// Issue #15: a reading's values can never be changed in place, only corrected by a
+	// new row, and a reading can be superseded once. (Created after any rebuild above,
+	// which would have dropped them.)
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS vitals_values_immutable
+		BEFORE UPDATE OF caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, supersedes_id
+		ON vitals_logs
+		BEGIN SELECT RAISE(ABORT, 'vitals readings are immutable: post a correction instead'); END;
+		CREATE TRIGGER IF NOT EXISTS vitals_superseded_once
+		BEFORE UPDATE OF superseded_by ON vitals_logs
+		WHEN OLD.superseded_by IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this reading was already corrected'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating vitals immutability triggers: %w", err)
 	}
 
 	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.

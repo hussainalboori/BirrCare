@@ -220,6 +220,7 @@ The interval check runs inside the same immediate-lock transaction as the insert
 
 | Method | Path | Description |
 |---|---|---|
+| POST | `/vitals/{id}/correct` | `{systolic, diastolic, pulse, blood_sugar, alertness_level, reason}`. Adds a corrected reading that supersedes the original. The original is never changed: a database trigger refuses in-place updates of measurements. Allowed for the person who logged it within 24 h, or an admin any time; `reason` is required. `409` if already corrected. Lists and the export use the correction, with the original under `correction`. If the original raised alerts, they stop replaying and a `correction` alert goes to everyone. |
 | PUT | `/vitals/{id}/last-normal` | `{last_normal_at}` (RFC3339, last 7 days) on a F.A.S.T. check: when she was last seen normal, for the paramedics. |
 | GET · PUT | `/settings/clinical` | `{bp_low_systolic, bp_low_diastolic}`: the doctor's low-BP limit (default 90/60). PUT is admin only (70–120 / 40–80). |
 | GET | `/vitals?limit=` | Latest readings (default 30, max 100). `alertness_level` is `null` when not assessed; `suspect_default_sugar: true` marks an old reading that may be the former form's pre-filled 6.4. |
@@ -240,7 +241,7 @@ These are events every sibling must see: a BP crisis, a dose given inside its mi
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/alerts/unacked` | Your unacknowledged alerts from the last 24 h, oldest first (not the ones you caused). Each has `id`, `kind` (`bp_crisis`, `bp_low`, `alertness`, `fast_positive`, `dose_override`, `vomited`), `created_by_name`, `payload` and `created_at`. |
+| GET | `/alerts/unacked` | Your unacknowledged alerts from the last 24 h, oldest first (not the ones you caused). Each has `id`, `kind` (`bp_crisis`, `bp_low`, `alertness`, `fast_positive`, `dose_override`, `vomited`, `correction`), `created_by_name`, `payload` and `created_at`. |
 | POST | `/alerts/{id}/ack` | Mark it seen for you. Idempotent; `404` for an unknown id. |
 | GET | `/push/key` | VAPID public key for `pushManager.subscribe`. |
 | POST | `/push/subscribe` | The browser's `PushSubscription` JSON (`endpoint`, `keys.p256dh`, `keys.auth`), stored for you. |

@@ -8,6 +8,7 @@ import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
 import { CrisisActions } from "@/components/CrisisActions";
 import { ClinicalThresholds } from "@/components/ClinicalThresholds";
+import { CorrectionNote, CorrectVital } from "@/components/VitalCorrection";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
@@ -102,7 +103,7 @@ export default function VitalsPage() {
     },
     // Insulin logging also records the sugar reading taken with it.
     onEvent: (e) => {
-      if (e.type === "INSULIN_LOGGED") loadVitals();
+      if (e.type === "INSULIN_LOGGED" || e.type === "VITAL_CORRECTED") loadVitals();
     },
     onResync: () => {
       loadVitals();
@@ -1073,8 +1074,14 @@ export default function VitalsPage() {
                       >
                         {vital.caregiver_name?.slice(0, 1)}
                       </span>
-                      <span>{vital.caregiver_name}</span>
+                      {/* A corrected reading was measured by the original logger. */}
+                      <span>{vital.correction?.original_logged_by_name || vital.caregiver_name}</span>
                     </div>
+                  </div>
+
+                  <CorrectionNote vital={vital} />
+                  <div className="mt-1 flex justify-end">
+                    <CorrectVital vital={vital} onDone={loadVitals} />
                   </div>
 
                   {vital.notes && (

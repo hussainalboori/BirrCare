@@ -383,6 +383,13 @@ export default function DoctorExportPage() {
                         <td className="py-2 pe-3 font-bold text-slate-900 dark:text-white">
                           {/* sugar/alertness-only rows have no BP: previously rendered "undefined/undefined mmHg" */}
                           {v.systolic != null && v.diastolic != null ? <Ltr>{v.systolic}/{v.diastolic} mmHg</Ltr> : "--"}
+                          {v.correction?.original_systolic != null && (
+                            <span className="block text-[10px] font-normal text-amber-700">
+                              {locale === "ar" ? "مُصحّحة، الأصلي: " : "corrected, original: "}
+                              <Ltr className="line-through">{v.correction.original_systolic}/{v.correction.original_diastolic}</Ltr>
+                              {v.correction.reason && <> — {v.correction.reason}</>}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 pe-3 font-semibold text-blue-700 dark:text-blue-300">
                           {v.blood_sugar ? <Ltr>{Number(v.blood_sugar.toFixed(1))} mmol/L</Ltr> : "--"}

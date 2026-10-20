@@ -164,6 +164,18 @@ export interface VitalsLog {
   fast_result?: { face: boolean; arm: boolean; speech: boolean };
   /** When she was last seen normal (RFC3339), for the paramedics. */
   last_normal_at?: string;
+  /** Set on a corrected reading: what was first entered (issue #15). */
+  correction?: {
+    original_id: string;
+    original_systolic?: number;
+    original_diastolic?: number;
+    original_pulse?: number;
+    original_blood_sugar?: number;
+    original_alertness_level?: string;
+    original_logged_by_name: string;
+    reason: string;
+    corrected_at: string;
+  };
   notes?: string;
   bp_status?: BPStatus;
   sugar_status?: BloodSugarStatus;
