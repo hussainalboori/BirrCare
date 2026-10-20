@@ -16,6 +16,7 @@ import (
 	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ import (
 type MedicationHandler struct {
 	DB     *sql.DB
 	Broker *sse.Broker
+	Push   *push.Notifier // nil = no Web Push
 }
 
 var allowedSlots = map[string]bool{"morning": true, "afternoon": true, "evening": true, "bedtime": true, "night": true}
@@ -920,7 +922,15 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to write audit trail", err)
 		return
 	}
+	var alertID string
 	if overridden != nil {
+		if alertID, err = recordAlert(tx, "dose_override", logID, caregiver.ID, map[string]interface{}{
+			"medication_id": req.MedicationID, "name_ar": nameAr, "name_en": nameEn, "slot": req.Slot, "reason": req.OverrideReason,
+		}); err != nil {
+			tx.Rollback()
+			internalError(w, "failed to record alert", err)
+			return
+		}
 		if err := audit.Record(tx, caregiver.ID, "MED_INTERVAL_OVERRIDE", "medication_log", logID,
 			fmt.Sprintf("Gave %s inside the %.1f h minimum interval; previous dose %s by %s (%s %s). Reason: %s",
 				req.MedicationID, minHours, overridden.TakenAt, overridden.CaregiverName, overridden.ScheduledDate, overridden.Slot, req.OverrideReason)); err != nil {
@@ -935,11 +945,8 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Broadcast SSE event to all connected sibling devices
-	h.Broker.Broadcast("MED_LOGGED", models.ActorInfo{
-		ID:          caregiver.ID,
-		Name:        caregiver.Name,
-		AvatarColor: caregiver.AvatarColor,
-	}, map[string]interface{}{
+	medPayload := map[string]interface{}{
+		"alert_id":          alertID,
 		"log_id":            logID,
 		"medication_id":     req.MedicationID,
 		"name_ar":           nameAr,
@@ -954,7 +961,13 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		"caregiver_id":      caregiver.ID,
 		"caregiver_name":    caregiver.Name,
 		"avatar_color":      caregiver.AvatarColor,
-	})
+	}
+	if alertID != "" {
+		h.Broker.BroadcastAlert(alertID, "MED_LOGGED", actorOf(caregiver), medPayload)
+		h.Push.NotifyAsync(alertID, "dose_override", caregiver.ID)
+	} else {
+		h.Broker.Broadcast("MED_LOGGED", actorOf(caregiver), medPayload)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

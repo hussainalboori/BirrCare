@@ -8,6 +8,7 @@ type Opts = {
   role?: "caregiver" | "admin";
   contacts?: Record<string, string> | "offline";
   sse?: object[];
+  alerts?: object[]; // server-side unacked alerts (issue #12)
 };
 
 async function mockApi(page: Page, opts: Opts = {}) {
@@ -24,6 +25,11 @@ async function mockApi(page: Page, opts: Opts = {}) {
     }
     if (path === "/auth/me") return json(me);
     if (path === "/contacts") return opts.contacts === "offline" ? route.abort("internetdisconnected") : json(opts.contacts ?? {});
+    if (path === "/alerts/unacked") return json(opts.alerts ?? []);
+    if (/^\/alerts\/[^/]+\/ack$/.test(path)) {
+      opts.alerts = [];
+      return json({ status: "acknowledged" });
+    }
     if (path.startsWith("/medications/schedule")) return json({ date: "2026-10-20", schedule: [] });
     return json([]);
   });
@@ -103,9 +109,10 @@ for (const scheme of ["light", "dark"] as const) {
           type: "VITAL_LOGGED",
           timestamp: new Date().toISOString(),
           actor: { id: "c2", name: "Fatima", avatar_color: "#2563eb" },
-          payload: { id: "v1", vital_type: "bp", systolic: 185, diastolic: 115, bp_status: "CRISIS", recorded_at: new Date().toISOString() },
+          payload: { id: "v1", alert_id: "a1", vital_type: "bp", systolic: 185, diastolic: 115, bp_status: "CRISIS", recorded_at: new Date().toISOString() },
         },
       ],
+      alerts: [{ id: "a1", kind: "bp_crisis", created_by_name: "Fatima", payload: { systolic: 185, diastolic: 115 }, created_at: new Date().toISOString() }],
     });
     await page.goto("/");
 
@@ -119,9 +126,12 @@ for (const scheme of ["light", "dark"] as const) {
     await expectTapTargets(bar);
     await expectContrast(page, '[data-testid="crisis-bar"]');
 
-    // Acknowledged: gone, and it stays gone after a reload.
+    // Acknowledged on the server: gone, and it stays gone after a reload.
     await bar.getByRole("button", { name: "Seen" }).click();
     await expect(bar).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading").first()).toBeVisible();
+    await expect(page.getByTestId("crisis-bar")).toHaveCount(0);
   });
 }
 

@@ -80,6 +80,36 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
     UNIQUE (log_id, type)
 );
 
+-- Alerts that must reach every sibling (issue #12): a BP crisis, a dose given
+-- inside its minimum interval, vomiting after a dose. Written in the same
+-- transaction as the event; replayed until each caregiver acknowledges it.
+CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'dose_override', 'vomited')),
+    ref_id TEXT,
+    created_by TEXT REFERENCES caregivers(id),
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS alert_acks (
+    alert_id TEXT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    acked_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (alert_id, caregiver_id)
+);
+
+-- Web Push subscriptions, one per installed browser/app.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- 4. Stroke Vitals & Mental Alertness Logs
 CREATE TABLE IF NOT EXISTS vitals_logs (
     id TEXT PRIMARY KEY,

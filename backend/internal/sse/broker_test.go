@@ -199,3 +199,26 @@ func TestHeartbeatOverHTTP(t *testing.T) {
 		t.Fatal("no heartbeat received")
 	}
 }
+
+// Issue #12: an event that created an alert carries the alert id as the SSE "id:".
+func TestBroadcastAlertSetsEventID(t *testing.T) {
+	b := InitBroker()
+	defer b.Close()
+	rec := newFlushRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go b.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil).WithContext(ctx))
+	waitFor(t, "client to connect", func() bool { return b.ClientCount() == 1 })
+
+	b.BroadcastAlert("alert-123", "VITAL_LOGGED", models.ActorInfo{ID: "c1"}, map[string]string{"bp_status": "CRISIS"})
+	b.Broadcast("NOTE_ADDED", models.ActorInfo{ID: "c1"}, map[string]string{})
+	waitFor(t, "both events", func() bool { return strings.Count(rec.String(), "event: message") == 2 })
+
+	out := rec.String()
+	if !strings.Contains(out, "id: alert-123\nevent: message\ndata: {\"id\":\"alert-123\"") {
+		t.Fatalf("alert event must carry id: alert-123, got:\n%s", out)
+	}
+	if strings.Count(out, "\nid: ") != 1 && !strings.HasPrefix(out, "id: ") {
+		t.Fatalf("only alert events carry an SSE id, got:\n%s", out)
+	}
+}

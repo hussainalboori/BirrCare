@@ -162,6 +162,29 @@ func (b *Broker) Broadcast(eventType string, actor models.ActorInfo, payload int
 	}
 }
 
+// BroadcastAlert is Broadcast for events that created an alert (issue #12): the
+// message id and the SSE "id:" field are the alert id, so a client can resume
+// with Last-Event-ID and acknowledge exactly that alert.
+func (b *Broker) BroadcastAlert(alertID, eventType string, actor models.ActorInfo, payload interface{}) {
+	msg := models.SSEMessage{
+		ID:        alertID,
+		Type:      eventType,
+		Timestamp: time.Now().UTC(),
+		Actor:     actor,
+		Payload:   payload,
+	}
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[SSE] Error marshaling event: %v", err)
+		return
+	}
+	data := fmt.Sprintf("id: %s\nevent: message\ndata: %s\n\n", alertID, string(bytes))
+	select {
+	case b.events <- data:
+	case <-b.done:
+	}
+}
+
 // ServeHTTP handles the SSE streaming connection endpoint.
 func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)

@@ -66,14 +66,11 @@ export function SseToast() {
       // The person who just tapped already sees the result on their own card.
       if (event.actor.id && event.actor.id === selfIdRef.current) return;
 
+      // Events that created an alert (crisis, dose override, vomited) are shown by the
+      // AlertCenter bar with its alarm until acknowledged; no toast on top of it.
+      if ((event.payload as { alert_id?: string } | undefined)?.alert_id) return;
       const crisis = isCrisis(event);
       const amber = isAmber(event);
-      if (crisis) {
-        // The sticky CrisisBar shows it on every page with the call buttons; here only the alarm.
-        playAlert("crisis");
-        if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.([400, 150, 400, 150, 400]);
-        return;
-      }
       const urgentNote = event.type === "NOTE_ADDED" && !!(event.payload as NotePayload | undefined)?.urgent_flag;
 
       setToast({ event, id: Date.now() });

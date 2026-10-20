@@ -12,6 +12,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/server"
 	"birrcare/backend/internal/sse"
 )
@@ -50,8 +51,16 @@ func main() {
 	broker := sse.InitBroker()
 	defer broker.Close()
 
-	// 5. Router & Middleware
-	r := server.NewRouter(server.OptionsFromEnv(database, broker))
+	// 5. Web Push keys (generated once and stored, like the session secret)
+	notifier, err := push.Init(database)
+	if err != nil {
+		log.Printf("[PUSH] disabled: %v", err)
+	}
+
+	// 6. Router & Middleware
+	opts := server.OptionsFromEnv(database, broker)
+	opts.Push = notifier
+	r := server.NewRouter(opts)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { PushOptIn } from "@/components/PushOptIn";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { useLanguage } from "@/context/LanguageContext";
@@ -98,6 +99,7 @@ export default function MedicationsPage() {
       />
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
+        <PushOptIn />
         {/* Header & Date Selector */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

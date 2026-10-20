@@ -102,6 +102,14 @@ func (h *MedicationHandler) AddDoseEvent(w http.ResponseWriter, r *http.Request)
 	if req.MinutesAfter != nil {
 		mins = fmt.Sprintf("%d", *req.MinutesAfter)
 	}
+	alertID, err := recordAlert(tx, "vomited", logID, caregiver.ID, map[string]interface{}{
+		"medication_id": medID, "name_ar": nameAr, "name_en": nameEn, "slot": slot, "minutes_after": req.MinutesAfter,
+	})
+	if err != nil {
+		tx.Rollback()
+		internalError(w, "failed to record alert", err)
+		return
+	}
 	if err := audit.Record(tx, caregiver.ID, "MED_EVENT", "medication_log", logID,
 		fmt.Sprintf("Dose of %s (slot %s, date %s) %s %s min after", medID, slot, date, req.Type, mins)); err != nil {
 		tx.Rollback()
@@ -113,7 +121,8 @@ func (h *MedicationHandler) AddDoseEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.Broker.Broadcast("MED_EVENT", actorOf(caregiver), map[string]interface{}{
+	h.Broker.BroadcastAlert(alertID, "MED_EVENT", actorOf(caregiver), map[string]interface{}{
+		"alert_id":       alertID,
 		"log_id":         logID,
 		"event_id":       eventID,
 		"type":           req.Type,
@@ -124,6 +133,7 @@ func (h *MedicationHandler) AddDoseEvent(w http.ResponseWriter, r *http.Request)
 		"slot":           slot,
 		"scheduled_date": date,
 	})
+	h.Push.NotifyAsync(alertID, "vomited", caregiver.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

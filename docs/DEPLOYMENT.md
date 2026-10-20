@@ -30,6 +30,7 @@ On the host (any 64-bit Linux, e.g. Ubuntu 24.04, Debian 12 or Raspberry Pi OS o
 | `sqlite3` | **Install it.** `deploy.sh` uses `sqlite3 .backup` for a consistent snapshot of the live database. Without it the script falls back to `cp`, which can copy a half-written database while the backend is running. |
 | `cloudflared` | The Cloudflare Tunnel connector. |
 | ~2 GB free disk | Docker images and build cache, plus the database and backups. |
+| Outbound HTTPS from the host | Lock-screen alerts are sent to Apple's and Google's push services. |
 
 ```bash
 # Debian/Ubuntu example
@@ -157,6 +158,11 @@ Open `https://care.example.com`, pass Access, then in the app:
 4. **Add the family:** menu → *المستخدمون / Users*. Each person gets a role (`admin`, `caregiver` or `viewer`) and their own PIN. Make one other trusted person a second `super_admin`, so a forgotten PIN never locks everyone out of user management.
 5. **Add medications and the doctor's insulin plan** if used.
 6. On each phone, open the site and choose *Add to Home Screen*.
+
+7. **Turn on lock-screen alerts on every family phone.** Without them, a crisis only shows when the app is open.
+   - **iPhone (iOS 16.4 or later):** open the site in Safari, tap Share → *Add to Home Screen*, open Birrcare **from the Home Screen icon**, then tap *تفعيل التنبيهات على هذا الهاتف / Turn on alerts on this phone* on the home page and allow notifications. iOS only delivers push to apps added to the Home Screen.
+   - **Android (Chrome):** tap the same button and allow notifications.
+   - **Test it:** right after turning alerts on, tap *إرسال تنبيه تجريبي / Send a test alert* and lock the phone. A harmless test notification arrives in about 10 seconds. Don't log a fake crisis to test: it would go into the health record and the doctor report.
 
 Check the security headers on the public address once:
 
@@ -303,6 +309,13 @@ Another Super Admin can reset it under Users. There is no break-glass for a forg
 
 A database safety check failed, for example the double-dose lock index is missing. This is deliberate: the app refuses to run without its locks. Restore the latest backup (section 10). If it keeps happening, open an issue with the log line.
 
+### Lock-screen alerts don't arrive
+
+- **iPhone:** the app must be opened from the Home Screen icon, not a Safari tab. Then turn alerts on in that app, and check Settings → Notifications → Birrcare.
+- **Android:** check the site's notification permission in Chrome.
+- **Host:** the backend must reach the internet. `docker compose logs birrcare-backend | grep PUSH` shows rejected or failed pushes.
+- **Nothing is lost if a push fails:** the alert still appears in the app, with the alarm, the next time it opens, until it is marked seen.
+
 ### Live updates don't arrive on other phones
 
 Check that the tunnel points at port 3000, which proxies the live stream, and not at 8080. Phones reconnect by themselves after sleep or a network change.
@@ -315,5 +328,6 @@ Check that the tunnel points at port 3000, which proxies the live stream, and no
 - [ ] Tunnel → `http://127.0.0.1:3000` only; Access policy lists the family's emails
 - [ ] Super Admin PIN changed, 2FA on, recovery codes stored safely, a second Super Admin added
 - [ ] `EMERGENCY_NUMBER` and `DOCTOR_PHONE` set and tested from a phone
+- [ ] Lock-screen alerts turned on and tested on every family phone (iPhone: from the Home Screen app)
 - [ ] Auto-deploy timer enabled with linger, or a manual update routine agreed
 - [ ] Daily backup plus an off-host copy, and one test restore done

@@ -9,6 +9,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/handlers"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,7 @@ type Options struct {
 	MaxBodyBytes   int64
 	AllowedOrigins []string
 	Contacts       handlers.Contacts
+	Push           *push.Notifier // nil = no Web Push
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -67,8 +69,9 @@ func limitBody(n int64) func(http.Handler) http.Handler {
 func NewRouter(o Options) http.Handler {
 	authHandler := &handlers.AuthHandler{DB: o.DB, Broker: o.Broker, Limiter: o.Limiter}
 	usersHandler := &handlers.UsersHandler{DB: o.DB, Broker: o.Broker}
-	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker}
-	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker}
+	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
+	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
+	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
 	handoverHandler := &handlers.HandoverHandler{DB: o.DB, Broker: o.Broker}
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
@@ -152,6 +155,14 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/medications/log", medHandler.LogDose)
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
+
+				// Alerts that must reach every sibling (issue #12)
+				api.Get("/alerts/unacked", alertsHandler.Unacked)
+				api.Post("/alerts/{id}/ack", alertsHandler.Ack)
+				api.Get("/push/key", alertsHandler.PushKey)
+				api.Post("/push/subscribe", alertsHandler.Subscribe)
+				api.Post("/push/unsubscribe", alertsHandler.Unsubscribe)
+				api.Post("/push/test", alertsHandler.TestPush)
 
 				// Stroke Vitals
 				api.Get("/vitals", vitalsHandler.ListVitals)

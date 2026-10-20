@@ -30,6 +30,9 @@ export const BACKOFF_BASE_MS = 1000;
 export const BACKOFF_MAX_MS = 30000;
 /** If the tab was hidden at least this long, assume the stream is dead (iOS freezes it). */
 export const STALE_AFTER_HIDDEN_MS = 5000;
+/** Window event fired whenever the stream resyncs (reconnect, back from background),
+ * so app-wide listeners such as the alert bar can replay what was missed. */
+export const RESYNC_EVENT = "birrcare:sse_resync";
 
 /** Exponential backoff with "equal jitter": uniform in [d/2, d], d = min(max, base * 2^attempt). */
 export function backoffDelay(attempt: number, random: () => number = Math.random): number {
@@ -81,12 +84,17 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
       }
     };
 
+    const resync = () => {
+      optionsRef.current.onResync?.();
+      window.dispatchEvent(new Event(RESYNC_EVENT));
+    };
+
     const handleOpen = () => {
       attempt = 0;
       setStatus("connected");
       if (hasOpenedOnce && needsResync) {
         needsResync = false;
-        optionsRef.current.onResync?.();
+        resync();
       }
       hasOpenedOnce = true;
     };
@@ -211,7 +219,7 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
         reconnectNow();
       } else if (hiddenFor > 0) {
         // Stream looks alive but we may have been frozen briefly: re-hydrate anyway.
-        optionsRef.current.onResync?.();
+        resync();
       }
     };
 

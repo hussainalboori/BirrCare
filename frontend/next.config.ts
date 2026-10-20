@@ -37,6 +37,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // The service worker must always be re-checked, or a fix would be stuck on phones.
+        source: "/sw.js",
+        headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+      },
+      {
         source: "/(.*)",
         headers: [
           { key: "Content-Security-Policy", value: csp },

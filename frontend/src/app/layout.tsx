@@ -7,7 +7,7 @@ import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { CaregiverProvider } from "@/context/CaregiverContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
-import { CrisisBar, EmergencySetupBanner } from "@/components/CrisisBar";
+import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 
 export const metadata: Metadata = {
@@ -47,7 +47,7 @@ export default async function RootLayout({
         <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
             <EmergencySetupBanner />
-            <CrisisBar />
+            <AlertCenter />
             <SseToast />
             <PinPadModal />
             {children}

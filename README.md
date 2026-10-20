@@ -70,6 +70,7 @@ Copy `.env.example` to `.env`; Docker Compose reads it and passes the values to 
 | `CF_ACCESS_AUD` | empty | Access application AUD tag. Cloudflare sign-in is enabled only when both CF values are set. |
 | `CF_ACCESS_TRUST_EMAIL_HEADER` | `false` | Trust the raw `Cf-Access-Authenticated-User-Email` header without verifying the JWT. Spoofable; leave off. |
 | `SESSION_SECRET` | empty | Key for signing session cookies, at least 32 characters. If empty, a random key is generated on first boot and stored in the database. Changing it signs everyone out. |
+| `PUSH_CONTACT` | project URL | Contact (`mailto:` or `https:` URL) sent to push services with lock-screen alerts. |
 | `DISABLE_2FA_FOR` | empty | Break-glass: a caregiver id whose 2FA is cleared on startup. Set, restart once, then remove it. |
 | `AUTH_DEV_FALLBACK` | `false` in Compose; on when `APP_ENV` is not `production` | Treat anonymous requests as the first active caregiver. Never enable in production. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated origins that may call the backend directly. Not needed behind the frontend proxy. |
@@ -231,6 +232,21 @@ The interval check runs inside the same immediate-lock transaction as the insert
 | GET | `/insulin/status` | Per plan: last injection and whether the next one is locked. |
 | POST | `/insulin/log` | Record an injection (`given` or `held`) with the reading taken now. `409 INSULIN_TOO_SOON` inside the minimum interval; `HYPO_NO_INSULIN` below 3.9 mmol/L on a scale plan. |
 
+**Alerts and lock-screen push**
+
+These are events every sibling must see: a BP crisis, a dose given inside its minimum interval, or vomiting after a dose. Each alert is written in the same transaction as its event, pushed to locked phones, and replayed in the app until each caregiver acknowledges it.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/alerts/unacked` | Your unacknowledged alerts from the last 24 h, oldest first (not the ones you caused). Each has `id`, `kind` (`bp_crisis`, `dose_override`, `vomited`), `created_by_name`, `payload` and `created_at`. |
+| POST | `/alerts/{id}/ack` | Mark it seen for you. Idempotent; `404` for an unknown id. |
+| GET | `/push/key` | VAPID public key for `pushManager.subscribe`. |
+| POST | `/push/subscribe` | The browser's `PushSubscription` JSON (`endpoint`, `keys.p256dh`, `keys.auth`), stored for you. |
+| POST | `/push/unsubscribe` | `{endpoint}`: stop pushes to this browser. |
+| POST | `/push/test` | Send a harmless test notification to your own phones in 10 s (no alert is created). |
+
+Push payloads are deliberately generic for the lock screen, e.g. "Blood pressure alert — open Birrcare". They carry no names or readings.
+
 **Handovers, export, shifts**
 
 | Method | Path | Description |
@@ -266,7 +282,7 @@ data: {"id":"…","type":"MED_LOGGED","timestamp":"…","actor":{"id":"…","nam
 | `CAREGIVER_SWITCHED`, `CAREGIVERS_UPDATED` | Someone switched profile, or users changed. |
 | `SHIFT_UPDATED`, `DUTY_UPDATED` | Shifts or assignments changed. |
 
-A client that falls behind is disconnected so it reconnects and refetches; the frontend's `useLiveSync` hook does this automatically.
+Events that created an alert also carry `payload.alert_id`, and the SSE `id:` line is set to the alert id. A client that falls behind is disconnected so it reconnects and refetches; the frontend's `useLiveSync` hook does this automatically, and the alert bar then replays anything unacknowledged.
 
 ### Errors
 

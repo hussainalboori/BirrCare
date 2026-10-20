@@ -11,6 +11,7 @@ import (
 	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 	"github.com/google/uuid"
 )
@@ -18,6 +19,7 @@ import (
 type VitalsHandler struct {
 	DB     *sql.DB
 	Broker *sse.Broker
+	Push   *push.Notifier // nil = no Web Push
 }
 
 func CalculateBPStatus(systolic, diastolic int) string {
@@ -213,12 +215,32 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	sugarStatus := CalculateSugarStatus(req.BloodSugar)
 	now := time.Now().UTC()
 
-	_, err := h.DB.Exec(`
-		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
-		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes)
-
+	// A crisis reading and its alert (issue #12) commit together, or not at all.
+	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
+		internalError(w, "failed to log vitals", err)
+		return
+	}
+	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
+	if _, err := tx.Exec(`
+		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes); err != nil {
+		tx.Rollback()
+		internalError(w, "failed to log vitals", err)
+		return
+	}
+	var alertID string
+	if bpStatus == "CRISIS" {
+		if alertID, err = recordAlert(tx, "bp_crisis", id, caregiver.ID, map[string]interface{}{
+			"systolic": *req.Systolic, "diastolic": *req.Diastolic,
+		}); err != nil {
+			tx.Rollback()
+			internalError(w, "failed to record crisis alert", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		internalError(w, "failed to log vitals", err)
 		return
 	}
@@ -240,13 +262,10 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
-	// Broadcast SSE event
-	h.Broker.Broadcast("VITAL_LOGGED", models.ActorInfo{
-		ID:          caregiver.ID,
-		Name:        caregiver.Name,
-		AvatarColor: caregiver.AvatarColor,
-	}, map[string]interface{}{
+	// Broadcast SSE event (a crisis carries its alert id, also as the SSE "id:").
+	vitalPayload := map[string]interface{}{
 		"id":              id,
+		"alert_id":        alertID,
 		"recorded_at":     now.Format(time.RFC3339),
 		"vital_type":      vitalType,
 		"systolic":        req.Systolic,
@@ -259,7 +278,13 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"notes":           req.Notes,
 		"caregiver_name":  caregiver.Name,
 		"avatar_color":    caregiver.AvatarColor,
-	})
+	}
+	if alertID != "" {
+		h.Broker.BroadcastAlert(alertID, "VITAL_LOGGED", actorOf(caregiver), vitalPayload)
+		h.Push.NotifyAsync(alertID, "bp_crisis", caregiver.ID)
+	} else {
+		h.Broker.Broadcast("VITAL_LOGGED", actorOf(caregiver), vitalPayload)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
