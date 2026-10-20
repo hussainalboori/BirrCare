@@ -179,15 +179,6 @@ export function PinPadModal() {
                     <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate w-full text-center">
                       {c.name.split(" ")[0]}
                     </span>
-                    <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500">
-                      {c.role === "super_admin"
-                        ? (locale === "ar" ? "مشرف" : "Super")
-                        : c.role === "admin"
-                        ? (locale === "ar" ? "أدوية" : "Admin")
-                        : c.role === "viewer"
-                        ? (locale === "ar" ? "مشاهد" : "Viewer")
-                        : (locale === "ar" ? "رعاية" : "Care")}
-                    </span>
                   </button>
                 );
               })}

@@ -23,29 +23,29 @@ type AuthHandler struct {
 	Limiter *auth.PINLimiter // nil = auth.DefaultPINLimiter
 }
 
+// switcherEntry is all the public PIN switcher needs. It's a separate struct so
+// fields added to models.Caregiver (email, role, phone) never leak by default.
+type switcherEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	AvatarColor string `json:"avatar_color"`
+}
+
+// ListCaregivers is public: the switcher renders before anyone signs in.
 func (h *AuthHandler) ListCaregivers(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(`
-		SELECT id, name, email, role, avatar_color, preferred_lang, is_active, created_at
-		FROM caregivers WHERE is_active = 1 ORDER BY name ASC
-	`)
+	rows, err := h.DB.Query(`SELECT id, name, avatar_color FROM caregivers WHERE is_active = 1 ORDER BY name ASC`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query caregivers"}`, http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var caregivers []models.Caregiver
+	caregivers := []switcherEntry{}
 	for rows.Next() {
-		var c models.Caregiver
-		var email sql.NullString
-		var createdAtStr string
-		if err := rows.Scan(&c.ID, &c.Name, &email, &c.Role, &c.AvatarColor, &c.PreferredLang, &c.IsActive, &createdAtStr); err != nil {
+		var c switcherEntry
+		if err := rows.Scan(&c.ID, &c.Name, &c.AvatarColor); err != nil {
 			continue
 		}
-		if email.Valid {
-			c.Email = email.String
-		}
-		c.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 		caregivers = append(caregivers, c)
 	}
 

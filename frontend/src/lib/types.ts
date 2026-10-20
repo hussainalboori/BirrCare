@@ -60,6 +60,9 @@ export interface Caregiver {
   totp_enabled?: boolean;
 }
 
+/** Public PIN switcher entry (GET /caregivers): no email, role or phone. */
+export type CaregiverOption = Pick<Caregiver, "id" | "name" | "avatar_color">;
+
 export interface Medication {
   id: string;
   name_ar: string;

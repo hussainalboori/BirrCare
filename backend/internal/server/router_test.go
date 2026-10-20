@@ -462,3 +462,26 @@ func TestSessionRevocation(t *testing.T) {
 	expect("cookie after deactivate + reactivate", phone, http.StatusUnauthorized)
 	login("cg_fatima", "4826")
 }
+
+// Issue #3: the public switcher list must not expose emails, roles or phones.
+func TestPublicCaregiverListIsMinimal(t *testing.T) {
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	r := do(t, "GET", srv.URL+"/api/v1/caregivers", nil, nil)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", r.StatusCode)
+	}
+	var list []map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil || len(list) < 2 {
+		t.Fatalf("decode: %v (%d entries)", err, len(list))
+	}
+	for _, c := range list {
+		for k := range c {
+			if k != "id" && k != "name" && k != "avatar_color" {
+				t.Fatalf("public /caregivers leaks %q: %v", k, c)
+			}
+		}
+		if c["id"] == "" || c["name"] == "" {
+			t.Fatalf("switcher entry missing id/name: %v", c)
+		}
+	}
+}

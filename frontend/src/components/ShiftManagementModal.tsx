@@ -115,7 +115,7 @@ export function ShiftManagementModal({
     try {
       const [shiftsData, cgData, dutyData] = await Promise.all([
         fetchApi<Shift[]>("/shifts"),
-        fetchApi<Caregiver[]>("/caregivers"),
+        fetchApi<Caregiver[]>("/users"), // full records (role); this modal is super admin only
         fetchApi<CurrentDutyStatus>("/shifts/current-duty"),
       ]);
       setShifts(shiftsData || []);

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { Caregiver } from "@/lib/types";
+import { Caregiver, CaregiverOption } from "@/lib/types";
 import { fetchApi, AUTH_CHANGED_EVENT, AUTH_REQUIRED_EVENT } from "@/lib/api";
 
 export interface VerifyPinResult {
@@ -17,7 +17,7 @@ export interface VerifyPinResult {
 
 interface CaregiverContextType {
   currentCaregiver: Caregiver | null;
-  allCaregivers: Caregiver[];
+  allCaregivers: CaregiverOption[];
   isPinModalOpen: boolean;
   openPinModal: (targetCaregiverId?: string) => void;
   closePinModal: () => void;
@@ -33,13 +33,13 @@ const CaregiverContext = createContext<CaregiverContextType | undefined>(undefin
 
 export function CaregiverProvider({ children }: { children: React.ReactNode }) {
   const [currentCaregiver, setCurrentCaregiver] = useState<Caregiver | null>(null);
-  const [allCaregivers, setAllCaregivers] = useState<Caregiver[]>([]);
+  const [allCaregivers, setAllCaregivers] = useState<CaregiverOption[]>([]);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [targetCaregiverId, setTargetCaregiverId] = useState<string | null>(null);
 
   const fetchCaregiversList = useCallback(async () => {
     try {
-      const list = await fetchApi<Caregiver[]>("/caregivers");
+      const list = await fetchApi<CaregiverOption[]>("/caregivers");
       setAllCaregivers(list || []);
     } catch (err) {
       console.warn("Failed fetching caregivers list:", err);
