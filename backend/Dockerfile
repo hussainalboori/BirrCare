@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Birrcare Go Backend (Zero CGO)
-FROM golang:alpine AS builder
+FROM golang:1.26-alpine3.24 AS builder
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/birrcare-backend ./main.go
 
 # Minimal runtime stage
-FROM alpine:3.20
+FROM alpine:3.24
 
 WORKDIR /app
 

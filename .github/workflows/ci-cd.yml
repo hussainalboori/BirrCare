@@ -44,6 +44,9 @@ jobs:
       - name: Run Backend Unit Tests
         run: go test -v -race ./...
 
+      - name: Check for reachable vulnerabilities (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
       - name: Verify Static Binary Compilation (Zero CGO)
         run: CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /dev/null ./main.go
 

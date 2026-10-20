@@ -33,7 +33,7 @@ Phone ──HTTPS──► Cloudflare Access ──tunnel──► 127.0.0.1:300
 ## Requirements
 
 - Docker with Docker Compose (the normal way to run it).
-- For development without Docker: Go 1.26 (`backend/go.mod`) and Node.js (the frontend image uses Node 20, CI uses Node 24).
+- For development without Docker: Go 1.26 (`backend/go.mod`) and Node.js 24 (same as the frontend image and CI).
 
 ## Quick start (Docker Compose)
 
