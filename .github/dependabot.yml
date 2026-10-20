@@ -30,6 +30,9 @@ updates:
       # eslint-config-next's plugins (import, jsx-a11y, react) support ESLint <= 9.
       - dependency-name: eslint
         update-types: ["version-update:semver-major"]
+      # typescript-eslint (used by next lint) supports TypeScript < 6.1.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
