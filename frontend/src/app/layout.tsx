@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
-import { Tajawal, Inter } from "next/font/google";
+import "./fonts.css";
 import "./globals.css";
 import { LanguageProvider } from "@/context/LanguageContext";
 import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
@@ -8,20 +8,6 @@ import { CaregiverProvider } from "@/context/CaregiverContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
 import { Navigation } from "@/components/Navigation";
-
-const tajawal = Tajawal({
-  subsets: ["arabic", "latin"],
-  weight: ["400", "500", "700"],
-  variable: "--font-tajawal",
-  display: "swap",
-});
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-inter",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "رعاية بر — Birrcare | Family Care Coordination",
@@ -55,7 +41,7 @@ export default async function RootLayout({
   const dir = locale === "ar" ? "rtl" : "ltr";
 
   return (
-    <html lang={locale} dir={dir} className={`${tajawal.variable} ${inter.variable}`}>
+    <html lang={locale} dir={dir}>
       <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+env(safe-area-inset-bottom))]">
         <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
