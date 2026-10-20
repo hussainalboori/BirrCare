@@ -6,6 +6,11 @@ updates:
     schedule: { interval: weekly }
     groups:
       docker: { patterns: ["*"] }
+    ignore:
+      # Move Node majors deliberately, together with CI (setup-node) and @types/node,
+      # once the new major is LTS. Patch/minor updates still come through.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: gomod
     directory: /backend
@@ -18,6 +23,13 @@ updates:
     schedule: { interval: weekly }
     groups:
       npm-minor-patch: { update-types: ["minor", "patch"] }
+    ignore:
+      # Matches the Node major in frontend/Dockerfile.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # eslint-config-next's plugins (import, jsx-a11y, react) support ESLint <= 9.
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
