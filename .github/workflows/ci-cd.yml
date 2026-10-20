@@ -103,7 +103,7 @@ jobs:
         run: docker compose config
 
       - name: Build Backend Container
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -113,7 +113,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build Frontend Container
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
@@ -155,7 +155,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build & Push Backend Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -176,7 +176,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build & Push Frontend Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
