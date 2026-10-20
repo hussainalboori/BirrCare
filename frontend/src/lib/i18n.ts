@@ -167,10 +167,10 @@ export const translations = {
     birrDescription: "Birr al-Walidayn — Real-time sibling care collaboration",
 
     // Nav
-    navMeds: "Medications",
-    navVitals: "Stroke Vitals",
-    navHandovers: "Handovers",
-    navDoctorExport: "Doctor Summary",
+    navMeds: "Meds",
+    navVitals: "Vitals",
+    navHandovers: "Shift notes",
+    navDoctorExport: "Doctor report",
 
     // Caregiver
     activeCaregiver: "Active Caregiver",
