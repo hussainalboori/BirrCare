@@ -620,6 +620,16 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 
 	logRows.Close()
 
+	events, err := logEventsForDate(h.DB, dateStr)
+	if err != nil {
+		internalError(w, "failed to fetch dose follow-ups", err)
+		return
+	}
+	for key, l := range logsMap {
+		l.Events = events[l.ID]
+		logsMap[key] = l
+	}
+
 	// 3. Last taken dose of each medication, on any date (interval lock, issue #7).
 	now := time.Now()
 	lastTaken := make(map[string]*models.LastDose, len(meds))
@@ -697,7 +707,7 @@ type LogDoseRequest struct {
 	MedicationID  string `json:"medication_id"`
 	Slot          string `json:"slot"`
 	ScheduledDate string `json:"scheduled_date"` // 'YYYY-MM-DD'
-	Status        string `json:"status"`         // 'taken' or 'skipped'
+	Status        string `json:"status"`         // 'taken', 'partial', 'refused' or 'skipped'
 	Notes         string `json:"notes,omitempty"`
 	// GivenAt (RFC3339, optional) is when the dose was actually given, for a dose
 	// ticked late ("given at 08:00", ticked at 20:30). Default: now.
@@ -770,10 +780,13 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	switch req.Status {
 	case "":
 		req.Status = "taken"
-	case "taken", "skipped":
+	case "taken", "skipped", "partial", "refused":
+	case "vomited":
+		writeJSONError(w, http.StatusBadRequest, "USE_EVENT", "vomiting is recorded on the given dose: POST /medications/log/{id}/event")
+		return
 	default:
 		// Never silently coerce an unknown status into "taken".
-		writeJSONError(w, http.StatusBadRequest, "INVALID_STATUS", "status must be 'taken' or 'skipped'")
+		writeJSONError(w, http.StatusBadRequest, "INVALID_STATUS", "status must be 'taken', 'partial', 'refused' or 'skipped'")
 		return
 	}
 	if len(req.Notes) > maxNotesLen {
@@ -863,7 +876,8 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	// Interval lock. Compared against the nearest taken dose in either direction, so
 	// a backdated given_at cannot slip a dose in before a later one.
 	var overridden *models.LastDose
-	if req.Status == "taken" && minHours > 0 {
+	// A partial dose is still medicine in the body: it counts for the interval too.
+	if (req.Status == "taken" || req.Status == "partial") && minHours > 0 {
 		other, err := nearestTakenDose(tx, req.MedicationID, givenAt)
 		if err != nil {
 			tx.Rollback()

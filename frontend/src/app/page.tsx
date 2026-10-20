@@ -65,6 +65,7 @@ export default function MedicationsPage() {
   const { status: connectionStatus } = useLiveSync({
     onMedLogged: onDoseChanged,
     onMedVoided: onDoseChanged,
+    onMedEvent: onDoseChanged,
     // After reconnect / returning from background: re-hydrate (and roll over to the new day).
     onResync: () => {
       const today = localDateString();

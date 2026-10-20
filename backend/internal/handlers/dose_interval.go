@@ -100,7 +100,7 @@ func nearestTakenDose(q queryer, medicationID string, at time.Time) (*models.Las
 	err := q.QueryRow(`
 		SELECT l.taken_at, l.slot, l.scheduled_date, c.name, COALESCE(c.avatar_color, '')
 		FROM medication_logs l JOIN caregivers c ON c.id = l.caregiver_id
-		WHERE l.medication_id = ? AND l.status = 'taken' AND l.taken_at IS NOT NULL AND l.voided_at IS NULL
+		WHERE l.medication_id = ? AND l.status IN ('taken', 'partial') AND l.taken_at IS NOT NULL AND l.voided_at IS NULL
 		ORDER BY ABS(julianday(l.taken_at) - julianday(?)) LIMIT 1
 	`, medicationID, at.UTC().Format(sqliteTimeLayout)).Scan(&takenAt, &d.Slot, &d.ScheduledDate, &d.CaregiverName, &d.AvatarColor)
 	if errors.Is(err, sql.ErrNoRows) {

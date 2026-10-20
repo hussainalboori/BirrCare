@@ -257,6 +257,41 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
+            {/* Per medication: full, partial, vomited, refused, skipped (never counted as fully given) */}
+            {(summary.medication_counts ?? []).length > 0 && (
+              <div className="mb-6 break-inside-avoid">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
+                  {locale === "ar" ? "الجرعات لكل دواء" : "Doses per medication"}
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-start text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400">
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "الدواء" : "Medication"}</th>
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "كاملة" : "Full"}</th>
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "جزئية" : "Partial"}</th>
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "استفرغت" : "Vomited"}</th>
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "رفضت" : "Refused"}</th>
+                        <th className="py-2 text-start font-semibold">{locale === "ar" ? "تُخطّيت" : "Skipped"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {(summary.medication_counts ?? []).map((m) => (
+                        <tr key={m.medication_id} className={m.partial || m.vomited ? "bg-orange-50 dark:bg-orange-950/30" : undefined}>
+                          <td className="py-2 pe-3 font-semibold"><bdi>{locale === "ar" ? m.name_ar : m.name_en}</bdi></td>
+                          <td className="py-2 pe-3"><Ltr>{m.taken}</Ltr></td>
+                          <td className={`py-2 pe-3 ${m.partial ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}><Ltr>{m.partial}</Ltr></td>
+                          <td className={`py-2 pe-3 ${m.vomited ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}><Ltr>{m.vomited}</Ltr></td>
+                          <td className="py-2 pe-3"><Ltr>{m.refused}</Ltr></td>
+                          <td className="py-2 pe-3"><Ltr>{m.skipped}</Ltr></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Insulin vs sugar: what the scale said, what was given, and why it differed */}
             {summary.insulin_logs && summary.insulin_logs.length > 0 && (() => {
               const logs = summary.insulin_logs;

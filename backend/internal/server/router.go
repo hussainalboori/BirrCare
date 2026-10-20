@@ -151,6 +151,7 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/medications/schedule", medHandler.GetSchedule)
 				api.Post("/medications/log", medHandler.LogDose)
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
+				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
 
 				// Stroke Vitals
 				api.Get("/vitals", vitalsHandler.ListVitals)

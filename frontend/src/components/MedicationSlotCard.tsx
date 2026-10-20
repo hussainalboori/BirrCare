@@ -8,17 +8,13 @@ import { fetchApi } from "@/lib/api";
 import { canManageMedications, isViewer } from "@/lib/permissions";
 import { formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
 import { Auto } from "./Ltr";
+import { DoctorCallButton } from "./CrisisActions";
+import { DOSE_COPY, VOMIT_MINUTES } from "@/lib/doseWarnings";
 import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History, Undo2, Ban, SkipForward } from "lucide-react";
 
 const UNDO_SECONDS = 10;
 const OWN_CANCEL_MS = 10 * 60_000; // matches the backend's undoWindow
 
-const SKIP_REASONS: { ar: string; en: string }[] = [
-  { ar: "رفضت أخذه", en: "Refused" },
-  { ar: "نائمة", en: "Asleep" },
-  { ar: "الطبيب أوقفه", en: "Doctor said hold" },
-  { ar: "نفد الدواء", en: "Out of stock" },
-];
 const CANCEL_REASONS: { ar: string; en: string }[] = [
   { ar: "ضغطت على البطاقة الخطأ", en: "Tapped the wrong card" },
   { ar: "لم تُعطَ فعلاً", en: "Not actually given" },
@@ -56,6 +52,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [skipOpen, setSkipOpen] = useState(false);
+  const [vomitOpen, setVomitOpen] = useState(false);
   // Re-render every 30 s so "4 h 15 min ago" stays true and the lock lifts on time.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -80,7 +77,13 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const log = serverLog ?? (localLog && !voidedIds.includes(localLog.id) ? localLog : undefined);
   const isLogged = !!log; // taken OR skipped: either way the slot is locked server-side
   const isTaken = log?.status === "taken";
+  // Given = some medicine went in (taken or partial): holds the slot and the interval.
+  const isGiven = isTaken || log?.status === "partial";
+  const vomited = log?.events?.find((e) => e.type === "vomited");
+  // Partial or vomited: the family must ask the doctor before any further dose.
+  const needsDoctor = !!log && (log.status === "partial" || !!vomited);
   const ar = locale === "ar";
+  const c = DOSE_COPY[locale];
 
   // The person who tapped may cancel within 10 minutes; an admin any time (with a reason).
   const tappedAt = parseServerTime(log?.recorded_at);
@@ -154,12 +157,37 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
     }
   };
 
-  const handleLogDose = async (opts: { givenAt?: string; override?: boolean; status?: "taken" | "skipped"; notes?: string } = {}) => {
+  const recordVomit = async (logId: string, minutes: number | null) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const ev = await fetchApi<NonNullable<MedicationLog["events"]>[number]>(`/medications/log/${encodeURIComponent(logId)}/event`, {
+        method: "POST",
+        body: JSON.stringify({ type: "vomited", ...(minutes == null ? {} : { minutes_after: minutes }) }),
+      });
+      setLocalLog((l) => (l && l.id === logId ? { ...l, events: [...(l.events ?? []), ev] } : l));
+      setVomitOpen(false);
+      onLoggedSuccess?.();
+    } catch (err: any) {
+      if (err.data?.error === "EVENT_ALREADY_LOGGED") {
+        setVomitOpen(false);
+        onLoggedSuccess?.();
+      } else {
+        alert(err.message || "Failed to save");
+      }
+    } finally {
+      inFlightRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogDose = async (opts: { givenAt?: string; override?: boolean; status?: MedicationLog["status"]; notes?: string } = {}) => {
     if (isLogged || inFlightRef.current) return;
     const status = opts.status ?? "taken";
     // Ticked well after its time: ask when it was really given, so a late tick of the
     // morning dose doesn't lock the evening dose until the next morning.
-    if (status === "taken" && !opts.givenAt && !opts.override && !askWhen && scheduledAt && lateEnoughToAsk) {
+    if (status !== "skipped" && status !== "refused" && !opts.givenAt && !opts.override && !askWhen && scheduledAt && lateEnoughToAsk) {
       setAskWhen(true);
       return;
     }
@@ -292,7 +320,9 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
     <>
       <div
         className={`relative overflow-hidden rounded-2xl border p-4 transition-all shadow-xs ${
-          isTaken
+          needsDoctor
+            ? "border-orange-300 bg-orange-50/70 dark:border-orange-900/60 dark:bg-orange-950/25"
+            : isTaken
             ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/25"
             : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900"
         }`}
@@ -373,11 +403,19 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
               <div className="flex flex-col items-end gap-1" role="status">
                 <div
                   className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-xs ${
-                    isTaken ? "bg-emerald-600" : "bg-amber-600"
+                    isTaken && !vomited ? "bg-emerald-600" : needsDoctor ? "bg-orange-600" : "bg-amber-600"
                   }`}
                 >
                   {isTaken ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                  <span>{isTaken ? t.statusTaken : t.statusSkipped}</span>
+                  <span>
+                    {log.status === "partial"
+                      ? c.badgePartial
+                      : log.status === "refused"
+                      ? c.badgeRefused
+                      : isTaken
+                      ? t.statusTaken
+                      : t.statusSkipped}
+                  </span>
                 </div>
                 <div
                   className={`flex items-center gap-1 text-[11px] font-medium ${
@@ -391,7 +429,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                     {log.caregiver_name?.slice(0, 1)}
                   </span>
                   <span>
-                    {isTaken ? t.givenBy : ar ? "بواسطة" : "by"} <bdi>{log.caregiver_name}</bdi>
+                    {isGiven ? t.givenBy : ar ? "بواسطة" : "by"} <bdi>{log.caregiver_name}</bdi>
                     {formattedTime && (
                       <>
                         {" "}
@@ -401,6 +439,16 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                   </span>
                 </div>
                 {!isTaken && log.notes && <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">{log.notes}</p>}
+                {isGiven && !vomited && !vomitOpen && log.id !== "local" && !isViewer(currentCaregiver?.role) && (
+                  <button
+                    type="button"
+                    onClick={() => setVomitOpen(true)}
+                    className="flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-orange-700 dark:text-orange-400"
+                  >
+                    <AlertCircle className="h-4 w-4" />
+                    {c.vomitedQuestion}
+                  </button>
+                )}
                 {canCancel && !cancelOpen && (
                   <button
                     type="button"
@@ -462,26 +510,79 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 className="mt-1 flex min-h-12 w-full items-center justify-center gap-1 rounded-xl px-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 <SkipForward className="h-4 w-4" />
-                {ar ? "تخطي" : "Skip"}
+                {c.notFullyGiven}
               </button>
             )}
           </div>
         </div>
 
+        {/* Partial or vomited: persistent warning, routed to the doctor (never a re-dose amount) */}
+        {needsDoctor && log && (
+          <div role="alert" className="mt-3 space-y-2 rounded-xl border-2 border-orange-400 bg-orange-50 p-3 dark:border-orange-800 dark:bg-orange-950/40">
+            <p className="text-base font-bold leading-relaxed text-orange-900 dark:text-orange-200">
+              {vomited ? c.warnVomited(vomited.minutes_after ?? null) : c.warnPartial}
+            </p>
+            <DoctorCallButton />
+          </div>
+        )}
+
+        {/* Vomited after a given dose: a follow-up on that dose, not a new one */}
+        {vomitOpen && log && !vomited && (
+          <div className="mt-3 rounded-xl border border-orange-300 bg-orange-50 p-3 dark:border-orange-800 dark:bg-orange-950/40">
+            <p className="mb-2 text-base font-semibold text-orange-900 dark:text-orange-200">{c.vomitedWhen}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {[...VOMIT_MINUTES, null].map((m) => (
+                <button
+                  key={m ?? "unknown"}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => recordVomit(log.id, m)}
+                  className="min-h-12 rounded-xl border border-orange-300 bg-white px-2 text-sm font-semibold text-orange-800 disabled:opacity-50 dark:border-orange-800 dark:bg-slate-900 dark:text-orange-300"
+                >
+                  {m == null ? c.dontKnow : c.minutes(m)}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setVomitOpen(false)}
+              className="mt-2 min-h-12 w-full rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300"
+            >
+              {ar ? "رجوع" : "Back"}
+            </button>
+          </div>
+        )}
+
         {/* Skip with a reason */}
         {skipOpen && !isLogged && (
           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
-            <p className="mb-2 text-base font-semibold text-slate-800 dark:text-slate-100">{ar ? "لماذا لم تُعطَ الجرعة؟" : "Why is this dose skipped?"}</p>
+            <p className="mb-2 text-base font-semibold text-slate-800 dark:text-slate-100">{c.whatHappened}</p>
             <div className="grid grid-cols-2 gap-2">
-              {SKIP_REASONS.map((r) => (
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => handleLogDose({ status: "partial" })}
+                className="min-h-12 rounded-xl border-2 border-orange-400 bg-white px-2 text-sm font-bold text-orange-800 disabled:opacity-50 dark:border-orange-800 dark:bg-slate-900 dark:text-orange-300"
+              >
+                {c.partial}
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => handleLogDose({ status: "refused" })}
+                className="min-h-12 rounded-xl border border-amber-300 bg-white px-2 text-sm font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300"
+              >
+                {c.refused}
+              </button>
+              {c.skipReasons.map((r) => (
                 <button
-                  key={r.en}
+                  key={r}
                   type="button"
                   disabled={isSubmitting}
-                  onClick={() => handleLogDose({ status: "skipped", notes: ar ? r.ar : r.en })}
+                  onClick={() => handleLogDose({ status: "skipped", notes: r })}
                   className="min-h-12 rounded-xl border border-amber-300 bg-white px-2 text-sm font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300"
                 >
-                  {ar ? r.ar : r.en}
+                  {r}
                 </button>
               ))}
             </div>
@@ -680,7 +781,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           className="fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-40 mx-auto flex w-11/12 max-w-md items-center justify-between gap-3 rounded-2xl bg-slate-900 px-4 py-2 text-white shadow-xl"
         >
           <span className="text-base font-semibold">
-            {log?.status === "skipped" ? (ar ? "تم تسجيل التخطي" : "Skip recorded") : ar ? "تم التسجيل" : "Recorded"} · <bdi>{medName}</bdi>
+            {ar ? "تم التسجيل" : "Recorded"} · <bdi>{medName}</bdi>
           </span>
           <button
             type="button"

@@ -11,6 +11,8 @@ interface UseLiveSyncOptions {
   onMedLogged?: (event: SSEEvent) => void;
   /** A dose entry was cancelled (MED_VOIDED). */
   onMedVoided?: (event: SSEEvent) => void;
+  /** A follow-up on a dose, e.g. vomited (MED_EVENT). */
+  onMedEvent?: (event: SSEEvent) => void;
   onVitalLogged?: (event: SSEEvent) => void;
   onNoteAdded?: (event: SSEEvent) => void;
   onCaregiverSwitched?: (event: SSEEvent) => void;
@@ -125,6 +127,9 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
             break;
           case "MED_VOIDED":
             o.onMedVoided?.(parsed);
+            break;
+          case "MED_EVENT":
+            o.onMedEvent?.(parsed);
             break;
           case "VITAL_LOGGED":
             o.onVitalLogged?.(parsed);

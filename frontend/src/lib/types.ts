@@ -88,10 +88,13 @@ export interface MedicationLog {
   slot: string;
   scheduled_date: string;
   taken_at?: string;
-  status: "taken" | "skipped";
+  /** partial = only part was taken; refused = she refused it (issue #9). */
+  status: "taken" | "skipped" | "partial" | "refused";
   notes?: string;
   caregiver_name?: string;
   avatar_color?: string;
+  /** Follow-ups such as "vomited 10 min later". */
+  events?: MedicationLogEvent[];
   /** When it was tapped (the undo window counts from here). */
   recorded_at?: string;
   /** Set when the entry was cancelled (mis-tap); it never counts as given. */
@@ -108,6 +111,15 @@ export interface LastDose {
   caregiver_name: string;
   avatar_color?: string;
   hours_since: number;
+}
+
+export interface MedicationLogEvent {
+  id: string;
+  type: "vomited";
+  minutes_after?: number | null;
+  notes?: string;
+  caregiver_name?: string;
+  created_at: string;
 }
 
 export interface ScheduledDose {
@@ -193,8 +205,22 @@ export interface DoctorSummary {
     total_scheduled: number;
     total_taken: number;
     total_skipped: number;
+    total_partial?: number;
+    total_refused?: number;
+    total_vomited?: number;
     adherence_rate: number;
   };
+  /** Per medication: given fully, partly, later vomited, refused, skipped. */
+  medication_counts?: {
+    medication_id: string;
+    name_ar: string;
+    name_en: string;
+    taken: number;
+    partial: number;
+    vomited: number;
+    refused: number;
+    skipped: number;
+  }[];
   alertness_distribution: Record<AlertnessLevel, number>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];

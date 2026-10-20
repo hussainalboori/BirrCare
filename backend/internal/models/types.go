@@ -98,6 +98,18 @@ type MedicationLog struct {
 	VoidedAt     string `json:"voided_at,omitempty"`
 	VoidedByName string `json:"voided_by_name,omitempty"`
 	VoidReason   string `json:"void_reason,omitempty"`
+	// Follow-ups such as "vomited 10 min later" (issue #9).
+	Events []MedicationLogEvent `json:"events,omitempty"`
+}
+
+// MedicationLogEvent is a follow-up on a given dose (e.g. vomited).
+type MedicationLogEvent struct {
+	ID            string `json:"id"`
+	Type          string `json:"type"` // 'vomited'
+	MinutesAfter  *int   `json:"minutes_after,omitempty"`
+	Notes         string `json:"notes,omitempty"`
+	CaregiverName string `json:"caregiver_name,omitempty"`
+	CreatedAt     string `json:"created_at"` // RFC3339
 }
 
 // ScheduledDose merges a medication with its log status for a specific slot on a given date.

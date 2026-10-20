@@ -59,11 +59,25 @@ CREATE TABLE IF NOT EXISTS medication_logs (
     scheduled_date TEXT NOT NULL,  -- 'YYYY-MM-DD'
     taken_at TEXT DEFAULT (datetime('now')),      -- when the dose was given
     recorded_at TEXT DEFAULT (datetime('now')),   -- when it was tapped (undo window)
-    status TEXT NOT NULL CHECK (status IN ('taken', 'skipped')),
+    -- partial/refused (issue #9). "vomited" is recorded as a follow-up event on a
+    -- taken/partial dose (medication_log_events); the API never logs it as a status.
+    status TEXT NOT NULL CHECK (status IN ('taken', 'skipped', 'partial', 'vomited', 'refused')),
     notes TEXT,
     voided_at TEXT,
     voided_by TEXT REFERENCES caregivers(id),
     void_reason TEXT
+);
+
+-- Follow-ups on a given dose, e.g. vomited 10 minutes later (issue #9).
+CREATE TABLE IF NOT EXISTS medication_log_events (
+    id TEXT PRIMARY KEY,
+    log_id TEXT NOT NULL REFERENCES medication_logs(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('vomited')),
+    minutes_after INTEGER CHECK (minutes_after IS NULL OR minutes_after BETWEEN 0 AND 1440),
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE (log_id, type)
 );
 
 -- 4. Stroke Vitals & Mental Alertness Logs
@@ -277,11 +291,24 @@ func Migrate(database *sql.DB) error {
 	var medLogsSQL string
 	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='medication_logs'").Scan(&medLogsSQL)
 	createDoseIndex := medLogsExisted == 0
-	if !strings.Contains(medLogsSQL, "voided_at") {
-		log.Println("Migrating medication_logs: voidable doses with a partial unique index...")
+	if !strings.Contains(medLogsSQL, "voided_at") || !strings.Contains(medLogsSQL, "'partial'") {
+		log.Println("Migrating medication_logs: voidable doses, partial/refused statuses, partial unique index...")
+		// Copy whatever columns this database already has (pre-#8 tables lack the void columns).
+		has := func(col string) bool {
+			var n int
+			_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medication_logs') WHERE name = ?", col).Scan(&n)
+			return n > 0
+		}
+		pick := func(col, fallback string) string {
+			if has(col) {
+				return col
+			}
+			return fallback
+		}
 		migrationSQL := `
 			PRAGMA foreign_keys = OFF;
-			CREATE TABLE IF NOT EXISTS medication_logs_v2 (
+			DROP TABLE IF EXISTS medication_logs_v2;
+			CREATE TABLE medication_logs_v2 (
 				id TEXT PRIMARY KEY,
 				medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
 				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
@@ -289,14 +316,15 @@ func Migrate(database *sql.DB) error {
 				scheduled_date TEXT NOT NULL,
 				taken_at TEXT DEFAULT (datetime('now')),
 				recorded_at TEXT DEFAULT (datetime('now')),
-				status TEXT NOT NULL CHECK (status IN ('taken', 'skipped')),
+				status TEXT NOT NULL CHECK (status IN ('taken', 'skipped', 'partial', 'vomited', 'refused')),
 				notes TEXT,
 				voided_at TEXT,
 				voided_by TEXT REFERENCES caregivers(id),
 				void_reason TEXT
 			);
-			INSERT OR IGNORE INTO medication_logs_v2 (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes)
-			SELECT id, medication_id, caregiver_id, slot, scheduled_date, taken_at, taken_at, status, notes FROM medication_logs;
+			INSERT INTO medication_logs_v2 (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes, voided_at, voided_by, void_reason)
+			SELECT id, medication_id, caregiver_id, slot, scheduled_date, taken_at, ` + pick("recorded_at", "taken_at") + `, status, notes, ` +
+			pick("voided_at", "NULL") + `, ` + pick("voided_by", "NULL") + `, ` + pick("void_reason", "NULL") + ` FROM medication_logs;
 			DROP TABLE medication_logs;
 			ALTER TABLE medication_logs_v2 RENAME TO medication_logs;
 			CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);

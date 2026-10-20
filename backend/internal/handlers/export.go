@@ -15,38 +15,54 @@ type ExportHandler struct {
 }
 
 type DoctorSummaryResponse struct {
-	GeneratedAt time.Time          `json:"generated_at"`
-	DaysCovered int                `json:"days_covered"`
-	StartDate   string             `json:"start_date"`
-	EndDate     string             `json:"end_date"`
-	VitalsStats VitalsStats        `json:"vitals_stats"`
-	Adherence   MedAdherence       `json:"adherence"`
-	Alertness   map[string]int     `json:"alertness_distribution"`
-	RecentNotes []models.HandoverNote `json:"recent_notes"`
-	RecentVitals []models.VitalsLog `json:"recent_vitals"`
+	GeneratedAt time.Time    `json:"generated_at"`
+	DaysCovered int          `json:"days_covered"`
+	StartDate   string       `json:"start_date"`
+	EndDate     string       `json:"end_date"`
+	VitalsStats VitalsStats  `json:"vitals_stats"`
+	Adherence   MedAdherence `json:"adherence"`
+	// Per medication: how many doses were given fully, partly, vomited, refused, skipped.
+	MedicationCounts []MedDoseCounts       `json:"medication_counts"`
+	Alertness        map[string]int        `json:"alertness_distribution"`
+	RecentNotes      []models.HandoverNote `json:"recent_notes"`
+	RecentVitals     []models.VitalsLog    `json:"recent_vitals"`
 	// Every injection with the reading and what the scale said, so the doctor can
 	// see how the scale is performing and adjust it.
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
 }
 
 type VitalsStats struct {
-	TotalReadings   int     `json:"total_readings"`
-	AvgSystolic     float64 `json:"avg_systolic"`
-	MaxSystolic     int     `json:"max_systolic"`
-	MinSystolic     int     `json:"min_systolic"`
-	AvgDiastolic    float64 `json:"avg_diastolic"`
-	MaxDiastolic    int     `json:"max_diastolic"`
-	MinDiastolic    int     `json:"min_diastolic"`
-	AvgPulse        float64 `json:"avg_pulse"`
-	CrisisCount     int     `json:"crisis_count"`
-	ElevatedCount   int     `json:"elevated_count"`
-	AvgBloodSugar   *float64 `json:"avg_blood_sugar,omitempty"`
+	TotalReadings int      `json:"total_readings"`
+	AvgSystolic   float64  `json:"avg_systolic"`
+	MaxSystolic   int      `json:"max_systolic"`
+	MinSystolic   int      `json:"min_systolic"`
+	AvgDiastolic  float64  `json:"avg_diastolic"`
+	MaxDiastolic  int      `json:"max_diastolic"`
+	MinDiastolic  int      `json:"min_diastolic"`
+	AvgPulse      float64  `json:"avg_pulse"`
+	CrisisCount   int      `json:"crisis_count"`
+	ElevatedCount int      `json:"elevated_count"`
+	AvgBloodSugar *float64 `json:"avg_blood_sugar,omitempty"`
+}
+
+type MedDoseCounts struct {
+	MedicationID string `json:"medication_id"`
+	NameAr       string `json:"name_ar"`
+	NameEn       string `json:"name_en"`
+	Taken        int    `json:"taken"`
+	Partial      int    `json:"partial"`
+	Vomited      int    `json:"vomited"` // given (taken/partial) doses later vomited
+	Refused      int    `json:"refused"`
+	Skipped      int    `json:"skipped"`
 }
 
 type MedAdherence struct {
 	TotalScheduled int     `json:"total_scheduled"`
 	TotalTaken     int     `json:"total_taken"`
 	TotalSkipped   int     `json:"total_skipped"`
+	TotalPartial   int     `json:"total_partial"`
+	TotalRefused   int     `json:"total_refused"`
+	TotalVomited   int     `json:"total_vomited"`
 	AdherenceRate  float64 `json:"adherence_rate"` // e.g., 95.5 (%)
 }
 
@@ -165,16 +181,39 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		stats.AvgBloodSugar = &avgS
 	}
 
-	// 2. Medication adherence
-	var totalTaken, totalSkipped int
-	_ = h.DB.QueryRow(`
-		SELECT COUNT(CASE WHEN status = 'taken' THEN 1 END),
-		       COUNT(CASE WHEN status = 'skipped' THEN 1 END)
-		FROM medication_logs
-		WHERE scheduled_date >= ? AND voided_at IS NULL -- a voided mis-tap was never given
-	`, startDateStr).Scan(&totalTaken, &totalSkipped)
+	// 2. Medication adherence, per medication. A voided mis-tap was never given; a
+	// partial or vomited dose is reported as such, never as fully taken.
+	medCounts := []MedDoseCounts{}
+	countRows, err := h.DB.Query(`
+		SELECT m.id, m.name_ar, m.name_en,
+		       COUNT(CASE WHEN l.status = 'taken' THEN 1 END),
+		       COUNT(CASE WHEN l.status = 'partial' THEN 1 END),
+		       COUNT(CASE WHEN EXISTS (SELECT 1 FROM medication_log_events e WHERE e.log_id = l.id AND e.type = 'vomited') THEN 1 END),
+		       COUNT(CASE WHEN l.status = 'refused' THEN 1 END),
+		       COUNT(CASE WHEN l.status = 'skipped' THEN 1 END)
+		FROM medication_logs l JOIN medications m ON m.id = l.medication_id
+		WHERE l.scheduled_date >= ? AND l.voided_at IS NULL
+		GROUP BY m.id ORDER BY m.name_en
+	`, startDateStr)
+	if err == nil {
+		for countRows.Next() {
+			var c MedDoseCounts
+			if err := countRows.Scan(&c.MedicationID, &c.NameAr, &c.NameEn, &c.Taken, &c.Partial, &c.Vomited, &c.Refused, &c.Skipped); err == nil {
+				medCounts = append(medCounts, c)
+			}
+		}
+		countRows.Close() // release the single pooled connection before the next query
+	}
+	var totalTaken, totalSkipped, totalPartial, totalRefused, totalVomited int
+	for _, c := range medCounts {
+		totalTaken += c.Taken
+		totalSkipped += c.Skipped
+		totalPartial += c.Partial
+		totalRefused += c.Refused
+		totalVomited += c.Vomited
+	}
 
-	totalScheduled := totalTaken + totalSkipped
+	totalScheduled := totalTaken + totalSkipped + totalPartial + totalRefused
 	var rate float64
 	if totalScheduled > 0 {
 		rate = (float64(totalTaken) / float64(totalScheduled)) * 100.0
@@ -184,6 +223,9 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		TotalScheduled: totalScheduled,
 		TotalTaken:     totalTaken,
 		TotalSkipped:   totalSkipped,
+		TotalPartial:   totalPartial,
+		TotalRefused:   totalRefused,
+		TotalVomited:   totalVomited,
 		AdherenceRate:  rate,
 	}
 
@@ -227,16 +269,17 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	}
 
 	res := DoctorSummaryResponse{
-		GeneratedAt:  time.Now().UTC(),
-		DaysCovered:  days,
-		StartDate:    startDateStr,
-		EndDate:      endDateStr,
-		VitalsStats:  stats,
-		Adherence:    adherence,
-		Alertness:    alertnessMap,
-		RecentNotes:  recentNotes,
-		RecentVitals: recentVitals,
-		InsulinLogs:  insulinLogs,
+		GeneratedAt:      time.Now().UTC(),
+		DaysCovered:      days,
+		StartDate:        startDateStr,
+		EndDate:          endDateStr,
+		VitalsStats:      stats,
+		Adherence:        adherence,
+		MedicationCounts: medCounts,
+		Alertness:        alertnessMap,
+		RecentNotes:      recentNotes,
+		RecentVitals:     recentVitals,
+		InsulinLogs:      insulinLogs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

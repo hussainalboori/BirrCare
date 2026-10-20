@@ -44,10 +44,8 @@ const STEPS = {
  * oversized one-tap call buttons. Numbers come from EMERGENCY_NUMBER /
  * DOCTOR_PHONE in the backend .env.
  */
-export function CrisisActions({ compact = false }: { compact?: boolean }) {
-  const { locale } = useLanguage();
+function useContacts(): Contacts {
   const [contacts, setContacts] = useState<Contacts>({});
-
   useEffect(() => {
     let alive = true;
     loadContacts().then((c) => alive && setContacts(c));
@@ -55,6 +53,32 @@ export function CrisisActions({ compact = false }: { compact?: boolean }) {
       alive = false;
     };
   }, []);
+  return contacts;
+}
+
+/** One-tap call to the doctor (DOCTOR_PHONE). Renders nothing when no number is set. */
+export function DoctorCallButton() {
+  const { locale } = useLanguage();
+  const contacts = useContacts();
+  if (!contacts.doctor_phone) return null;
+  const doctorLabel = contacts.doctor_name || (locale === "ar" ? "الطبيب" : "Doctor");
+  return (
+    <a
+      href={`tel:${contacts.doctor_phone}`}
+      className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border-2 border-orange-600 bg-white px-4 text-base font-black text-orange-800 active:scale-95 dark:bg-slate-900 dark:text-orange-300"
+    >
+      <Phone className="h-5 w-5" />
+      <span>
+        {locale === "ar" ? "اتصل بـ" : "Call "}
+        <bdi>{doctorLabel}</bdi>
+      </span>
+    </a>
+  );
+}
+
+export function CrisisActions({ compact = false }: { compact?: boolean }) {
+  const { locale } = useLanguage();
+  const contacts = useContacts();
 
   const steps = STEPS[locale];
   const doctorLabel = contacts.doctor_name || (locale === "ar" ? "الطبيب" : "Doctor");
