@@ -275,9 +275,13 @@ CI (`.github/workflows/ci-cd.yml`) runs these checks plus a no-CGO static build 
 
 ## Deployment
 
-- **`scripts/deploy.sh`**, run from the repo on the host: snapshots `data/birrcare.db` into `data/backups/` (keeps the last 10), runs `docker compose build --pull` and `up -d`, then waits for the backend health check and the frontend to respond.
-- **`scripts/auto-deploy.sh`** with the systemd user units in `scripts/systemd/` (install to `~/.config/systemd/user/`; the service expects the checkout at `~/birrcare`): every 5 minutes it fetches `main` and, if the CI run for the new commit succeeded, checks it out and runs `deploy.sh`. It needs `git`, `curl`, `jq` and Docker Compose. Deployment is pull-based on purpose, so nothing on GitHub can run code on the host.
-- Expose `127.0.0.1:3000` through a Cloudflare Tunnel and protect it with a Cloudflare Access policy. Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` if you want Access sign-in to map to caregivers by email.
+Step-by-step production guide: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. It covers requirements, `.env`, Cloudflare Tunnel and Access, first login and hardening, automatic updates, backups, restore, rollback and troubleshooting.
+
+In short:
+
+- **`scripts/deploy.sh`** snapshots `data/birrcare.db` into `data/backups/` (keeps 10), rebuilds and restarts both containers, and waits for the health checks.
+- **`scripts/auto-deploy.sh`** with the systemd user units in `scripts/systemd/` checks `main` every 5 minutes and deploys a new commit only after its CI run passed. It is pull-based, so nothing on GitHub can run code on the host.
+- Expose only `127.0.0.1:3000` through a Cloudflare Tunnel, protected by a Cloudflare Access policy.
 
 ## License
 
