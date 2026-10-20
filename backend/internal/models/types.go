@@ -63,9 +63,22 @@ type Medication struct {
 	DaysOfWeek     []string          `json:"days_of_week"`    // e.g., ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 	SlotTimes      map[string]string `json:"slot_times"`      // e.g., {"morning": "08:00", "evening": "20:00"}
 	ImageURL       string            `json:"image_url,omitempty"`
-	IsActive       bool              `json:"is_active"`
-	CreatedBy      string            `json:"created_by,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
+	// MinHoursBetween is the doctor's minimum gap between doses; nil = automatic
+	// (derived from the schedule), 0 = no interval lock.
+	MinHoursBetween *float64  `json:"min_hours_between"`
+	IsActive        bool      `json:"is_active"`
+	CreatedBy       string    `json:"created_by,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// LastDose is the most recent taken dose of a medication, on any date.
+type LastDose struct {
+	TakenAt       string  `json:"taken_at"` // RFC3339
+	Slot          string  `json:"slot"`
+	ScheduledDate string  `json:"scheduled_date"`
+	CaregiverName string  `json:"caregiver_name"`
+	AvatarColor   string  `json:"avatar_color,omitempty"`
+	HoursSince    float64 `json:"hours_since"`
 }
 
 // MedicationLog represents an intake entry with double-dose safety constraint.
@@ -88,6 +101,10 @@ type ScheduledDose struct {
 	Slot       string         `json:"slot"`
 	Time       string         `json:"time,omitempty"` // scheduled dose clock time, e.g. "08:00"
 	Log        *MedicationLog `json:"log,omitempty"`
+	// Interval lock (issue #7), independent of the date being viewed.
+	LastTaken     *LastDose `json:"last_taken,omitempty"`
+	IntervalHours float64   `json:"interval_hours"`
+	NextAllowedAt string    `json:"next_allowed_at,omitempty"` // RFC3339; set while still locked
 }
 
 // VitalsLog represents cardiovascular and cognitive metrics critical for stroke recovery.
@@ -104,7 +121,7 @@ type VitalsLog struct {
 	BloodSugar     *float64  `json:"blood_sugar,omitempty"`
 	AlertnessLevel string    `json:"alertness_level"` // 'alert', 'confused', 'restless', 'drowsy'
 	Notes          string    `json:"notes,omitempty"`
-	BPStatus       string    `json:"bp_status,omitempty"` // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
+	BPStatus       string    `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
 	SugarStatus    string    `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
 }
 
@@ -188,4 +205,3 @@ type CurrentDutyStatus struct {
 	CurrentTime      string           `json:"current_time"`
 	Date             string           `json:"date"`
 }
-

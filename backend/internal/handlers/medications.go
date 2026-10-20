@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -98,7 +99,7 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -111,12 +112,14 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var m models.Medication
 		var instAr, instEn, createdBy, imgURL, daysJSON, timesJSON sql.NullString
+		var minHours sql.NullFloat64
 		var slotsJSON string
 		var createdAtStr string
 
-		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON); err != nil {
+		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours); err != nil {
 			continue
 		}
+		m.MinHoursBetween = nullableFloat(minHours)
 		if instAr.Valid {
 			m.InstructionsAr = instAr.String
 		}
@@ -161,6 +164,8 @@ type CreateMedicationRequest struct {
 	DaysOfWeek     []string          `json:"days_of_week,omitempty"`
 	SlotTimes      map[string]string `json:"slot_times,omitempty"`
 	ImageURL       string            `json:"image_url,omitempty"`
+	// Doctor's minimum hours between doses; omitted/null = automatic.
+	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +198,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if !validIntervalHours(req.MinHoursBetween) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_INTERVAL", "min_hours_between must be between 0 and 72 hours")
+		return
+	}
+
 	slotTimes := normalizeSlotTimes(req.SlotTimes, req.FrequencySlots)
 
 	id := "med_" + uuid.New().String()[:8]
@@ -201,9 +211,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	timesJSON, _ := json.Marshal(slotTimes)
 
 	_, err := h.DB.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -241,6 +251,8 @@ type UpdateMedicationRequest struct {
 	SlotTimes      map[string]string `json:"slot_times,omitempty"`
 	ImageURL       string            `json:"image_url,omitempty"`
 	IsActive       *bool             `json:"is_active,omitempty"`
+	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
+	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -277,9 +289,14 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	minHours, setMinHours, err := parseOptionalInterval(req.MinHoursBetween)
+	if err != nil || !validIntervalHours(minHours) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_INTERVAL", "min_hours_between must be null or between 0 and 72 hours")
+		return
+	}
 
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
-	_, err := h.DB.Exec(`
+	_, err = h.DB.Exec(`
 		UPDATE medications
 		SET name_ar = COALESCE(NULLIF(?, ''), name_ar),
 		    name_en = COALESCE(NULLIF(?, ''), name_en),
@@ -309,6 +326,13 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		normalizedTimes := normalizeSlotTimes(req.SlotTimes, currentSlots)
 		timesJSON, _ := json.Marshal(normalizedTimes)
 		_, _ = h.DB.Exec("UPDATE medications SET slot_times = ? WHERE id = ?", string(timesJSON), medID)
+	}
+
+	if setMinHours {
+		if _, err := h.DB.Exec("UPDATE medications SET min_hours_between = ? WHERE id = ?", minHours, medID); err != nil {
+			internalError(w, "failed to update medication", err)
+			return
+		}
 	}
 
 	if req.IsActive != nil {
@@ -501,7 +525,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 
 	// 1. Fetch all active medications including days_of_week and slot_times
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between
 		FROM medications WHERE is_active = 1
 	`)
 	if err != nil {
@@ -514,10 +538,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	for medRows.Next() {
 		var m models.Medication
 		var instAr, instEn, imgURL, daysJSON, timesJSON sql.NullString
+		var minHours sql.NullFloat64
 		var slotsJSON, createdAtStr string
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON); err != nil {
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours); err != nil {
 			continue
 		}
+		m.MinHoursBetween = nullableFloat(minHours)
 		if instAr.Valid {
 			m.InstructionsAr = instAr.String
 		}
@@ -579,7 +605,21 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		logsMap[fmt.Sprintf("%s:%s", l.MedicationID, l.Slot)] = l
 	}
 
-	// 3. Assemble scheduled dose cards
+	logRows.Close()
+
+	// 3. Last taken dose of each medication, on any date (interval lock, issue #7).
+	now := time.Now()
+	lastTaken := make(map[string]*models.LastDose, len(meds))
+	for _, m := range meds {
+		d, err := nearestTakenDose(h.DB, m.ID, now)
+		if err != nil {
+			internalError(w, "failed to fetch last doses", err)
+			return
+		}
+		lastTaken[m.ID] = d
+	}
+
+	// 4. Assemble scheduled dose cards
 	var schedule []models.ScheduledDose
 	for _, m := range meds {
 		// Filter by day of week
@@ -603,9 +643,18 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 			}
 
 			item := models.ScheduledDose{
-				Medication: m,
-				Slot:       slot,
-				Time:       scheduledTime,
+				Medication:    m,
+				Slot:          slot,
+				Time:          scheduledTime,
+				LastTaken:     lastTaken[m.ID],
+				IntervalHours: intervalHours(m.MinHoursBetween, m.FrequencySlots, m.SlotTimes),
+			}
+			if last := item.LastTaken; last != nil && item.IntervalHours > 0 {
+				if t, err := time.Parse(time.RFC3339, last.TakenAt); err == nil {
+					if next := t.Add(time.Duration(item.IntervalHours * float64(time.Hour))); next.After(now) {
+						item.NextAllowedAt = next.UTC().Format(time.RFC3339)
+					}
+				}
 			}
 			if hasLog {
 				logCopy := log
@@ -636,16 +685,37 @@ type LogDoseRequest struct {
 	ScheduledDate string `json:"scheduled_date"` // 'YYYY-MM-DD'
 	Status        string `json:"status"`         // 'taken' or 'skipped'
 	Notes         string `json:"notes,omitempty"`
+	// GivenAt (RFC3339, optional) is when the dose was actually given, for a dose
+	// ticked late ("given at 08:00", ticked at 20:30). Default: now.
+	GivenAt string `json:"given_at,omitempty"`
+	// Admin-only escape from the interval lock (e.g. the doctor ordered an extra dose).
+	OverrideInterval bool   `json:"override_interval,omitempty"`
+	OverrideReason   string `json:"override_reason,omitempty"`
 }
 
-const maxNotesLen = 2000
+const (
+	maxNotesLen          = 2000
+	maxOverrideReasonLen = 500
+	// A late tick may be backdated at most this far (yesterday's bedtime dose
+	// ticked the next morning).
+	maxGivenAtAge = 36 * time.Hour
+)
 
 // LogDose records medication intake with double-dosing locking.
 //
-// Safety model: there is NO check-then-insert. The INSERT itself is the lock -
-// SQLite's UNIQUE(medication_id, scheduled_date, slot) guarantees at most one row
-// per dose no matter how many siblings tap at once. The dose row and its audit row
-// are committed in one transaction. A losing writer gets 409 with who/when.
+// Safety model, two locks:
+//  1. Same dose card: SQLite's UNIQUE(medication_id, scheduled_date, slot) allows at
+//     most one row per dose no matter how many siblings tap at once (409
+//     DOSE_ALREADY_LOGGED with who/when).
+//  2. Same medication across cards, e.g. bedtime on D at 23:30 and bedtime on D+1 at
+//     03:45 (issue #7): a "taken" dose within the minimum interval of any other
+//     taken dose is refused (409 DOSE_TOO_SOON). This one IS check-then-insert, and
+//     it is race-free only because the DSN sets _txlock=immediate: BEGIN takes the
+//     write lock, so no other transaction can insert between the check and the
+//     INSERT. Do not change the transaction mode without keeping that guarantee
+//     (TestDoseIntervalConcurrent covers it).
+//
+// The dose row and its audit rows are committed in one transaction.
 func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
 	if caregiver == nil {
@@ -697,11 +767,42 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now().UTC().Truncate(time.Second)
+	givenAt := now
+	if req.GivenAt != "" {
+		t, err := time.Parse(time.RFC3339, req.GivenAt)
+		if err != nil || t.After(now.Add(time.Minute)) || now.Sub(t) > maxGivenAtAge {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_GIVEN_AT", "given_at must be an RFC3339 time within the last 36 hours")
+			return
+		}
+		if t.Before(now) {
+			givenAt = t.UTC().Truncate(time.Second)
+		}
+	}
+
+	req.OverrideReason = strings.TrimSpace(req.OverrideReason)
+	if req.OverrideInterval {
+		if !auth.CanManageMedications(caregiver) {
+			writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Only an admin can give a dose inside the minimum interval")
+			return
+		}
+		if req.OverrideReason == "" {
+			writeJSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "Giving a dose inside the minimum interval needs a reason")
+			return
+		}
+		if len(req.OverrideReason) > maxOverrideReasonLen {
+			writeJSONError(w, http.StatusBadRequest, "REASON_TOO_LONG", "reason is too long")
+			return
+		}
+	}
+
 	// Medication must exist, be active, and actually be scheduled in this slot.
 	var nameAr, nameEn, slotsJSON string
+	var timesJSON sql.NullString
+	var minHoursCol sql.NullFloat64
 	err := h.DB.QueryRowContext(r.Context(),
-		"SELECT name_ar, name_en, frequency_slots FROM medications WHERE id = ? AND is_active = 1",
-		req.MedicationID).Scan(&nameAr, &nameEn, &slotsJSON)
+		"SELECT name_ar, name_en, frequency_slots, slot_times, min_hours_between FROM medications WHERE id = ? AND is_active = 1",
+		req.MedicationID).Scan(&nameAr, &nameEn, &slotsJSON, &timesJSON, &minHoursCol)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSONError(w, http.StatusNotFound, "MEDICATION_NOT_FOUND", "medication not found or inactive")
 		return
@@ -716,8 +817,13 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var slotTimes map[string]string
+	if timesJSON.Valid {
+		_ = json.Unmarshal([]byte(timesJSON.String), &slotTimes)
+	}
+	minHours := intervalHours(nullableFloat(minHoursCol), slots, normalizeSlotTimes(slotTimes, slots))
+
 	logID := uuid.New().String()
-	now := time.Now().UTC().Truncate(time.Second)
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -726,10 +832,47 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 	// From here until Commit/Rollback the single pooled connection belongs to tx:
 	// every statement MUST go through tx, never h.DB, or it deadlocks.
+
+	// Same card already recorded: report that, not the interval.
+	var existing int
+	if err := tx.QueryRow(`SELECT 1 FROM medication_logs WHERE medication_id = ? AND scheduled_date = ? AND slot = ?`,
+		req.MedicationID, req.ScheduledDate, req.Slot).Scan(&existing); err == nil {
+		tx.Rollback()
+		h.writeDoseConflict(w, r, req)
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
+		internalError(w, "failed to log medication", err)
+		return
+	}
+
+	// Interval lock. Compared against the nearest taken dose in either direction, so
+	// a backdated given_at cannot slip a dose in before a later one.
+	var overridden *models.LastDose
+	if req.Status == "taken" && minHours > 0 {
+		other, err := nearestTakenDose(tx, req.MedicationID, givenAt)
+		if err != nil {
+			tx.Rollback()
+			internalError(w, "failed to check the last dose", err)
+			return
+		}
+		if other != nil {
+			t, _ := time.Parse(time.RFC3339, other.TakenAt)
+			if math.Abs(givenAt.Sub(t).Hours()) < minHours {
+				if !req.OverrideInterval {
+					tx.Rollback()
+					writeDoseTooSoon(w, req, other, minHours)
+					return
+				}
+				overridden = other
+			}
+		}
+	}
+
 	_, err = tx.Exec(`
 		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, status, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, now.Format(sqliteTimeLayout), req.Status, req.Notes)
+	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), req.Status, req.Notes)
 	if err != nil {
 		tx.Rollback() // release the connection BEFORE querying the existing dose
 		if isUniqueViolation(err) {
@@ -740,11 +883,23 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := audit.Record(tx, caregiver.ID, "MED_LOGGED", "medication_log", logID,
-		fmt.Sprintf("Dose marked as %s for med %s (slot %s, date %s)", req.Status, req.MedicationID, req.Slot, req.ScheduledDate)); err != nil {
+	details := fmt.Sprintf("Dose marked as %s for med %s (slot %s, date %s)", req.Status, req.MedicationID, req.Slot, req.ScheduledDate)
+	if !givenAt.Equal(now) {
+		details += fmt.Sprintf(", given at %s (recorded %s)", givenAt.Format(time.RFC3339), now.Format(time.RFC3339))
+	}
+	if err := audit.Record(tx, caregiver.ID, "MED_LOGGED", "medication_log", logID, details); err != nil {
 		tx.Rollback()
 		internalError(w, "failed to write audit trail", err)
 		return
+	}
+	if overridden != nil {
+		if err := audit.Record(tx, caregiver.ID, "MED_INTERVAL_OVERRIDE", "medication_log", logID,
+			fmt.Sprintf("Gave %s inside the %.1f h minimum interval; previous dose %s by %s (%s %s). Reason: %s",
+				req.MedicationID, minHours, overridden.TakenAt, overridden.CaregiverName, overridden.ScheduledDate, overridden.Slot, req.OverrideReason)); err != nil {
+			tx.Rollback()
+			internalError(w, "failed to write audit trail", err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		internalError(w, "failed to commit medication log", err)
@@ -757,18 +912,20 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		Name:        caregiver.Name,
 		AvatarColor: caregiver.AvatarColor,
 	}, map[string]interface{}{
-		"log_id":         logID,
-		"medication_id":  req.MedicationID,
-		"name_ar":        nameAr,
-		"name_en":        nameEn,
-		"slot":           req.Slot,
-		"scheduled_date": req.ScheduledDate,
-		"status":         req.Status,
-		"taken_at":       now.Format(time.RFC3339),
-		"notes":          req.Notes,
-		"caregiver_id":   caregiver.ID,
-		"caregiver_name": caregiver.Name,
-		"avatar_color":   caregiver.AvatarColor,
+		"log_id":            logID,
+		"medication_id":     req.MedicationID,
+		"name_ar":           nameAr,
+		"name_en":           nameEn,
+		"slot":              req.Slot,
+		"scheduled_date":    req.ScheduledDate,
+		"status":            req.Status,
+		"taken_at":          givenAt.Format(time.RFC3339),
+		"notes":             req.Notes,
+		"interval_override": overridden != nil,
+		"override_reason":   overrideReasonIf(overridden != nil, req.OverrideReason),
+		"caregiver_id":      caregiver.ID,
+		"caregiver_name":    caregiver.Name,
+		"avatar_color":      caregiver.AvatarColor,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -776,7 +933,7 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":         "success",
 		"log_id":         logID,
-		"taken_at":       now.Format(time.RFC3339),
+		"taken_at":       givenAt.Format(time.RFC3339),
 		"caregiver_name": caregiver.Name,
 		"avatar_color":   caregiver.AvatarColor,
 	})
@@ -810,4 +967,11 @@ func (h *MedicationHandler) writeDoseConflict(w http.ResponseWriter, r *http.Req
 		"avatar_color":   avatar,
 		"taken_at":       sqliteToRFC3339(takenAt),
 	})
+}
+
+func overrideReasonIf(ok bool, reason string) string {
+	if ok {
+		return reason
+	}
+	return ""
 }

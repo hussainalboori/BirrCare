@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyBloodPressure, lookupInsulinScale } from "@/lib/clinical";
+import { classifyBloodPressure, lookupInsulinScale, autoIntervalHours } from "@/lib/clinical";
 
 // AGENTS.md §4.3 — the higher category of systolic OR diastolic wins.
 describe("classifyBloodPressure (AGENTS.md §4.3 boundaries)", () => {
@@ -54,5 +54,13 @@ describe("lookupInsulinScale", () => {
     expect(lookupInsulinScale(scale, 8)).toBe(2);
     expect(lookupInsulinScale(scale, 13.9)).toBe(4);
     expect(lookupInsulinScale(scale, 14)).toBeNull();
+  });
+});
+
+describe("autoIntervalHours (mirrors the Go backend)", () => {
+  it("derives the minimum gap from the schedule", () => {
+    expect(autoIntervalHours(["bedtime"], { bedtime: "22:30" })).toBe(18);
+    expect(autoIntervalHours(["morning", "evening"], { morning: "08:00", evening: "20:00" })).toBe(9);
+    expect(autoIntervalHours(["evening", "bedtime"], { evening: "20:00", bedtime: "22:30" })).toBe(1.88);
   });
 });

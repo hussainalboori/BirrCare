@@ -63,3 +63,33 @@ export function formatDateTime(value: string | null | undefined, locale: Locale)
     minute: "2-digit",
   });
 }
+
+function arCount(n: number, one: string, two: string, few: string, many: string): string {
+  if (n === 1) return one;
+  if (n === 2) return two;
+  return `${n} ${n >= 3 && n <= 10 ? few : many}`;
+}
+
+/** "4 h 15 min" / "4 ساعات و15 دقيقة" for a duration in milliseconds (rounded down to minutes). */
+export function formatDuration(ms: number, locale: Locale): string {
+  const total = Math.max(0, Math.floor(ms / 60000));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (locale === "ar") {
+    const hours = h ? arCount(h, "ساعة", "ساعتين", "ساعات", "ساعة") : "";
+    const mins = m || !h ? arCount(m, "دقيقة", "دقيقتين", "دقائق", "دقيقة") : "";
+    if (!h && m === 0) return "أقل من دقيقة";
+    return hours && mins ? `${hours} و${mins}` : hours || mins;
+  }
+  if (!h && m === 0) return "less than a minute";
+  return [h ? `${h} h` : "", m ? `${m} min` : ""].filter(Boolean).join(" ");
+}
+
+/** "Last given 4 h 15 min ago by Fatima" for the interval lock (issue #7). */
+export function lastGivenText(takenAt: string | null | undefined, by: string | undefined, now: Date, locale: Locale): string {
+  const d = parseServerTime(takenAt);
+  if (!d) return "";
+  const ago = formatDuration(now.getTime() - d.getTime(), locale);
+  if (locale === "ar") return `آخر جرعة قبل ${ago}${by ? ` بواسطة ${by}` : ""}`;
+  return `Last given ${ago} ago${by ? ` by ${by}` : ""}`;
+}

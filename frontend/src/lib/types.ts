@@ -74,6 +74,8 @@ export interface Medication {
   days_of_week?: string[];
   slot_times?: Record<string, string>;
   image_url?: string;
+  /** Doctor's minimum hours between doses; null = automatic, 0 = no lock. */
+  min_hours_between?: number | null;
   is_active: boolean;
   created_by?: string;
   created_at: string;
@@ -92,11 +94,26 @@ export interface MedicationLog {
   avatar_color?: string;
 }
 
+/** Most recent taken dose of a medication, on any date. */
+export interface LastDose {
+  taken_at: string;
+  slot: string;
+  scheduled_date: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  hours_since: number;
+}
+
 export interface ScheduledDose {
   medication: Medication;
   slot: string;
   time?: string;
   log?: MedicationLog;
+  /** Interval lock (cross-midnight double doses): independent of the date shown. */
+  last_taken?: LastDose;
+  interval_hours?: number;
+  /** RFC3339; present while the medication is still inside its minimum interval. */
+  next_allowed_at?: string;
 }
 
 export interface DailyScheduleResponse {

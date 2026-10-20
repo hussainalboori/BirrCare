@@ -260,6 +260,18 @@ func Migrate(database *sql.DB) error {
 		_, _ = database.Exec(`UPDATE medications SET slot_times = '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}' WHERE slot_times IS NULL OR slot_times = ''`)
 	}
 
+	// Minimum interval between doses (issue #7): NULL = derived from the schedule.
+	var minHoursCol int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name='min_hours_between'").Scan(&minHoursCol)
+	if minHoursCol == 0 {
+		if _, err := database.Exec(`ALTER TABLE medications ADD COLUMN min_hours_between REAL`); err != nil {
+			return fmt.Errorf("failed adding medications.min_hours_between: %w", err)
+		}
+	}
+	if _, err := database.Exec(`CREATE INDEX IF NOT EXISTS idx_med_logs_med_taken ON medication_logs(medication_id, taken_at DESC)`); err != nil {
+		return fmt.Errorf("failed creating idx_med_logs_med_taken: %w", err)
+	}
+
 	// Two-factor authentication (authenticator app) and session revocation.
 	for _, col := range []struct{ name, def string }{
 		{"totp_secret", "TEXT"},                         // base32, set once 2FA is enabled

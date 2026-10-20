@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { MedicationLog, ScheduledDose } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
-import { isViewer } from "@/lib/permissions";
-import { formatTime } from "@/lib/datetime";
-import { Auto, Ltr } from "./Ltr";
-import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill } from "lucide-react";
+import { canManageMedications, isViewer } from "@/lib/permissions";
+import { formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
+import { Auto } from "./Ltr";
+import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History } from "lucide-react";
 
 interface MedicationSlotCardProps {
   dose: ScheduledDose;
@@ -29,11 +29,32 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   // Optimistic/server-confirmed lock applied immediately after a 201 or 409, so the
   // button can't re-enable in the gap before the schedule re-fetch lands (or if it fails).
   const [localLog, setLocalLog] = useState<MedicationLog | null>(null);
+  // Interval lock (issue #7): set from a 409 DOSE_TOO_SOON before the schedule re-fetch lands.
+  const [tooSoon, setTooSoon] = useState<{ takenAt?: string; by?: string; nextAllowedAt?: string } | null>(null);
+  const [askWhen, setAskWhen] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  // Re-render every 30 s so "4 h 15 min ago" stays true and the lock lifts on time.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const { medication, slot } = dose;
   const log = dose.log ?? localLog ?? undefined;
   const isLogged = !!log; // taken OR skipped: either way the slot is locked server-side
   const isTaken = log?.status === "taken";
+  const ar = locale === "ar";
+
+  const lastTaken = tooSoon ? { taken_at: tooSoon.takenAt, caregiver_name: tooSoon.by } : dose.last_taken;
+  const nextAllowed = parseServerTime(tooSoon?.nextAllowedAt ?? dose.next_allowed_at);
+  const isIntervalLocked = !isLogged && !!nextAllowed && nextAllowed > now;
+  const nextAllowedText = nextAllowed
+    ? `${formatTime(nextAllowed.toISOString(), locale)}${
+        localDateString(nextAllowed) !== localDateString(now) ? ` (${formatShortDate(nextAllowed.toISOString(), locale)})` : ""
+      }`
+    : "";
 
   const buildLocalLog = (data: { caregiver_name?: string; avatar_color?: string; taken_at?: string; status?: string }): MedicationLog => ({
     id: "local",
@@ -47,8 +68,15 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
     avatar_color: data.avatar_color,
   });
 
-  const handleLogDose = async () => {
+  const handleLogDose = async (opts: { givenAt?: string; override?: boolean } = {}) => {
     if (isLogged || inFlightRef.current) return;
+    // Ticked well after its time: ask when it was really given, so a late tick of the
+    // morning dose doesn't lock the evening dose until the next morning.
+    if (!opts.givenAt && !opts.override && !askWhen && scheduledAt && lateEnoughToAsk) {
+      setAskWhen(true);
+      return;
+    }
+    setAskWhen(false);
 
     if (!currentCaregiver) {
       openPinModal();
@@ -77,8 +105,12 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           slot,
           scheduled_date: scheduledDate,
           status: "taken",
+          ...(opts.givenAt ? { given_at: opts.givenAt } : {}),
+          ...(opts.override ? { override_interval: true, override_reason: overrideReason.trim() } : {}),
         }),
       });
+      setOverrideOpen(false);
+      setOverrideReason("");
 
       setLocalLog(
         buildLocalLog({
@@ -90,8 +122,15 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
       );
       onLoggedSuccess?.();
     } catch (err: any) {
-      // 409 Conflict: Double-Dosing Lock caught by backend!
-      if (err.status === 409 || err.data?.error === "DOSE_ALREADY_LOGGED") {
+      if (err.data?.error === "DOSE_TOO_SOON") {
+        // Same medication given recently on another card (e.g. last night's bedtime dose).
+        setTooSoon({ takenAt: err.data.last_taken_at, by: err.data.caregiver_name, nextAllowedAt: err.data.next_allowed_at });
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate?.([60, 50, 60]);
+        }
+        onLoggedSuccess?.();
+      } else if (err.status === 409 || err.data?.error === "DOSE_ALREADY_LOGGED") {
+        // 409 Conflict: Double-Dosing Lock caught by backend!
         const who = err.data?.caregiver_name || (locale === "ar" ? "أحد الأخوة" : "a sibling");
         const when = formatTime(err.data?.taken_at, locale);
         // Payload: { caregiver_id, caregiver_name, avatar_color, status, log_id, taken_at (RFC3339;
@@ -109,6 +148,8 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           navigator.vibrate?.([60, 50, 60]);
         }
         onLoggedSuccess?.();
+      } else if (opts.override && (err.status === 403 || err.data?.error === "REASON_REQUIRED")) {
+        alert(ar ? "اكتب سبب إعطاء الجرعة (مثلاً تعليمات الطبيب)" : "Write the reason for this dose (e.g. the doctor's instruction)");
       } else {
         alert(err.message || "Failed to log dose");
       }
@@ -126,6 +167,18 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   // Format timestamp for display (handles RFC3339 and raw SQLite UTC strings)
   const formattedTime = formatTime(log?.taken_at, locale);
   const scheduledTime = dose.time || (medication.slot_times?.[slot] || "");
+
+  // This card's scheduled moment on the device's clock.
+  const scheduledAt = (() => {
+    if (!scheduledTime) return null;
+    const [y, mo, d] = scheduledDate.split("-").map(Number);
+    const [h, mi] = scheduledTime.split(":").map(Number);
+    const at = new Date(y, mo - 1, d, h, mi);
+    return isNaN(at.getTime()) ? null : at;
+  })();
+  const sinceScheduled = scheduledAt ? now.getTime() - scheduledAt.getTime() : 0;
+  // More than an hour late, and recent enough for the server to accept that time.
+  const lateEnoughToAsk = sinceScheduled > 60 * 60_000 && sinceScheduled < 36 * 3600_000;
 
   const isOverdue = (() => {
     if (isLogged || !scheduledTime) return false;
@@ -246,11 +299,21 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                     {formattedTime && (
                       <>
                         {" "}
-                        {t.atTime} <Ltr>{formattedTime}</Ltr>
+                        {t.atTime} <Auto>{formattedTime}</Auto>
                       </>
                     )}
                   </span>
                 </div>
+              </div>
+            ) : isIntervalLocked ? (
+              <div
+                role="status"
+                className="flex min-h-12 items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+              >
+                <Lock className="h-4 w-4 shrink-0" />
+                <span>
+                  {ar ? "بعد" : "After"} <Auto>{formatTime(nextAllowed!.toISOString(), locale)}</Auto>
+                </span>
               </div>
             ) : isViewer(currentCaregiver?.role) ? (
               <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
@@ -260,7 +323,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             ) : (
               <button
                 type="button"
-                onClick={handleLogDose}
+                onClick={() => handleLogDose()}
                 disabled={isSubmitting}
                 aria-busy={isSubmitting}
                 className={`flex min-h-12 items-center gap-2 rounded-xl px-3.5 sm:px-4 py-2.5 text-xs font-bold transition-all active:scale-95 shadow-sm ${
@@ -284,6 +347,109 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             )}
           </div>
         </div>
+
+        {/* Last given (any date) and the interval lock */}
+        {!isLogged && lastTaken?.taken_at && (
+          <div
+            className={`mt-3 rounded-xl px-3 py-2 text-base font-semibold ${
+              isIntervalLocked
+                ? "border border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                : "bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"
+            }`}
+          >
+            <p className="flex items-start gap-2">
+              <History className="mt-1 h-4 w-4 shrink-0" />
+              <span>
+                {lastGivenText(lastTaken.taken_at, lastTaken.caregiver_name, now, locale)}
+                {isIntervalLocked && (
+                  <>
+                    {" — "}
+                    {ar ? "لا تُعطِ جرعة أخرى قبل الساعة " : "do not give another before "}
+                    <Auto>{nextAllowedText}</Auto>
+                  </>
+                )}
+              </span>
+            </p>
+
+            {isIntervalLocked && canManageMedications(currentCaregiver?.role) && (
+              <div className="mt-2">
+                {overrideOpen ? (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-semibold">
+                      {ar ? "لماذا تُعطى الآن؟ (يُحفظ في السجل)" : "Why give it now? (saved in the audit log)"}
+                      <textarea
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        rows={2}
+                        maxLength={500}
+                        placeholder={ar ? "مثلاً: الطبيب طلب جرعة إضافية" : "e.g. the doctor ordered an extra dose"}
+                        className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2 text-base font-normal text-slate-900 dark:border-amber-800 dark:bg-slate-900 dark:text-white"
+                      />
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOverrideOpen(false)}
+                        className="min-h-12 flex-1 rounded-xl border border-slate-300 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300"
+                      >
+                        {ar ? "إلغاء" : "Cancel"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!overrideReason.trim() || isSubmitting}
+                        onClick={() => handleLogDose({ override: true })}
+                        className="min-h-12 flex-1 rounded-xl bg-amber-600 text-sm font-bold text-white disabled:opacity-50"
+                      >
+                        {ar ? "أُعطيت بأمر الطبيب" : "Given on doctor's order"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setOverrideOpen(true)}
+                    className="min-h-12 rounded-xl border border-amber-400 px-3 text-sm font-semibold text-amber-800 dark:border-amber-700 dark:text-amber-300"
+                  >
+                    {ar ? "الطبيب طلب جرعة الآن (للمسؤول)" : "Doctor ordered a dose now (admin)"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Late tick: when was it really given? */}
+        {askWhen && !isLogged && scheduledAt && (
+          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40">
+            <p className="mb-2 text-base font-semibold text-blue-900 dark:text-blue-200">
+              {ar ? "متى أُعطيت هذه الجرعة؟" : "When was this dose given?"}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleLogDose({ givenAt: new Date().toISOString() })}
+                className="min-h-12 flex-1 rounded-xl bg-emerald-600 px-3 text-sm font-bold text-white"
+              >
+                {ar ? "الآن" : "Just now"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleLogDose({ givenAt: scheduledAt.toISOString() })}
+                className="min-h-12 flex-1 rounded-xl border border-emerald-600 px-3 text-sm font-bold text-emerald-700 dark:text-emerald-400"
+              >
+                {ar ? "في موعدها " : "On time, "}
+                <Auto>{formatTime(scheduledAt.toISOString(), locale)}</Auto>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAskWhen(false)}
+                className="min-h-12 rounded-xl px-3 text-sm font-semibold text-slate-600 dark:text-slate-300"
+              >
+                {ar ? "إلغاء" : "Cancel"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Conflict banner if another sibling recorded the dose first */}
         {conflictError && (

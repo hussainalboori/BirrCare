@@ -14,6 +14,8 @@ interface MedPayload {
   name_en?: string;
   slot?: string;
   status?: string;
+  interval_override?: boolean;
+  override_reason?: string;
 }
 interface VitalPayload {
   systolic?: number;
@@ -31,6 +33,11 @@ interface InsulinPayload {
 interface NotePayload {
   summary?: string;
   urgent_flag?: boolean;
+}
+
+// An admin gave a dose inside the minimum interval (issue #7): amber so nobody misses it.
+function isIntervalOverride(event: SSEEvent): boolean {
+  return event.type === "MED_LOGGED" && !!(event.payload as MedPayload | undefined)?.interval_override;
 }
 
 function isCrisis(event: SSEEvent): boolean {
@@ -92,8 +99,9 @@ export function SseToast() {
     case "MED_LOGGED": {
       const p = (event.payload || {}) as MedPayload;
       Icon = Pill;
-      actionText =
-        p.status === "skipped"
+      actionText = p.interval_override
+        ? locale === "ar" ? `أعطى جرعة قبل موعدها المسموح: ${p.override_reason || ""}` : `gave a dose inside the minimum interval: ${p.override_reason || ""}`
+        : p.status === "skipped"
           ? locale === "ar" ? "سجّل تخطي جرعة" : "skipped a dose"
           : locale === "ar" ? "أعطى جرعة" : "gave a dose";
       const name = locale === "ar" ? p.name_ar || p.name_en : p.name_en || p.name_ar;
@@ -149,7 +157,11 @@ export function SseToast() {
     >
       <div
         className={`rounded-2xl border p-3 text-white shadow-xl backdrop-blur-md ${
-          crisis ? "border-rose-300 bg-rose-700" : "border-emerald-500/30 bg-slate-900/95"
+          crisis
+            ? "border-rose-300 bg-rose-700"
+            : isIntervalOverride(event)
+              ? "border-amber-300 bg-amber-700"
+              : "border-emerald-500/30 bg-slate-900/95"
         }`}
       >
         <div className="flex items-center gap-3">
@@ -163,9 +175,9 @@ export function SseToast() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-bold truncate">{actor.name}</span>
-              <Icon className={`h-4 w-4 shrink-0 ${crisis ? "text-white animate-pulse" : "text-emerald-400"}`} />
+              <Icon className={`h-4 w-4 shrink-0 ${crisis ? "text-white animate-pulse" : isIntervalOverride(event) ? "text-white" : "text-emerald-400"}`} />
             </div>
-            <p className={`text-xs ${crisis ? "font-bold text-white" : "text-slate-300"}`}>{actionText}</p>
+            <p className={`text-xs ${crisis || isIntervalOverride(event) ? "font-bold text-white" : "text-slate-300"}`}>{actionText}</p>
             {detail && <p className="mt-0.5 text-sm font-semibold line-clamp-2">{detail}</p>}
           </div>
 

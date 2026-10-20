@@ -187,3 +187,27 @@ export function lookupInsulinScale(scale: { min: number; max: number; units: num
   const row = scale.find((r) => sugar >= r.min && sugar < r.max);
   return row ? row.units : null;
 }
+
+/**
+ * Automatic minimum gap between two doses when the doctor gave none: ¾ of the
+ * shortest gap between the medication's scheduled times (once daily → 18 h,
+ * 08:00 + 20:00 → 9 h). Mirrors intervalHours() in the Go backend.
+ */
+export function autoIntervalHours(slots: string[], times: Record<string, string>): number {
+  const mins = [...new Set(
+    slots
+      .map((s) => times[s])
+      .filter(Boolean)
+      .map((t) => {
+        const [h, m] = t.split(":").map(Number);
+        return h * 60 + m;
+      })
+      .filter((n) => !isNaN(n))
+  )].sort((a, b) => a - b);
+  let gap = 24 * 60;
+  mins.forEach((v, i) => {
+    const next = i === mins.length - 1 ? mins[0] + 24 * 60 : mins[i + 1];
+    if (next - v > 0 && next - v < gap) gap = next - v;
+  });
+  return Math.round(((gap * 0.75) / 60) * 100) / 100;
+}

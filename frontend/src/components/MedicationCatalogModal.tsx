@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { Medication } from "@/lib/types";
 import { canManageMedications } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { autoIntervalHours } from "@/lib/clinical";
 import {
   X,
   Pill,
@@ -75,6 +76,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [imageUrl, setImageUrl] = useState("/meds/pill-default.svg");
   const [selectedSlots, setSelectedSlots] = useState<string[]>(["morning"]);
   const [daysOfWeek, setDaysOfWeek] = useState<string[]>(ALL_DAY_IDS);
+  // Doctor's minimum hours between doses; "" = automatic.
+  const [minHours, setMinHours] = useState("");
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
     morning: "08:00",
     afternoon: "14:00",
@@ -113,6 +116,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setImageUrl("/meds/pill-default.svg");
     setSelectedSlots(["morning"]);
     setDaysOfWeek(ALL_DAY_IDS);
+    setMinHours("");
     setSlotTimes({
       morning: "08:00",
       afternoon: "14:00",
@@ -130,6 +134,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstAr(med.instructions_ar || "");
     setInstEn(med.instructions_en || "");
     setImageUrl(med.image_url || "/meds/pill-default.svg");
+    setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setSelectedSlots(med.frequency_slots || ["morning"]);
     setDaysOfWeek(med.days_of_week && med.days_of_week.length > 0 ? med.days_of_week : ALL_DAY_IDS);
     const times: Record<string, string> = {};
@@ -180,6 +185,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             days_of_week: daysOfWeek,
             slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
+            min_hours_between: minHours.trim() === "" ? null : Number(minHours),
           }),
         });
       } else {
@@ -196,6 +202,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             days_of_week: daysOfWeek,
             slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
+            min_hours_between: minHours.trim() === "" ? null : Number(minHours),
           }),
         });
       }
@@ -411,6 +418,30 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     );
                   })}
                 </div>
+              </div>
+
+              {/* MINIMUM INTERVAL (cross-midnight double-dose lock) */}
+              <div className="mb-4">
+                <label htmlFor="min-hours" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {locale === "ar" ? "أقل عدد ساعات بين جرعتين (حسب الطبيب)" : "Minimum hours between two doses (doctor's value)"}
+                </label>
+                <input
+                  id="min-hours"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  max={72}
+                  step={0.5}
+                  value={minHours}
+                  onChange={(e) => setMinHours(e.target.value)}
+                  placeholder={String(autoIntervalHours(selectedSlots, slotTimes))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {locale === "ar"
+                    ? `اتركه فارغاً للحساب التلقائي (${autoIntervalHours(selectedSlots, slotTimes)} ساعة لهذا الجدول). 0 يلغي القفل.`
+                    : `Leave empty for automatic (${autoIntervalHours(selectedSlots, slotTimes)} h for this schedule). 0 turns the lock off.`}
+                </p>
               </div>
 
               {/* DAYS OF WEEK SELECTION */}
