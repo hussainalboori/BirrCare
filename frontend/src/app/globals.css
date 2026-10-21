@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Issue #21: dark mode follows a class on <html> (set from the theme cookie, or
+   by the Auto script before first paint), not only the system setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Tailwind's font-sans (used on <body>) follows the page language: Tajawal first
    for Arabic, Inter first for English. */
 @theme inline {
@@ -11,6 +15,134 @@
   font-family: var(--app-font);
   --background: #f8fafc;
   --foreground: #0f172a;
+}
+
+/* Issue #21: Night, for a dark sickroom. True black, nothing brighter than grey
+   text (luminance <= 0.4), every colour dimmed but keeping its meaning (green
+   still means normal, orange still means high BP). Shades 50-400 are text
+   colours in dark mode, 500-700 button fills, 800-950 tinted backgrounds. Red and rose, which mark a
+   crisis, are left untouched: the only bright colour on the screen. */
+.night {
+  color-scheme: dark;
+  --background: #000000;
+  --foreground: #a3a3a3;
+  --color-white: #a3a3a3;
+  --color-black: #000000;
+  --color-emerald-50: #4f9a77;
+  --color-emerald-100: #4f9a77;
+  --color-emerald-200: #4f9a77;
+  --color-emerald-300: #4f9a77;
+  --color-emerald-400: #4f9a77;
+  --color-emerald-500: #123d2b;
+  --color-emerald-600: #123d2b;
+  --color-emerald-700: #123d2b;
+  --color-emerald-800: #06140e;
+  --color-emerald-900: #06140e;
+  --color-emerald-950: #06140e;
+  --color-green-50: #4f9a77;
+  --color-green-100: #4f9a77;
+  --color-green-200: #4f9a77;
+  --color-green-300: #4f9a77;
+  --color-green-400: #4f9a77;
+  --color-green-500: #123d2b;
+  --color-green-600: #123d2b;
+  --color-green-700: #123d2b;
+  --color-green-800: #06140e;
+  --color-green-900: #06140e;
+  --color-green-950: #06140e;
+  --color-amber-50: #c2700f;
+  --color-amber-100: #c2700f;
+  --color-amber-200: #c2700f;
+  --color-amber-300: #c2700f;
+  --color-amber-400: #c2700f;
+  --color-amber-500: #4d2a05;
+  --color-amber-600: #4d2a05;
+  --color-amber-700: #4d2a05;
+  --color-amber-800: #140b02;
+  --color-amber-900: #140b02;
+  --color-amber-950: #140b02;
+  --color-orange-50: #cc6a24;
+  --color-orange-100: #cc6a24;
+  --color-orange-200: #cc6a24;
+  --color-orange-300: #cc6a24;
+  --color-orange-400: #cc6a24;
+  --color-orange-500: #4d2208;
+  --color-orange-600: #4d2208;
+  --color-orange-700: #4d2208;
+  --color-orange-800: #150a03;
+  --color-orange-900: #150a03;
+  --color-orange-950: #150a03;
+  --color-yellow-50: #b59a1a;
+  --color-yellow-100: #b59a1a;
+  --color-yellow-200: #b59a1a;
+  --color-yellow-300: #b59a1a;
+  --color-yellow-400: #b59a1a;
+  --color-yellow-500: #3d3405;
+  --color-yellow-600: #3d3405;
+  --color-yellow-700: #3d3405;
+  --color-yellow-800: #121003;
+  --color-yellow-900: #121003;
+  --color-yellow-950: #121003;
+  --color-blue-50: #7d98c8;
+  --color-blue-100: #7d98c8;
+  --color-blue-200: #7d98c8;
+  --color-blue-300: #7d98c8;
+  --color-blue-400: #7d98c8;
+  --color-blue-500: #1b2a4a;
+  --color-blue-600: #1b2a4a;
+  --color-blue-700: #1b2a4a;
+  --color-blue-800: #070c16;
+  --color-blue-900: #070c16;
+  --color-blue-950: #070c16;
+  --color-sky-50: #6fa3c2;
+  --color-sky-100: #6fa3c2;
+  --color-sky-200: #6fa3c2;
+  --color-sky-300: #6fa3c2;
+  --color-sky-400: #6fa3c2;
+  --color-sky-500: #123447;
+  --color-sky-600: #123447;
+  --color-sky-700: #123447;
+  --color-sky-800: #050f15;
+  --color-sky-900: #050f15;
+  --color-sky-950: #050f15;
+  --color-purple-50: #a088c8;
+  --color-purple-100: #a088c8;
+  --color-purple-200: #a088c8;
+  --color-purple-300: #a088c8;
+  --color-purple-400: #a088c8;
+  --color-purple-500: #2f1f4d;
+  --color-purple-600: #2f1f4d;
+  --color-purple-700: #2f1f4d;
+  --color-purple-800: #0e0916;
+  --color-purple-900: #0e0916;
+  --color-purple-950: #0e0916;
+  --color-slate-50: #a3a3a3;
+  --color-slate-100: #a3a3a3;
+  --color-slate-200: #a3a3a3;
+  --color-slate-300: #999999;
+  --color-slate-400: #8f8f8f;
+  --color-slate-500: #858585;
+  --color-slate-600: #6b6b6b;
+  --color-slate-700: #262626;
+  --color-slate-800: #171717;
+  --color-slate-900: #0a0a0a;
+  --color-slate-950: #000000;
+}
+
+/* Crisis UI keeps true white text on red (a red background marks it, or
+   data-crisis), and keeps blinking. Everything else is still at night. */
+.night :is([class*="bg-rose-500"], [class*="bg-rose-600"], [class*="bg-rose-700"], [class*="bg-rose-800"], [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"], [class*="bg-red-800"], [data-crisis]) {
+  --color-white: #ffffff;
+}
+.night :is(.animate-pulse, .animate-ping, .animate-bounce):not(:is([class*="bg-rose-500"], [class*="bg-rose-600"], [class*="bg-rose-700"], [class*="bg-rose-800"], [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"], [class*="bg-red-800"], [data-crisis]), :is([class*="bg-rose-500"], [class*="bg-rose-600"], [class*="bg-rose-700"], [class*="bg-rose-800"], [class*="bg-red-500"], [class*="bg-red-600"], [class*="bg-red-700"], [class*="bg-red-800"], [data-crisis]) *) {
+  animation: none;
+}
+
+/* Images (medicine photos) and each person's own avatar / shift colour (set
+   inline) are dimmed so they don't light up the room. */
+.night img,
+.night [style*="background-color"]:not([data-crisis]) {
+  filter: brightness(0.6);
 }
 
 [dir="ltr"] {

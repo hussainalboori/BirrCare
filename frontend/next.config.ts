@@ -13,8 +13,9 @@ function apiOrigin(): string {
 }
 
 // 'unsafe-inline' scripts: App Router streams inline bootstrap scripts, and nonces
-// would force every page to render dynamically. No XSS sink (no
-// dangerouslySetInnerHTML) exists; frame-ancestors is the main win here.
+// would force every page to render dynamically. The only dangerouslySetInnerHTML
+// is the constant pre-paint theme script (lib/theme.ts THEME_SCRIPT), with no
+// user data in it; frame-ancestors is the main win here.
 const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,

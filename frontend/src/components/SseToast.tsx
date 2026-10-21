@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { SSEEvent } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
@@ -82,9 +83,7 @@ export function SseToast() {
       if (!crisis) timerRef.current = setTimeout(() => setToast(null), urgentNote || amber ? 15000 : 6000);
 
       playAlert(crisis ? "crisis" : "chime");
-      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-        navigator.vibrate?.(crisis ? [400, 150, 400, 150, 400] : amber ? [200, 100, 200] : 60);
-      }
+      haptic(crisis ? [400, 150, 400, 150, 400] : amber ? [200, 100, 200] : 60, { crisis });
     };
 
     window.addEventListener("birrcare:sse_event", handleEvent);

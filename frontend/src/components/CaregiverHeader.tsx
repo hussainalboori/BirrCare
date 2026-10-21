@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
 import { useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ import { ScheduleManagementModal } from "./ScheduleManagementModal";
 import { ShiftManagementModal } from "./ShiftManagementModal";
 import { ChangePinModal } from "./ChangePinModal";
 import { TwoFactorModal } from "./TwoFactorModal";
+import { ThemePicker, themeLabel, useThemeMode } from "./ThemePicker";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -32,6 +33,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isTwoFactorOpen, setIsTwoFactorOpen] = useState(false);
+  const [isThemeOpen, setIsThemeOpen] = useState(false);
+  const themeMode = useThemeMode();
 
   const role = currentCaregiver?.role || "caregiver";
   const roleMeta = ROLE_METAS[role] || ROLE_METAS.caregiver;
@@ -109,6 +112,15 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           onClick: () => router.push("/emergency-qr"),
         }]
       : []),
+    {
+      key: "theme",
+      icon: Moon,
+      label: ar ? "ألوان الشاشة" : "Screen colours",
+      short: themeLabel(themeMode, ar),
+      hint: themeLabel(themeMode, ar),
+      tone: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
+      onClick: () => setIsThemeOpen(true),
+    },
     { key: "lang", icon: Globe, label: ar ? "English" : "العربية", short: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },
   ];
 
@@ -279,6 +291,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
       <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
       <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
+      <ThemePicker isOpen={isThemeOpen} onClose={() => setIsThemeOpen(false)} />
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (

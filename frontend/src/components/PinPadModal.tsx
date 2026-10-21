@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useState, useEffect } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
@@ -40,9 +41,7 @@ export function PinPadModal() {
 
   const handleDigit = (digit: string) => {
     if (pin.length >= 4 || isSubmitting) return;
-    if (typeof window !== "undefined" && "vibrate" in navigator) {
-      navigator.vibrate?.(35);
-    }
+    haptic(35);
     const newPin = pin + digit;
     setPin(newPin);
     setError("");
@@ -54,9 +53,7 @@ export function PinPadModal() {
 
   const handleDelete = () => {
     if (pin.length > 0 && !isSubmitting) {
-      if (typeof window !== "undefined" && "vibrate" in navigator) {
-        navigator.vibrate?.(25);
-      }
+      haptic(25);
       setPin(pin.slice(0, -1));
       setError("");
     }
@@ -91,9 +88,7 @@ export function PinPadModal() {
       } else {
         setError(t.incorrectPin);
       }
-      if (typeof window !== "undefined" && "vibrate" in navigator) {
-        navigator.vibrate?.([60, 50, 60]);
-      }
+      haptic([60, 50, 60]);
       setPin("");
     }
   };

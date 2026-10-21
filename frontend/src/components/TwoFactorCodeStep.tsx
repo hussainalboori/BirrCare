@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
@@ -44,7 +45,7 @@ export function TwoFactorCodeStep({ challenge, onBack }: Props) {
       setError(ar ? "الرمز غير صحيح، استخدم أحدث رمز في التطبيق" : "Incorrect code, use the newest code in the app");
     }
     setCode("");
-    if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.([60, 50, 60]);
+    haptic([60, 50, 60]);
   };
 
   const onChange = (value: string) => {

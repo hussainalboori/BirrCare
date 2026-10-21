@@ -1,3 +1,5 @@
+import { isNight } from "@/lib/theme";
+
 /**
  * Audible cues for live sibling updates.
  *
@@ -51,6 +53,8 @@ function tone(c: AudioContext, freq: number, start: number, duration: number, vo
 
 /** "chime": soft two-note cue for a routine update. "crisis": loud repeating alarm. */
 export function playAlert(kind: "chime" | "crisis") {
+  // Night (issue #21): no chimes in a sleeping room. A crisis always sounds.
+  if (kind === "chime" && isNight()) return;
   const c = getContext();
   if (!c || c.state !== "running") return;
   const now = c.currentTime;

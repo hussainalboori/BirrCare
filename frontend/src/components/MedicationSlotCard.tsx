@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { MedicationLog, ScheduledDose } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
@@ -217,9 +218,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
     setConflictError(null);
 
     // Haptic feedback
-    if (typeof window !== "undefined" && "vibrate" in navigator) {
-      navigator.vibrate?.(40);
-    }
+    haptic(40);
 
     const doseBody = {
       medication_id: medication.id,
@@ -271,9 +270,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
       } else if (err.data?.error === "DOSE_TOO_SOON") {
         // Same medication given recently on another card (e.g. last night's bedtime dose).
         setTooSoon({ takenAt: err.data.last_taken_at, by: err.data.caregiver_name, nextAllowedAt: err.data.next_allowed_at });
-        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-          navigator.vibrate?.([60, 50, 60]);
-        }
+        haptic([60, 50, 60]);
         onLoggedSuccess?.();
       } else if (err.status === 409 || err.data?.error === "DOSE_ALREADY_LOGGED") {
         // 409 Conflict: Double-Dosing Lock caught by backend!
@@ -292,9 +289,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           })
         );
         setConflictError(`${t.doubleDoseAlert} ${t.givenBy} ${who}${when ? ` ${t.atTime} ${when}` : ""}`);
-        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-          navigator.vibrate?.([60, 50, 60]);
-        }
+        haptic([60, 50, 60]);
         onLoggedSuccess?.();
       } else if (opts.override && (err.status === 403 || err.data?.error === "REASON_REQUIRED")) {
         alert(ar ? "اكتب سبب إعطاء الجرعة (مثلاً تعليمات الطبيب)" : "Write the reason for this dose (e.g. the doctor's instruction)");

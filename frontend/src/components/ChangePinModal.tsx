@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useEffect, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { fetchApi } from "@/lib/api";
@@ -41,7 +42,7 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
   if (!isOpen) return null;
 
   const buzz = (pattern: number | number[]) => {
-    if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(pattern);
+    haptic(pattern);
   };
 
   const fail = (message: string, backTo: Step) => {

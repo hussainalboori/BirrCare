@@ -12,6 +12,8 @@ import { SharedDeviceGuard } from "@/components/SharedDeviceGuard";
 import { EmergencyCardKeeper } from "@/components/EmergencyCardKeeper";
 import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
+import { ThemeKeeper } from "@/components/ThemePicker";
+import { THEME_COLORS, THEME_COOKIE, THEME_SCRIPT, parseThemeMode, themeClasses } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "رعاية بر — Birrcare | Family Care Coordination",
@@ -24,14 +26,18 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  // Pinch-zoom stays enabled (WCAG 1.4.4); iOS focus-zoom is avoided by >=16px form controls.
-  viewportFit: "cover",
-  interactiveWidget: "resizes-content",
-  themeColor: "#059669",
-};
+export async function generateViewport(): Promise<Viewport> {
+  const mode = parseThemeMode((await cookies()).get(THEME_COOKIE)?.value);
+  return {
+    width: "device-width",
+    initialScale: 1,
+    // Pinch-zoom stays enabled (WCAG 1.4.4); iOS focus-zoom is avoided by >=16px form controls.
+    viewportFit: "cover",
+    interactiveWidget: "resizes-content",
+    // Night: a black status bar too. Auto is corrected by the pre-paint script.
+    themeColor: mode === "auto" ? THEME_COLORS.light : THEME_COLORS[mode],
+  };
+}
 
 export default async function RootLayout({
   children,
@@ -43,9 +49,18 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const locale: Locale = cookieStore.get(LOCALE_COOKIE)?.value === "en" ? "en" : "ar";
   const dir = locale === "ar" ? "rtl" : "ltr";
+  // Issue #21: an explicit Light/Dark/Night choice is rendered by the server, so
+  // the first paint is already black at night. Auto depends on this phone's clock
+  // and is applied by THEME_SCRIPT in <head>, before the body paints.
+  const themeMode = parseThemeMode(cookieStore.get(THEME_COOKIE)?.value);
+  const themeClass = themeMode === "auto" ? undefined : themeClasses(themeMode) || undefined;
 
   return (
-    <html lang={locale} dir={dir}>
+    <html lang={locale} dir={dir} className={themeClass} suppressHydrationWarning>
+      <head>
+        {/* A constant string (no user data): see THEME_SCRIPT in lib/theme.ts */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+var(--outbox-h,0px)+env(safe-area-inset-bottom))]">
         <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
@@ -55,6 +70,7 @@ export default async function RootLayout({
             <OutboxBar />
             <SharedDeviceGuard />
             <EmergencyCardKeeper />
+            <ThemeKeeper />
             <PinPadModal />
             {children}
             <Navigation />

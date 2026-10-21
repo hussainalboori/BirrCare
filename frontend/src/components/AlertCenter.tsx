@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
@@ -50,8 +51,9 @@ export function AlertCenter() {
     const fresh = list.filter((a) => !announced.current.has(a.id));
     if (fresh.length) {
       fresh.forEach((a) => announced.current.add(a.id));
-      playAlert(fresh.every((a) => DUTY_KINDS.has(a.kind)) ? "chime" : "crisis");
-      if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.([400, 150, 400, 150, 400]);
+      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock");
+      playAlert(quiet ? "chime" : "crisis");
+      haptic([400, 150, 400, 150, 400], { crisis: !quiet });
     }
   }, [me]);
 

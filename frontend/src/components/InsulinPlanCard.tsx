@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { InsulinPlanStatus, InsulinLog } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
@@ -98,7 +99,7 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
           ...body,
         }),
       });
-      if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(40);
+      haptic(40);
       setDone(
         body.status === "given"
           ? ar ? `تم تسجيل ${fmtUnits(body.units || 0)} وحدة` : `Recorded ${fmtUnits(body.units || 0)} units`
