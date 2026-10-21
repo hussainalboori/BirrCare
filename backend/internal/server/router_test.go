@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
 	"birrcare/backend/internal/handlers"
@@ -821,3 +822,28 @@ func TestAuditVerifyRoute(t *testing.T) {
 	}
 }
 
+
+// An emergency card view (anonymous, no caregiver) joins the audit hash chain.
+func TestEmergencyCardViewKeepsAuditChainValid(t *testing.T) {
+	srv, database, _ := setup(t, prodCfg, time.Minute)
+	r := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_ali", "pin": "1234"}, nil)
+	var admin *http.Cookie
+	for _, c := range r.Cookies() {
+		if c.Name == auth.SessionCookieName {
+			admin = c
+		}
+	}
+	var out map[string]string
+	json.NewDecoder(do(t, "POST", srv.URL+"/api/v1/patient/emergency-link", nil, nil, admin).Body).Decode(&out)
+	if code := do(t, "GET", srv.URL+"/api/v1/emergency/"+out["token"], nil, map[string]string{"Cf-Connecting-Ip": "198.51.100.9"}).StatusCode; code != http.StatusOK {
+		t.Fatalf("card: %d", code)
+	}
+	var anon int
+	_ = database.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action = 'EMERGENCY_CARD_VIEWED' AND caregiver_id IS NULL AND row_hash IS NOT NULL`).Scan(&anon)
+	if anon != 1 {
+		t.Fatalf("want one hashed anonymous view, got %d", anon)
+	}
+	if res, err := audit.Verify(database); err != nil || !res.Valid {
+		t.Fatalf("chain broken after an emergency card view: %+v %v", res, err)
+	}
+}

@@ -33,7 +33,27 @@ func ComputeHash(prevHash, id, caregiverID, action, entityID, details, createdAt
 
 // Record writes an audit log entry with deterministic hash chaining and returns any
 // error, so callers can make the audit row part of the same atomic transaction as the clinical write.
+//
+// Reading the last hash and inserting the new row must not interleave with another
+// writer, or two rows chain from the same parent and the chain looks tampered. A
+// *sql.Tx already holds the single pooled connection; a bare *sql.DB gets its own
+// short transaction here.
 func Record(database DBTX, caregiverID, action, entityType, entityID, details string) error {
+	if db, ok := database.(*sql.DB); ok {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed starting audit transaction: %w", err)
+		}
+		if err := record(tx, caregiverID, action, entityType, entityID, details); err != nil {
+			tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+	return record(database, caregiverID, action, entityType, entityID, details)
+}
+
+func record(database DBTX, caregiverID, action, entityType, entityID, details string) error {
 	id := uuid.New().String()
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 

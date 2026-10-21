@@ -438,6 +438,7 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	var operatorResetID string
 	// Break-glass: an operator with server access can clear 2FA for a caregiver who
 	// lost both their phone and recovery codes (DISABLE_2FA_FOR=<caregiver id>).
 	if id := strings.TrimSpace(os.Getenv("DISABLE_2FA_FOR")); id != "" {
@@ -446,7 +447,8 @@ func Migrate(database *sql.DB) error {
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				log.Printf("[SECURITY] Two-factor authentication DISABLED for %s via DISABLE_2FA_FOR. Remove the variable and restart.", id)
-				_, _ = database.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details) VALUES (lower(hex(randomblob(16))), NULL, '2FA_RESET_BY_OPERATOR', 'caregiver', ?, 'DISABLE_2FA_FOR')`, id)
+				// Audited below, through audit.Record, once the hash-chain columns exist.
+				operatorResetID = id
 			}
 		}
 	}
@@ -817,39 +819,38 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
-	// Backfill hashes for any legacy audit rows that lack a hash chain.
-	var unhashedCount int
-	_ = database.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE row_hash IS NULL").Scan(&unhashedCount)
-	if unhashedCount > 0 {
+	// Backfill hashes for legacy audit rows, once: before the append-only trigger
+	// exists. After that an unhashed row can't be patched (the trigger refuses it,
+	// which would stop the backend from starting); /audit/verify reports it instead.
+	var appendOnly int
+	_ = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='audit_no_update'").Scan(&appendOnly)
+	if appendOnly == 0 {
+		type legacyRow struct {
+			rowid                                                             int64
+			id, caregiverID, action, entityType, entityID, details, createdAt string
+		}
+		// Read every row and close the cursor before the next query: the pool has a
+		// single connection, so querying with the cursor open would hang the boot.
 		rows, err := database.Query("SELECT rowid, id, COALESCE(caregiver_id, ''), action, entity_type, COALESCE(entity_id, ''), COALESCE(details, ''), COALESCE(created_at, datetime('now')) FROM audit_logs WHERE row_hash IS NULL ORDER BY rowid ASC")
 		if err != nil {
 			return fmt.Errorf("failed querying unhashed audit logs: %w", err)
-		}
-		defer rows.Close()
-
-		var prevHash string
-		_ = database.QueryRow("SELECT row_hash FROM audit_logs WHERE row_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1").Scan(&prevHash)
-
-		type legacyRow struct {
-			rowid       int64
-			id          string
-			caregiverID string
-			action      string
-			entityType  string
-			entityID    string
-			details     string
-			createdAt   string
 		}
 		var legacy []legacyRow
 		for rows.Next() {
 			var lr legacyRow
 			if err := rows.Scan(&lr.rowid, &lr.id, &lr.caregiverID, &lr.action, &lr.entityType, &lr.entityID, &lr.details, &lr.createdAt); err != nil {
+				rows.Close()
 				return fmt.Errorf("failed scanning unhashed audit row: %w", err)
 			}
 			legacy = append(legacy, lr)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("failed reading unhashed audit logs: %w", err)
+		}
 
+		var prevHash string
+		_ = database.QueryRow("SELECT row_hash FROM audit_logs WHERE row_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1").Scan(&prevHash)
 		for _, lr := range legacy {
 			rowHash := audit.ComputeHash(prevHash, lr.id, lr.caregiverID, lr.action, lr.entityID, lr.details, lr.createdAt)
 			if _, err := database.Exec("UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE rowid = ?", prevHash, rowHash, lr.rowid); err != nil {
@@ -888,6 +889,11 @@ func Migrate(database *sql.DB) error {
 		BEGIN SELECT RAISE(ABORT, 'vitals logs cannot be deleted: post a correction instead'); END;
 	`); err != nil {
 		return fmt.Errorf("failed creating immutability triggers: %w", err)
+	}
+	if operatorResetID != "" {
+		if err := audit.Record(database, "", "2FA_RESET_BY_OPERATOR", "caregiver", operatorResetID, "DISABLE_2FA_FOR"); err != nil {
+			return fmt.Errorf("failed auditing the operator 2FA reset: %w", err)
+		}
 	}
 
 	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.
