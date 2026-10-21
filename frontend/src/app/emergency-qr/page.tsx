@@ -101,7 +101,7 @@ export default function EmergencyQrPage() {
       <span className="mb-1 block text-sm font-bold text-slate-700 dark:text-slate-200">{label}</span>
       {opts.long ? (
         <textarea
-          rows={2}
+          rows={4}
           dir={opts.dir}
           value={profile[key]}
           onChange={(e) => setProfile((p) => ({ ...p, [key]: e.target.value }))}

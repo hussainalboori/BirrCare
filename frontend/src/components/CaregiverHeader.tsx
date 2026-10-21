@@ -277,14 +277,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           {/* One row: name, then (from 1760px, where even the Super Admin's full set fits) every labelled action and
               Switch. Below that the actions live in the labelled Menu sheet. */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <div className="hidden min-[1760px]:flex items-center gap-1.5">
+            <div className="hidden min-[1760px]:flex items-center gap-1">
               {actions.map((a) => (
                 <button
                   key={a.key}
                   type="button"
                   onClick={a.onClick}
                   title={a.label}
-                  className={`flex min-h-12 items-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
+                  className={`flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
                 >
                   <a.icon className="h-4 w-4 shrink-0" />
                   <span className="whitespace-nowrap">{a.short}</span>

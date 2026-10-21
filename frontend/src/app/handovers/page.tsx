@@ -249,12 +249,12 @@ export default function HandoversPage() {
             {/* Optional free text, typed or spoken */}
             <div className="mb-4">
               <textarea
-                rows={2}
+                rows={4}
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 placeholder={ar ? "شيء آخر؟ (اختياري)" : "Anything else? (optional)"}
                 aria-label={ar ? "ملاحظة إضافية" : "Extra note"}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
               <div className="mt-2 flex justify-end">
                 <VoiceNoteButton ar={ar} onText={(text) => setSummary((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />

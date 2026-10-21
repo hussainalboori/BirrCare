@@ -766,7 +766,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                       <textarea
                         value={overrideReason}
                         onChange={(e) => setOverrideReason(e.target.value)}
-                        rows={2}
+                        rows={4}
                         maxLength={500}
                         placeholder={ar ? "مثلاً: الطبيب طلب جرعة إضافية" : "e.g. the doctor ordered an extra dose"}
                         className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2 text-base font-normal text-slate-900 dark:border-amber-800 dark:bg-slate-900 dark:text-white"

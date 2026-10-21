@@ -918,7 +918,7 @@ export default function VitalsPage() {
                         {t.notesOptional}
                       </label>
                       <textarea
-                        rows={2}
+                        rows={4}
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder={
@@ -938,7 +938,7 @@ export default function VitalsPage() {
                             ? "أي ملاحظات إضافية..."
                             : "Any clinical observations..."
                         }
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-base text-slate-900 focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
                       />
                     </div>
 

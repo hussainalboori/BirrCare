@@ -66,7 +66,7 @@ test("Ate half + Needs rest + Pass to Fatima + Send: 4 taps, under 15 s; Fatima 
   const shared: Shared = { notes: [], passes: [], accepted: [], queues: new Map() };
   const hussain = await phone(await browser.newContext(), baseURL!, "c1", shared);
   const fatima = await phone(await browser.newContext(), baseURL!, "c2", shared);
-  await fatima.goto("/");
+  await fatima.goto("/report");
   await hussain.goto("/handovers");
   const form = hussain.getByTestId("handover-form");
   await expect(form.getByRole("button", { name: "To Fatima" })).toBeVisible();

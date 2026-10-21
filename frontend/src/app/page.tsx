@@ -1,15 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { PushOptIn } from "@/components/PushOptIn";
 import { SiblingBar } from "@/components/SiblingBar";
-import { LastHandover } from "@/components/LastHandover";
 import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
-import { RepositionCard } from "@/components/RepositionCard";
 import { PRNSection } from "@/components/PRNSection";
-import { FluidBowelCard } from "@/components/FluidBowelCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
@@ -115,14 +111,9 @@ export default function MedicationsPage() {
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         <SiblingBar className="mb-4" />
-        <LastHandover />
         <LowStockCards />
-        <PushOptIn />
-        {/* Issue #27: Repositioning card to prevent pressure sores */}
-        <RepositionCard />
-        {/* Issue #28: Fluid intake and bowel movement tracking */}
-        <FluidBowelCard />
-        {/* Issue #13: one tap to the F.A.S.T. stroke check */}
+        {/* Handover, repositioning, fluids and alerts live on the Report page. */}
+        {/* Issue #13: one tap to the F.A.S.T. stroke check, so it stays here */}
         <Link
           href="/fast"
           data-testid="seems-off"

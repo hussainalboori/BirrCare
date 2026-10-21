@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/context/LanguageContext";
-import { Pill, Activity, ClipboardList, FileSpreadsheet, Syringe, HeartPulse } from "lucide-react";
+import { Pill, Activity, ClipboardList, ClipboardCheck, FileSpreadsheet, Syringe, HeartPulse } from "lucide-react";
 
 export function Navigation() {
   const pathname = usePathname();
@@ -16,6 +16,12 @@ export function Navigation() {
       label: t.navMeds,
       icon: Pill,
       active: pathname === "/",
+    },
+    {
+      href: "/report",
+      label: locale === "ar" ? "التقرير" : "Report",
+      icon: ClipboardCheck,
+      active: pathname.startsWith("/report"),
     },
     {
       href: "/vitals",
@@ -44,9 +50,11 @@ export function Navigation() {
   ];
 
   // Every item has the same box: a 32px icon tile on top and a two-line label area,
-  // in six equal columns, so icons and labels line up whether a label wraps or not.
-  const itemClass = "flex min-h-14 min-w-0 flex-col items-center justify-start gap-1 rounded-2xl px-0.5 pt-1.5 pb-1 active:scale-95";
-  const labelClass = "line-clamp-2 min-h-[2.4em] w-full text-center text-xs leading-[1.2]";
+  // in seven equal columns, so icons and labels line up whether a label wraps or not.
+  // Labels are never clipped: at 375px a long Arabic word ("المؤشرات") may run a
+  // pixel or two into the gap rather than lose a letter.
+  const itemClass = "flex min-h-14 min-w-0 flex-col items-center justify-start gap-1 rounded-2xl pt-1.5 pb-1 active:scale-95";
+  const labelClass = "min-h-[2.4em] w-full text-center text-xs leading-[1.2]";
 
   // Quick BP (issue #11): straight to the two blood-pressure fields from any page.
   const quickBP = (
@@ -70,11 +78,11 @@ export function Navigation() {
 
   return (
     <nav className="fixed bottom-0 start-0 end-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 pb-safe">
-      <div className="mx-auto grid max-w-lg grid-cols-6 items-start gap-0.5 px-1 py-1.5">
+      <div className="mx-auto grid max-w-xl grid-cols-7 items-start gap-px px-0.5 py-1.5">
         {links.flatMap((link, i) => {
           const Icon = link.icon;
           return [
-            i === 2 ? quickBP : null,
+            i === 3 ? quickBP : null,
             <Link
               key={link.href}
               href={link.href}

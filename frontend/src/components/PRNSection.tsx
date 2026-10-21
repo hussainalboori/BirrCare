@@ -535,7 +535,7 @@ export function PRNSection() {
                     </span>
                   </div>
                   <textarea
-                    rows={2}
+                    rows={4}
                     value={overrideReason}
                     onChange={(e) => setOverrideReason(e.target.value)}
                     placeholder={locale === "ar" ? "اكتب سبب إعطاء الجرعة رغم القفل (مثال: أمر هاتفي من الطبيب المعالج)..." : "Explain why dose is given despite lock (e.g. physician order)..."}

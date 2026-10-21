@@ -37,7 +37,7 @@ async function phone(context: BrowserContext, baseURL: string, shared: Shared, m
     if (path.startsWith("/medications/schedule")) return json({ date: "2026-10-21", schedule: [] });
     return json([]);
   });
-  await page.goto("/");
+  await page.goto("/report");
   return page;
 }
 
