@@ -117,7 +117,14 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now().UTC()
 
-	_, err = h.DB.Exec(`
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO handover_notes (id, caregiver_id, created_at, shift_type, summary, urgent_flag, client_request_id, tags)
 		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)
 	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal, nullIfEmpty(req.ClientRequestID), tagsJSON(tags))
@@ -130,8 +137,16 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "NOTE_ADDED", "handover_note", id,
-		fmt.Sprintf("Handover (%s, urgent=%t, tags=%v): %s", req.ShiftType, req.UrgentFlag, tags, req.Summary))
+	auditDetail := fmt.Sprintf("Handover (%s, urgent=%t, tags=%v): %s", req.ShiftType, req.UrgentFlag, tags, req.Summary)
+	if err := audit.Record(tx, caregiver.ID, "NOTE_ADDED", "handover_note", id, auditDetail); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to create handover", err)
+		return
+	}
 
 	// Broadcast SSE event
 	h.Broker.Broadcast("NOTE_ADDED", models.ActorInfo{

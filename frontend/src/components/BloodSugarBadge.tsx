@@ -39,13 +39,13 @@ export function BloodSugarBadge({ sugar, timing = "random", showDetails = false 
         </div>
 
         {timing && (
-          <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-sm">
+          <span className="text-xs font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
             {timingLabels[timing]}
           </span>
         )}
 
         <span
-          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${meta.badgeClass}`}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-sm font-bold ${meta.badgeClass}`}
         >
           {isAlert ? (
             <AlertTriangle className="h-3.5 w-3.5 animate-bounce" />

@@ -167,7 +167,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
 
             <div className="flex min-w-0 flex-col">
-              <span className="hidden truncate text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:block">
+              <span className="hidden truncate text-xs font-medium text-slate-500 dark:text-slate-400 sm:block">
                 {t.activeCaregiver}
               </span>
               <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-1.5">
@@ -177,7 +177,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
                 {/* Role Badge */}
                 <span
-                  className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-md text-[10px] font-bold border ${roleMeta.badgeClass}`}
+                  className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-md text-xs font-bold border ${roleMeta.badgeClass}`}
                 >
                   {role === "super_admin" ? (
                     <ShieldAlert className="h-3 w-3" />
@@ -217,7 +217,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               <a
                 href={emergencyPath(emergencyToken)}
                 data-testid="sos"
-                className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-rose-700 px-1.5 text-[11px] font-black text-white active:scale-95 sm:flex-row sm:gap-1 sm:px-2.5 sm:text-xs"
+                className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-rose-700 px-1.5 text-xs font-black text-white active:scale-95 sm:flex-row sm:gap-1 sm:px-2.5"
               >
                 <Siren className="h-4 w-4 shrink-0" />
                 <span>{ar ? "طوارئ" : "SOS"}</span>
@@ -228,7 +228,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             <button
               type="button"
               onClick={() => openPinModal()}
-              className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-1.5 sm:flex-row sm:gap-1.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-1.5 sm:flex-row sm:gap-1.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               aria-label={t.switchCaregiver}
             >
               <Users className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -241,7 +241,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               onClick={() => setIsMenuOpen(true)}
               aria-label={locale === "ar" ? "القائمة" : "Menu"}
               aria-expanded={isMenuOpen}
-              className="relative flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 px-1.5 text-[11px] font-semibold sm:flex-row sm:gap-1.5 sm:px-3 sm:text-xs text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 min-[1760px]:hidden"
+              className="relative flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 px-1.5 text-xs font-semibold sm:flex-row sm:gap-1.5 sm:px-3 text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 min-[1760px]:hidden"
             >
               <Menu className="h-5 w-5 shrink-0" />
               <span>{ar ? "القائمة" : "Menu"}</span>

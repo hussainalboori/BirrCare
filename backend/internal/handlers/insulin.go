@@ -257,17 +257,24 @@ func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id str
 
 	var err error
 	status := http.StatusOK
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
 	if id == "" {
 		id = "ins_" + uuid.New().String()[:8]
 		status = http.StatusCreated
-		_, err = h.DB.Exec(`
+		_, err = tx.Exec(`
 			INSERT INTO insulin_plans (id, name_ar, name_en, kind, fixed_units, scale, min_hours_between, prescribed_by, notes_ar, notes_en, is_active, updated_by, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		`, id, req.NameAr, req.NameEn, req.Kind, req.FixedUnits, string(scaleJSON), req.MinHoursBetween,
 			req.PrescribedBy, req.NotesAr, req.NotesEn, active, caregiver.ID)
 	} else {
 		var res sql.Result
-		res, err = h.DB.Exec(`
+		res, err = tx.Exec(`
 			UPDATE insulin_plans SET name_ar = ?, name_en = ?, kind = ?, fixed_units = ?, scale = ?, min_hours_between = ?,
 			       prescribed_by = ?, notes_ar = ?, notes_en = ?, is_active = ?, updated_by = ?, updated_at = datetime('now')
 			WHERE id = ?
@@ -285,9 +292,17 @@ func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "INSULIN_PLAN_SAVED", "insulin_plan", id,
-		fmt.Sprintf("%s (%s) kind=%s fixed=%v scale=%s gap=%.1fh by=%s active=%d",
-			req.NameEn, req.NameAr, req.Kind, req.FixedUnits, scaleJSON, req.MinHoursBetween, req.PrescribedBy, active))
+	auditDetail := fmt.Sprintf("%s (%s) kind=%s fixed=%v scale=%s gap=%.1fh by=%s active=%d",
+		req.NameEn, req.NameAr, req.Kind, req.FixedUnits, scaleJSON, req.MinHoursBetween, req.PrescribedBy, active)
+	if err := audit.Record(tx, caregiver.ID, "INSULIN_PLAN_SAVED", "insulin_plan", id, auditDetail); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit insulin plan", err)
+		return
+	}
 
 	h.Broker.Broadcast("INSULIN_PLANS_UPDATED", actorOf(caregiver), map[string]interface{}{"id": id})
 

@@ -40,7 +40,7 @@ export function SpO2Fields({
       </p>
       <div className={`grid gap-3 ${withPulse ? "grid-cols-2" : "grid-cols-1"}`}>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-semibold text-slate-500">{ar ? "الأكسجين SpO₂ (%)" : "Oxygen SpO₂ (%)"}</span>
+          <span className="mb-1 block text-sm font-semibold text-slate-500 dark:text-slate-400">{ar ? "الأكسجين SpO₂ (%)" : "Oxygen SpO₂ (%)"}</span>
           <input
             ref={spo2Ref}
             type="number"
@@ -57,7 +57,7 @@ export function SpO2Fields({
         </label>
         {withPulse && (
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-slate-500">{ar ? "النبض (اختياري)" : "Pulse (optional)"}</span>
+            <span className="mb-1 block text-sm font-semibold text-slate-500 dark:text-slate-400">{ar ? "النبض (اختياري)" : "Pulse (optional)"}</span>
             <input
               type="number"
               inputMode="numeric"

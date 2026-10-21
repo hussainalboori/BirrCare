@@ -13,6 +13,20 @@ echo "=========================================================="
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
+# 0. Pre-flight: the backend refuses to start in production without
+# APP_TIMEZONE (issue #26). Check before rebuilding, so a missing value leaves
+# the running version up instead of replacing it with one that cannot start.
+tz="${APP_TIMEZONE:-}"
+if [ -z "${tz}" ] && [ -f .env ]; then
+  tz="$(grep -E '^[[:space:]]*APP_TIMEZONE=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true)"
+fi
+if [ -z "${tz}" ]; then
+  echo "ERROR: APP_TIMEZONE is not set. Add it to .env (e.g. APP_TIMEZONE=Asia/Riyadh)" >&2
+  echo "       and run this script again. Nothing was changed; the running version stays up." >&2
+  exit 1
+fi
+echo "--> Household time zone: ${tz}"
+
 # 1. Automated Safety Backup of SQLite Database
 if [ -f "data/birrcare.db" ]; then
   BACKUP_DIR="data/backups"

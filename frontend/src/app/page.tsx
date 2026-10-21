@@ -8,6 +8,7 @@ import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { RepositionCard } from "@/components/RepositionCard";
+import { PRNSection } from "@/components/PRNSection";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
@@ -179,6 +180,9 @@ export default function MedicationsPage() {
             />
           </div>
         </div>
+
+        {/* As-Needed (PRN) Medications Section */}
+        <PRNSection />
 
         {/* Schedule List Grouped by Slots */}
         {loading ? (
