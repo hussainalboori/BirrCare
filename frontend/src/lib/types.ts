@@ -354,6 +354,40 @@ export interface InsulinPlanStatus {
   recent: InsulinLog[];
 }
 
+export type CareKind = "reposition" | "fluid" | "bowel" | "hygiene" | "physio";
+export type RepositionSide = "left" | "back" | "right";
+export type SkinCondition = "ok" | "red_area" | "";
+
+export interface CareEvent {
+  id: string;
+  kind: CareKind;
+  value: string;
+  caregiver_id: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  skin_condition?: SkinCondition;
+  notes?: string;
+  created_at: string;
+  client_request_id?: string;
+}
+
+export interface CareStatus {
+  kind: CareKind;
+  last_at?: string | null;
+  last_value?: string | null;
+  last_caregiver_id?: string | null;
+  last_caregiver_name?: string | null;
+  last_avatar_color?: string | null;
+  last_skin_condition?: SkinCondition | null;
+  interval_minutes: number;
+  next_due_at?: string | null;
+  minutes_since?: number | null;
+  minutes_until_due?: number | null;
+  is_overdue_warning: boolean;
+  is_overdue_critical: boolean;
+  on_duty_caregiver?: Caregiver | null;
+}
+
 export type PRNReasonTag = "headache" | "pain" | "fever" | "other";
 
 export interface PRNLog {

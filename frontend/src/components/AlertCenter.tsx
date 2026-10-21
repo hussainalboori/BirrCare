@@ -28,7 +28,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -208,6 +208,13 @@ export function AlertCenter() {
       );
       advice = ar ? "اتصل به أو ابقَ في المناوبة." : "Call them, or stay on duty.";
       break;
+    case "reposition_overdue": {
+      title = ar ? "تأخر تقليب المريض (تجنب قرح الفراش)" : "Repositioning overdue (prevent pressure sores)";
+      advice = ar
+        ? "تأخر التقليب لأكثر من 45 دقيقة عن الموعد المحدد. يرجى تقليب المريض الآن لتجنب تقرحات الضغط."
+        : "Repositioning is overdue by more than 45 minutes. Please reposition the patient now to prevent pressure injuries.";
+      break;
+    }
     case "vomited":
       title = <>{ar ? "استفرغت بعد جرعة" : "Vomited after a dose"}{medName && <>: <bdi>{medName}</bdi></>}</>;
       break;

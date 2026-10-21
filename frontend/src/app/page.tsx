@@ -7,6 +7,7 @@ import { LastHandover } from "@/components/LastHandover";
 import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
+import { RepositionCard } from "@/components/RepositionCard";
 import { PRNSection } from "@/components/PRNSection";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
@@ -116,6 +117,8 @@ export default function MedicationsPage() {
         <LastHandover />
         <LowStockCards />
         <PushOptIn />
+        {/* Issue #27: Repositioning card to prevent pressure sores */}
+        <RepositionCard />
         {/* Issue #13: one tap to the F.A.S.T. stroke check */}
         <Link
           href="/fast"

@@ -329,3 +329,36 @@ type CurrentDutyStatus struct {
 	CurrentTime      string           `json:"current_time"`
 	Date             string           `json:"date"`
 }
+
+// CareEvent records care tasks (repositioning, fluids, bowel, hygiene, physio).
+type CareEvent struct {
+	ID              string  `json:"id"`
+	Kind            string  `json:"kind"`
+	Value           string  `json:"value"`
+	CaregiverID     string  `json:"caregiver_id"`
+	CaregiverName   string  `json:"caregiver_name,omitempty"`
+	AvatarColor     string  `json:"avatar_color,omitempty"`
+	SkinCondition   string  `json:"skin_condition,omitempty"`
+	Notes           string  `json:"notes,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	ClientRequestID *string `json:"client_request_id,omitempty"`
+}
+
+// CareStatus conveys real-time status of a care task category (e.g. repositioning).
+type CareStatus struct {
+	Kind              string     `json:"kind"`
+	LastAt            *string    `json:"last_at"`
+	LastValue         *string    `json:"last_value"`
+	LastCaregiverID   *string    `json:"last_caregiver_id,omitempty"`
+	LastCaregiverName *string    `json:"last_caregiver_name,omitempty"`
+	LastAvatarColor   *string    `json:"last_avatar_color,omitempty"`
+	LastSkinCondition *string    `json:"last_skin_condition,omitempty"`
+	IntervalMinutes   int        `json:"interval_minutes"`
+	NextDueAt         *string    `json:"next_due_at"`
+	MinutesSince      *int       `json:"minutes_since"`
+	MinutesUntilDue   *int       `json:"minutes_until_due"`
+	IsOverdueWarning  bool       `json:"is_overdue_warning"`
+	IsOverdueCritical bool       `json:"is_overdue_critical"`
+	OnDutyCaregiver   *Caregiver `json:"on_duty_caregiver,omitempty"`
+}
+
