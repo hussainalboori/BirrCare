@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { Caregiver, CaregiverOption } from "@/lib/types";
+import { Caregiver, CaregiverOption, TrustStatus } from "@/lib/types";
 import { fetchApi, AUTH_CHANGED_EVENT, AUTH_REQUIRED_EVENT } from "@/lib/api";
 
 export interface VerifyPinResult {
@@ -27,15 +27,33 @@ interface CaregiverContextType {
   refreshCaregiver: () => Promise<void>;
   refreshCaregivers: () => Promise<void>;
   setCurrentCaregiver: (c: Caregiver) => void;
+  trustStatus: TrustStatus | null;
+  checkTrustStatus: () => Promise<TrustStatus | null>;
+  switchCaregiverDirect: (caregiverId: string) => Promise<boolean>;
 }
 
 const CaregiverContext = createContext<CaregiverContextType | undefined>(undefined);
+
+function getCurrentLocation(): Promise<{ latitude: number; longitude: number } | null> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      () => resolve(null),
+      { timeout: 2500, maximumAge: 60000, enableHighAccuracy: false }
+    );
+  });
+}
 
 export function CaregiverProvider({ children }: { children: React.ReactNode }) {
   const [currentCaregiver, setCurrentCaregiver] = useState<Caregiver | null>(null);
   const [allCaregivers, setAllCaregivers] = useState<CaregiverOption[]>([]);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [targetCaregiverId, setTargetCaregiverId] = useState<string | null>(null);
+  const [trustStatus, setTrustStatus] = useState<TrustStatus | null>(null);
 
   const fetchCaregiversList = useCallback(async () => {
     try {
@@ -62,10 +80,58 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const checkTrustStatus = useCallback(async (): Promise<TrustStatus | null> => {
+    try {
+      const loc = await getCurrentLocation();
+      let url = "/auth/trust-status";
+      if (loc) {
+        url += `?latitude=${loc.latitude}&longitude=${loc.longitude}`;
+      }
+      const res = await fetchApi<TrustStatus>(url);
+      if (res) {
+        setTrustStatus(res);
+        return res;
+      }
+    } catch (err) {
+      console.warn("Failed checking trust status:", err);
+    }
+    return null;
+  }, []);
+
+  const switchCaregiverDirect = async (caregiverId: string): Promise<boolean> => {
+    try {
+      const loc = await getCurrentLocation();
+      const payload: { caregiver_id: string; latitude?: number; longitude?: number } = { caregiver_id: caregiverId };
+      if (loc) {
+        payload.latitude = loc.latitude;
+        payload.longitude = loc.longitude;
+      }
+      const res = await fetchApi<{ status: string; caregiver?: Caregiver; trust?: TrustStatus }>("/auth/switch-caregiver", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      if (res?.caregiver) {
+        setCurrentCaregiver(res.caregiver);
+        if (res.trust) setTrustStatus(res.trust);
+        closePinModal();
+        window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
+        fetchCaregiversList();
+        return true;
+      }
+      openPinModal(caregiverId);
+      return false;
+    } catch (err: any) {
+      // Untrusted (403 PIN_REQUIRED) or error -> fallback to PIN modal
+      openPinModal(caregiverId);
+      return false;
+    }
+  };
+
   useEffect(() => {
     fetchCaregiversList();
     refreshCaregiver();
-  }, [fetchCaregiversList, refreshCaregiver]);
+    checkTrustStatus();
+  }, [fetchCaregiversList, refreshCaregiver, checkTrustStatus]);
 
   // Any 401 (expired session, write without session) → prompt for PIN instead of failing silently.
   // The previous fallback to allCaregivers[0] attributed actions/UI to the wrong sibling.
@@ -74,9 +140,16 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
       setCurrentCaregiver(null);
       setIsPinModalOpen(true);
     };
+    const onAuthChanged = () => {
+      checkTrustStatus();
+    };
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
-    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
-  }, []);
+    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    return () => {
+      window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+      window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    };
+  }, [checkTrustStatus]);
 
   const openPinModal = (targetId?: string) => {
     setTargetCaregiverId(targetId || null);
@@ -104,6 +177,7 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
         // New session cookie: let SSE (paused on 401) reconnect, and lists refresh.
         window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT));
         fetchCaregiversList();
+        checkTrustStatus();
         return { success: true };
       }
       return { success: false, error: "Authentication failed" };
@@ -137,6 +211,9 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
         refreshCaregiver,
         refreshCaregivers: fetchCaregiversList,
         setCurrentCaregiver,
+        trustStatus,
+        checkTrustStatus,
+        switchCaregiverDirect,
       }}
     >
       {children}

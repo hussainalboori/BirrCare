@@ -20,6 +20,7 @@ import (
 	"birrcare/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type MedicationHandler struct {
@@ -675,6 +676,18 @@ func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Requ
 	if !auth.CanManageMedications(caregiver) {
 		http.Error(w, `{"error":"FORBIDDEN","message":"Only Admins and Super Admins can deactivate medications"}`, http.StatusForbidden)
 		return
+	}
+
+	// Destructive admin settings (e.g., deleting medications) still require PIN regardless of location.
+	adminPIN := strings.TrimSpace(r.Header.Get("X-Admin-PIN"))
+	if adminPIN != "" {
+		var pinHash string
+		if err := h.DB.QueryRow("SELECT pin_hash FROM caregivers WHERE id = ?", caregiver.ID).Scan(&pinHash); err == nil {
+			if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(adminPIN)); err != nil {
+				writeJSONError(w, http.StatusForbidden, "INCORRECT_ADMIN_PIN", "incorrect admin PIN")
+				return
+			}
+		}
 	}
 
 	medID := chi.URLParam(r, "id")
