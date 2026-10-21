@@ -55,10 +55,48 @@ func currentOxygenFever() OxygenFeverThresholds {
 // SetOxygenFeverThresholds replaces the in-memory thresholds (startup, admin change, tests).
 func SetOxygenFeverThresholds(t OxygenFeverThresholds) { oxygenFever.Store(&t) }
 
+var defaultRepositionInterval = 120 // 2 hours default
+var repositionInterval atomic.Int64
+
+func currentRepositionInterval() int {
+	v := repositionInterval.Load()
+	if v > 0 {
+		return int(v)
+	}
+	return defaultRepositionInterval
+}
+
+// SetRepositionInterval replaces the in-memory interval in minutes (startup, admin change, tests).
+func SetRepositionInterval(minutes int) {
+	if minutes > 0 {
+		repositionInterval.Store(int64(minutes))
+	}
+}
+
+var defaultFluidDailyTarget = 1500 // 1500 ml default (issue #28)
+var fluidDailyTarget atomic.Int64
+
+func currentFluidDailyTarget() int {
+	v := fluidDailyTarget.Load()
+	if v > 0 {
+		return int(v)
+	}
+	return defaultFluidDailyTarget
+}
+
+// SetFluidDailyTarget replaces the in-memory fluid target in ml (startup, admin change, tests).
+func SetFluidDailyTarget(target int) {
+	if target > 0 {
+		fluidDailyTarget.Store(int64(target))
+	}
+}
+
 // ClinicalSettings is everything GET/PUT /settings/clinical carries.
 type ClinicalSettings struct {
 	BPLowThresholds
 	OxygenFeverThresholds
+	RepositionIntervalMinutes int `json:"reposition_interval_minutes"`
+	FluidDailyTargetML        int `json:"fluid_daily_target_ml"`
 }
 
 // LoadClinicalSettings reads the doctor's thresholds from app_settings, if set.
@@ -90,6 +128,24 @@ func LoadClinicalSettings(db *sql.DB) {
 		}
 	}
 	SetBPLowThresholds(t)
+
+	var rStr string
+	if db.QueryRow(`SELECT value FROM app_settings WHERE key = 'reposition_interval_minutes'`).Scan(&rStr) == nil {
+		if n, err := strconv.Atoi(rStr); err == nil && n >= 30 && n <= 360 {
+			SetRepositionInterval(n)
+		}
+	} else {
+		SetRepositionInterval(defaultRepositionInterval)
+	}
+
+	var fTargetStr string
+	if db.QueryRow(`SELECT value FROM app_settings WHERE key = 'fluid_daily_target_ml'`).Scan(&fTargetStr) == nil {
+		if n, err := strconv.Atoi(fTargetStr); err == nil && n >= 500 && n <= 5000 {
+			SetFluidDailyTarget(n)
+		}
+	} else {
+		SetFluidDailyTarget(defaultFluidDailyTarget)
+	}
 }
 
 type ClinicalSettingsHandler struct {
@@ -98,15 +154,17 @@ type ClinicalSettingsHandler struct {
 
 func (h *ClinicalSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever()})
+	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever(), currentRepositionInterval(), currentFluidDailyTarget()})
 }
 
 type clinicalSettingsRequest struct {
-	LowSystolic  *int     `json:"bp_low_systolic"`
-	LowDiastolic *int     `json:"bp_low_diastolic"`
-	SpO2Warn     *int     `json:"spo2_warn"`
-	SpO2Critical *int     `json:"spo2_critical"`
-	FeverC       *float64 `json:"fever_c"`
+	LowSystolic               *int     `json:"bp_low_systolic"`
+	LowDiastolic              *int     `json:"bp_low_diastolic"`
+	SpO2Warn                  *int     `json:"spo2_warn"`
+	SpO2Critical              *int     `json:"spo2_critical"`
+	FeverC                    *float64 `json:"fever_c"`
+	RepositionIntervalMinutes *int     `json:"reposition_interval_minutes"`
+	FluidDailyTargetML        *int     `json:"fluid_daily_target_ml"`
 }
 
 // Put sets the doctor's thresholds (admin). Fields left out keep their value.
@@ -151,6 +209,22 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fever_c must be 37.5-39.0")
 		return
 	}
+	repInterval := currentRepositionInterval()
+	if req.RepositionIntervalMinutes != nil {
+		if *req.RepositionIntervalMinutes < 30 || *req.RepositionIntervalMinutes > 360 {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "reposition_interval_minutes must be between 30 and 360")
+			return
+		}
+		repInterval = *req.RepositionIntervalMinutes
+	}
+	fluidTarget := currentFluidDailyTarget()
+	if req.FluidDailyTargetML != nil {
+		if *req.FluidDailyTargetML < 500 || *req.FluidDailyTargetML > 5000 {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fluid_daily_target_ml must be between 500 and 5000")
+			return
+		}
+		fluidTarget = *req.FluidDailyTargetML
+	}
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		internalError(w, "failed to begin transaction", err)
@@ -159,15 +233,15 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES
-		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?)
+		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?), ('reposition_interval_minutes', ?), ('fluid_daily_target_ml', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		strconv.Itoa(bp.LowSystolic), strconv.Itoa(bp.LowDiastolic), strconv.Itoa(o.SpO2Warn), strconv.Itoa(o.SpO2Critical),
-		strconv.FormatFloat(o.FeverC, 'f', 1, 64)); err != nil {
+		strconv.FormatFloat(o.FeverC, 'f', 1, 64), strconv.Itoa(repInterval), strconv.Itoa(fluidTarget)); err != nil {
 		internalError(w, "failed to save thresholds", err)
 		return
 	}
 	if err := audit.Record(tx, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
-		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC)); err != nil {
+		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C; reposition %d min; fluid target %d ml", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, repInterval, fluidTarget)); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return
 	}
@@ -177,6 +251,8 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	SetBPLowThresholds(bp)
 	SetOxygenFeverThresholds(o)
+	SetRepositionInterval(repInterval)
+	SetFluidDailyTarget(fluidTarget)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{bp, o})
+	json.NewEncoder(w).Encode(ClinicalSettings{bp, o, repInterval, fluidTarget})
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -82,6 +83,7 @@ func NewRouter(o Options) http.Handler {
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
+	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
 	r := chi.NewRouter()
@@ -108,7 +110,12 @@ func NewRouter(o Options) http.Handler {
 
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"healthy","service":"birrcare-backend"}`))
+		resp := map[string]string{
+			"status":   "healthy",
+			"service":  "birrcare-backend",
+			"timezone": handlers.ClinicalLocation().String(),
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 	r.Get("/health", healthHandler)
 	r.With(auth.RequireAuth).Get("/audit/verify", auditHandler.Verify)
@@ -181,6 +188,11 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
 
+				// PRN (As-Needed) Medications (Issue #25)
+				api.Get("/medications/prn", medHandler.GetPRNMedications)
+				api.Post("/medications/prn/log", medHandler.LogPRNDose)
+				api.Post("/medications/prn/log/{id}/void", medHandler.VoidPRNDose)
+
 				// Alerts that must reach every sibling (issue #12)
 				api.Get("/alerts/unacked", alertsHandler.Unacked)
 				api.Post("/alerts/{id}/ack", alertsHandler.Ack)
@@ -229,6 +241,13 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/patient/emergency-link", emergencyHandler.EmergencyLink)
 				api.Post("/patient/emergency-link", emergencyHandler.RotateLink)
 				api.Post("/shifts/handover/{id}/accept", shiftsHandler.AcceptDuty)
+
+				// Care Events, Repositioning, Fluids, Bowel (issues #27, #28)
+				api.Get("/care/status", careHandler.GetStatus)
+				api.Get("/care/overview", careHandler.GetOverview)
+				api.Post("/care/events", careHandler.LogEvent)
+				api.Get("/care/events", careHandler.ListEvents)
+				api.Post("/care/check-overdue", careHandler.CheckOverdue)
 			})
 		})
 	})

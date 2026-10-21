@@ -12,7 +12,7 @@ services:
       - DB_PATH=/data/birrcare.db
       - APP_ENV=production
       # Values below come from .env (see .env.example)
-      - APP_TIMEZONE=${APP_TIMEZONE:-UTC}
+      - APP_TIMEZONE=${APP_TIMEZONE:-}
       - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN:-}
       - CF_ACCESS_AUD=${CF_ACCESS_AUD:-}
       - CF_ACCESS_TRUST_EMAIL_HEADER=${CF_ACCESS_TRUST_EMAIL_HEADER:-false}

@@ -104,7 +104,7 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
-		       stock_units, units_per_dose, refill_threshold_days
+		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -118,12 +118,24 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var m models.Medication
 		var instAr, instEn, createdBy, imgURL, daysJSON, timesJSON sql.NullString
 		var minHours, stock sql.NullFloat64
+		var isPRNInt int
+		var prnMinHours sql.NullFloat64
+		var prnMax24h sql.NullInt64
 		var slotsJSON string
 		var createdAtStr string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h); err != nil {
 			continue
+		}
+		m.IsPRN = isPRNInt == 1
+		if prnMinHours.Valid {
+			v := prnMinHours.Float64
+			m.PRNMinHours = &v
+		}
+		if prnMax24h.Valid {
+			v := int(prnMax24h.Int64)
+			m.PRNMaxPer24h = &v
 		}
 		m.StockUnits = nullableFloat(stock)
 		m.MinHoursBetween = nullableFloat(minHours)
@@ -175,6 +187,10 @@ type CreateMedicationRequest struct {
 	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report.
 	IsCritical bool `json:"is_critical,omitempty"`
+	// PRN (as-needed) medication settings (issue #25).
+	IsPRN        bool     `json:"is_prn,omitempty"`
+	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
+	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	// Optional stock tracking (issue #20).
 	StockSettings
 }
@@ -196,9 +212,27 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if !validSlots(req.FrequencySlots) {
-		writeJSONError(w, http.StatusBadRequest, "INVALID_SLOTS", "frequency_slots must be a non-empty list of morning, afternoon, evening, bedtime, night")
-		return
+	if req.IsPRN {
+		if len(req.FrequencySlots) > 0 && !validSlots(req.FrequencySlots) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_SLOTS", "frequency_slots must be a valid list of slots if provided")
+			return
+		}
+		if req.FrequencySlots == nil {
+			req.FrequencySlots = []string{}
+		}
+		if req.PRNMinHours != nil && (*req.PRNMinHours < 0 || *req.PRNMinHours > 72) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_PRN_MIN_HOURS", "prn_min_hours must be between 0 and 72")
+			return
+		}
+		if req.PRNMaxPer24h != nil && (*req.PRNMaxPer24h <= 0 || *req.PRNMaxPer24h > 24) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_PRN_MAX_PER_24H", "prn_max_per_24h must be between 1 and 24")
+			return
+		}
+	} else {
+		if !validSlots(req.FrequencySlots) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_SLOTS", "frequency_slots must be a non-empty list of morning, afternoon, evening, bedtime, night")
+			return
+		}
 	}
 
 	days := req.DaysOfWeek
@@ -225,6 +259,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	daysJSON, _ := json.Marshal(days)
 	timesJSON, _ := json.Marshal(slotTimes)
 
+	isPRNInt := 0
+	if req.IsPRN {
+		isPRNInt = 1
+	}
+
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		internalError(w, "failed to create medication", err)
@@ -233,9 +272,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, is_critical, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, req.IsCritical, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -301,6 +340,10 @@ type UpdateMedicationRequest struct {
 	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
 	IsCritical      *bool           `json:"is_critical,omitempty"`
+	// PRN (as-needed) medication settings (issue #25).
+	IsPRN        *bool    `json:"is_prn,omitempty"`
+	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
+	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	StockSettings
 }
 
@@ -450,6 +493,26 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		}
 		if _, err := tx.Exec("UPDATE medications SET is_active = ? WHERE id = ?", activeInt, medID); err != nil {
 			internalError(w, "failed to update active status", err)
+			return
+		}
+	}
+
+	// PRN settings (issue #25), in the same transaction as the rest of the edit.
+	if req.IsPRN != nil {
+		if _, err := tx.Exec("UPDATE medications SET is_prn = ? WHERE id = ?", *req.IsPRN, medID); err != nil {
+			internalError(w, "failed to update PRN setting", err)
+			return
+		}
+	}
+	if req.PRNMinHours != nil {
+		if _, err := tx.Exec("UPDATE medications SET prn_min_hours = ? WHERE id = ?", *req.PRNMinHours, medID); err != nil {
+			internalError(w, "failed to update PRN interval", err)
+			return
+		}
+	}
+	if req.PRNMaxPer24h != nil {
+		if _, err := tx.Exec("UPDATE medications SET prn_max_per_24h = ? WHERE id = ?", *req.PRNMaxPer24h, medID); err != nil {
+			internalError(w, "failed to update PRN 24h maximum", err)
 			return
 		}
 	}
@@ -771,7 +834,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 
 	// 1. Fetch all active medications including days_of_week and slot_times
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0)
 		FROM medications WHERE is_active = 1
 	`)
 	if err != nil {
@@ -786,8 +849,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		var instAr, instEn, imgURL, daysJSON, timesJSON sql.NullString
 		var minHours sql.NullFloat64
 		var slotsJSON, createdAtStr string
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours); err != nil {
+		var isPRN int
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours, &isPRN); err != nil {
 			continue
+		}
+		if isPRN == 1 {
+			continue // PRN medications are rendered in their dedicated dashboard section
 		}
 		m.MinHoursBetween = nullableFloat(minHours)
 		if instAr.Valid {

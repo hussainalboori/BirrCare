@@ -105,6 +105,24 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه نسبة الأكسجين — افتح رعاية بر"
 		}
 	}
+	if kind == "reposition_overdue" {
+		body = "Repositioning overdue — open Birrcare"
+		if ar {
+			body = "تأخر تقليب المريض — افتح رعاية بر"
+		}
+	}
+	if kind == "bowel_overdue" {
+		body = "Bowel movement overdue — open Birrcare"
+		if ar {
+			body = "تأخر إخراج المريض — افتح رعاية بر"
+		}
+	}
+	if kind == "low_fluid" {
+		body = "Fluid intake low today — open Birrcare"
+		if ar {
+			body = "سوائل منخفضة اليوم — افتح رعاية بر"
+		}
+	}
 	if kind == "bp_crisis" || kind == "bp_low" {
 		body = "Blood pressure alert — open Birrcare"
 		if ar {

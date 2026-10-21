@@ -16,13 +16,23 @@ interface Settings {
   spo2_warn: number;
   spo2_critical: number;
   fever_c: number;
+  reposition_interval_minutes?: number;
+  fluid_daily_target_ml?: number;
 }
 
 export function ClinicalThresholds() {
   const { locale } = useLanguage();
   const { currentCaregiver } = useCaregiver();
   const ar = locale === "ar";
-  const [v, setV] = useState<Record<keyof Settings, string>>({ bp_low_systolic: "", bp_low_diastolic: "", spo2_warn: "", spo2_critical: "", fever_c: "" });
+  const [v, setV] = useState<Record<keyof Settings, string>>({
+    bp_low_systolic: "",
+    bp_low_diastolic: "",
+    spo2_warn: "",
+    spo2_critical: "",
+    fever_c: "",
+    reposition_interval_minutes: "120",
+    fluid_daily_target_ml: "1500",
+  });
   const [msg, setMsg] = useState("");
   const admin = canManageMedications(currentCaregiver?.role);
 
@@ -37,6 +47,8 @@ export function ClinicalThresholds() {
           spo2_warn: String(t.spo2_warn ?? 92),
           spo2_critical: String(t.spo2_critical ?? 88),
           fever_c: String(t.fever_c ?? 38),
+          reposition_interval_minutes: String(t.reposition_interval_minutes ?? 120),
+          fluid_daily_target_ml: String(t.fluid_daily_target_ml ?? 1500),
         });
       })
       .catch(() => {});
@@ -57,8 +69,8 @@ export function ClinicalThresholds() {
     } catch {
       setMsg(
         ar
-          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39"
-          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39"
+          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39، فاصل التقليب 30–360 دقيقة، هدف السوائل 500–5000 مل"
+          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39, reposition interval 30–360m, fluid target 500–5000ml"
       );
     }
   };
@@ -80,7 +92,7 @@ export function ClinicalThresholds() {
   return (
     <details className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
       <summary className="min-h-12 cursor-pointer text-sm font-bold text-slate-800 dark:text-slate-100">
-        {ar ? "حدود الطبيب: الضغط المنخفض والأكسجين والحمّى (للمسؤول)" : "Doctor's limits: low BP, oxygen, fever (admin)"}
+        {ar ? "حدود الطبيب: الضغط المنخفض والأكسجين والحمّى ومؤقت التقليب وهدف السوائل (للمسؤول)" : "Doctor's limits: low BP, oxygen, fever, reposition interval, fluid target (admin)"}
       </summary>
       <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
         {ar ? "الضغط منخفض إذا كان الانقباضي أقل من أو الانبساطي أقل من:" : "BP is low when systolic is below, or diastolic is below:"}
@@ -96,6 +108,18 @@ export function ClinicalThresholds() {
         {field("spo2_warn", ar ? "أعد القياس" : "Re-check")}
         {field("spo2_critical", ar ? "تنبيه" : "Alert")}
         {field("fever_c", ar ? "حمّى من (°م)" : "Fever from (°C)", "0.1")}
+      </div>
+      <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+        {ar ? "مؤقت تقليب المريض للوقاية من قرح الفراش (بالدقائق، الافتراضي 120 دقيقة = ساعتان):" : "Repositioning interval to prevent pressure sores (minutes, default 120 min = 2 hours):"}
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        {field("reposition_interval_minutes", ar ? "الفاصل (دقيقة)" : "Interval (min)")}
+      </div>
+      <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+        {ar ? "الهدف اليومي للسوائل (بالمليلتر، الافتراضي 1500 مل):" : "Daily fluid target (ml, default 1500 ml):"}
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        {field("fluid_daily_target_ml", ar ? "الهدف (مل)" : "Target (ml)")}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" onClick={save} className="min-h-12 rounded-xl bg-emerald-700 px-4 text-base font-bold text-white">

@@ -71,6 +71,10 @@ type Medication struct {
 	MinHoursBetween *float64 `json:"min_hours_between"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report (issue #14).
 	IsCritical bool `json:"is_critical"`
+	// PRN (as-needed) medication settings (issue #25).
+	IsPRN        bool     `json:"is_prn"`
+	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
+	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	// Stock (issue #20): nil = not tracked.
 	StockUnits          *float64  `json:"stock_units"`
 	UnitsPerDose        float64   `json:"units_per_dose"`
@@ -78,6 +82,62 @@ type Medication struct {
 	IsActive            bool      `json:"is_active"`
 	CreatedBy           string    `json:"created_by,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+}
+
+// PRNLog records an as-needed medication intake (Issue #25).
+type PRNLog struct {
+	ID             string `json:"id"`
+	MedicationID   string `json:"medication_id"`
+	CaregiverID    string `json:"caregiver_id"`
+	CaregiverName  string `json:"caregiver_name,omitempty"`
+	AvatarColor    string `json:"avatar_color,omitempty"`
+	GivenAt        string `json:"given_at"` // RFC3339
+	ReasonTag      string `json:"reason_tag"` // 'headache', 'pain', 'fever', 'other'
+	Notes          string `json:"notes,omitempty"`
+	VoidedAt       string `json:"voided_at,omitempty"` // RFC3339
+	VoidedByName   string `json:"voided_by_name,omitempty"`
+	VoidReason     string `json:"void_reason,omitempty"`
+	DosageSnapshot string `json:"dosage_snapshot,omitempty"`
+	// When the entry was made (given_at may be earlier): the 10-minute own undo.
+	RecordedAt string `json:"recorded_at,omitempty"` // RFC3339
+}
+
+// PRNLastGiven tracks the most recent intake of a PRN medication.
+type PRNLastGiven struct {
+	LogID         string  `json:"log_id"`
+	GivenAt       string  `json:"given_at"` // RFC3339
+	CaregiverID   string  `json:"caregiver_id"`
+	CaregiverName string  `json:"caregiver_name"`
+	AvatarColor   string  `json:"avatar_color,omitempty"`
+	ReasonTag     string  `json:"reason_tag"`
+	HoursSince    float64 `json:"hours_since"`
+}
+
+// PRNMedicationStatus conveys current 24h count, locks, and history for a PRN medicine.
+type PRNMedicationStatus struct {
+	Medication    Medication    `json:"medication"`
+	CountLast24h  int           `json:"count_last_24h"`
+	MaxPer24h     *int          `json:"max_per_24h,omitempty"`
+	MinHours      *float64      `json:"min_hours,omitempty"`
+	LastGiven     *PRNLastGiven `json:"last_given,omitempty"`
+	NextAllowedAt string        `json:"next_allowed_at,omitempty"` // RFC3339
+	CanGive       bool          `json:"can_give"`
+	LockReason    string        `json:"lock_reason,omitempty"` // 'limit_reached' or 'too_soon'
+	RecentLogs    []PRNLog      `json:"recent_logs,omitempty"`
+}
+
+// PRNExportLog summarizes PRN use in doctor export reports.
+type PRNExportLog struct {
+	ID            string `json:"id"`
+	MedicationID  string `json:"medication_id"`
+	NameAr        string `json:"name_ar"`
+	NameEn        string `json:"name_en"`
+	Dosage        string `json:"dosage"`
+	GivenAt       string `json:"given_at"` // RFC3339
+	Date          string `json:"date"`     // YYYY-MM-DD
+	ReasonTag     string `json:"reason_tag"`
+	Notes         string `json:"notes,omitempty"`
+	CaregiverName string `json:"caregiver_name"`
 }
 
 // LastDose is the most recent taken dose of a medication, on any date.
@@ -269,3 +329,55 @@ type CurrentDutyStatus struct {
 	CurrentTime      string           `json:"current_time"`
 	Date             string           `json:"date"`
 }
+
+// CareEvent records care tasks (repositioning, fluids, bowel, hygiene, physio).
+type CareEvent struct {
+	ID              string  `json:"id"`
+	Kind            string  `json:"kind"`
+	Value           string  `json:"value"`
+	CaregiverID     string  `json:"caregiver_id"`
+	CaregiverName   string  `json:"caregiver_name,omitempty"`
+	AvatarColor     string  `json:"avatar_color,omitempty"`
+	SkinCondition   string  `json:"skin_condition,omitempty"`
+	Notes           string  `json:"notes,omitempty"`
+	Thickened       bool    `json:"thickened"`
+	CreatedAt       string  `json:"created_at"`
+	ClientRequestID *string `json:"client_request_id,omitempty"`
+}
+
+// CareStatus conveys real-time status of a care task category (e.g. repositioning, fluid, bowel).
+type CareStatus struct {
+	Kind              string     `json:"kind"`
+	LastAt            *string    `json:"last_at"`
+	LastValue         *string    `json:"last_value"`
+	LastCaregiverID   *string    `json:"last_caregiver_id,omitempty"`
+	LastCaregiverName *string    `json:"last_caregiver_name,omitempty"`
+	LastAvatarColor   *string    `json:"last_avatar_color,omitempty"`
+	LastSkinCondition *string    `json:"last_skin_condition,omitempty"`
+	IntervalMinutes   int        `json:"interval_minutes"`
+	NextDueAt         *string    `json:"next_due_at"`
+	MinutesSince      *int       `json:"minutes_since"`
+	MinutesUntilDue   *int       `json:"minutes_until_due"`
+	IsOverdueWarning  bool       `json:"is_overdue_warning"`
+	IsOverdueCritical bool       `json:"is_overdue_critical"`
+	OnDutyCaregiver   *Caregiver `json:"on_duty_caregiver,omitempty"`
+
+	// Fluid intake fields (issue #28)
+	TodayTotalML     int  `json:"today_total_ml"`
+	TodayThickenedML int  `json:"today_thickened_ml"`
+	TargetML         int  `json:"target_ml"`
+	ProgressPercent  int  `json:"progress_percent"`
+	IsLowFluid       bool `json:"is_low_fluid"`
+
+	// Bowel movement fields (issue #28)
+	DaysSinceBowel *int `json:"days_since_bowel,omitempty"`
+	IsBowelOverdue bool `json:"is_bowel_overdue"`
+}
+
+// CareOverview groups statuses for all active care task types.
+type CareOverview struct {
+	Reposition CareStatus `json:"reposition"`
+	Fluid      CareStatus `json:"fluid"`
+	Bowel      CareStatus `json:"bowel"`
+}
+

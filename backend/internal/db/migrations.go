@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS medications (
     days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]',
     slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}',
     image_url TEXT,
+    is_prn INTEGER NOT NULL DEFAULT 0,
+    prn_min_hours REAL,
+    prn_max_per_24h INTEGER,
     is_active INTEGER DEFAULT 1,
     created_by TEXT REFERENCES caregivers(id),
     created_at TEXT DEFAULT (datetime('now'))
@@ -83,12 +86,28 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
     UNIQUE (log_id, type)
 );
 
+-- 3b. PRN (As-Needed) Medication Intake Logs (Issue #25)
+CREATE TABLE IF NOT EXISTS prn_logs (
+    id TEXT PRIMARY KEY,
+    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    given_at TEXT DEFAULT (datetime('now')),
+    reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+    notes TEXT,
+    voided_at TEXT,
+    voided_by TEXT REFERENCES caregivers(id),
+    void_reason TEXT,
+    dosage_snapshot TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
+
 -- Alerts that must reach every sibling (issue #12): a BP crisis, a dose given
 -- inside its minimum interval, vomiting after a dose. Written in the same
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -245,6 +264,20 @@ CREATE TABLE IF NOT EXISTS insulin_logs (
     scale_snapshot TEXT     -- the plan as it was, so later scale edits never rewrite history
 );
 
+CREATE TABLE IF NOT EXISTS care_events (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio')),
+    value TEXT NOT NULL,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
+    notes TEXT,
+    thickened INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    client_request_id TEXT UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_plan ON insulin_logs(plan_id, given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_date ON insulin_logs(given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
@@ -268,6 +301,15 @@ CREATE INDEX IF NOT EXISTS idx_paired_devices_hash ON paired_devices(device_toke
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.
 func Migrate(database *sql.DB) error {
+	if os.Getenv("APP_ENV") == "production" {
+		tz := strings.TrimSpace(os.Getenv("APP_TIMEZONE"))
+		if tz == "" {
+			return fmt.Errorf("APP_TIMEZONE is required when APP_ENV=production (e.g. APP_TIMEZONE=Asia/Riyadh)")
+		}
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("invalid APP_TIMEZONE %q: %w", tz, err)
+		}
+	}
 	// Whether medication_logs is created by this run (fresh database): only then, or
 	// right after rebuilding it, may Migrate create the dose-lock index. If it later
 	// goes missing or is replaced, boot is refused rather than silently "repaired".
@@ -793,6 +835,62 @@ func Migrate(database *sql.DB) error {
 			}
 		}
 	}
+
+	// Migrate alerts for reposition_overdue, bowel_overdue, low_fluid (issues #27, #28)
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'bowel_overdue'") {
+		log.Println("Migrating alerts: adding bowel_overdue and low_fluid kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v8;
+			CREATE TABLE alerts_v8 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v8 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v8 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for bowel_overdue: %w", err)
+		}
+	}
+
+	// Ensure care_events table exists
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS care_events (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio')),
+			value TEXT NOT NULL,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
+			notes TEXT,
+			thickened INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT DEFAULT (datetime('now')),
+			client_request_id TEXT UNIQUE
+		);
+		CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating care_events table: %w", err)
+	}
+
+	// Ensure thickened column exists on care_events (issue #28)
+	var thickenedColCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('care_events') WHERE name = 'thickened'").Scan(&thickenedColCount)
+	if thickenedColCount == 0 {
+		if _, err := database.Exec("ALTER TABLE care_events ADD COLUMN thickened INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed adding thickened column to care_events: %w", err)
+		}
+	}
 	// The immutability trigger below must cover the new values too.
 	var trigSQL string
 	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='vitals_values_immutable'").Scan(&trigSQL)
@@ -940,6 +1038,65 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating handover_notes table: %w", err)
 		}
+	}
+
+	// 7. PRN (As-Needed) medications and prn_logs table (issue #25)
+	for _, c := range []struct{ col, def string }{
+		{"is_prn", "INTEGER NOT NULL DEFAULT 0"},
+		{"prn_min_hours", "REAL"},
+		{"prn_max_per_24h", "INTEGER"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS prn_logs (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			given_at TEXT DEFAULT (datetime('now')),
+			reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+			notes TEXT,
+			voided_at TEXT,
+			voided_by TEXT REFERENCES caregivers(id),
+			void_reason TEXT,
+			dosage_snapshot TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs table: %w", err)
+	}
+	// When the entry was made (given_at may be backdated): the own-undo window.
+	var prnRecorded int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('prn_logs') WHERE name = 'recorded_at'").Scan(&prnRecorded)
+	if prnRecorded == 0 {
+		if _, err := database.Exec("ALTER TABLE prn_logs ADD COLUMN recorded_at TEXT"); err != nil {
+			return fmt.Errorf("failed adding prn_logs.recorded_at: %w", err)
+		}
+	}
+	// PRN history follows the same audit-trail rules as medication_logs (#23).
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS prn_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, given_at, reason_tag, notes, dosage_snapshot, recorded_at
+		ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries are immutable: cancel the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON prn_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this PRN dose was already cancelled'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_no_delete
+		BEFORE DELETE ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries cannot be deleted: cancel the dose instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs triggers: %w", err)
 	}
 
 	if err := seedSuperAdmin(database); err != nil {

@@ -28,7 +28,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -51,7 +51,7 @@ export function AlertCenter() {
     const fresh = list.filter((a) => !announced.current.has(a.id));
     if (fresh.length) {
       fresh.forEach((a) => announced.current.add(a.id));
-      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock");
+      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock" || a.kind === "bowel_overdue" || a.kind === "low_fluid");
       playAlert(quiet ? "chime" : "crisis");
       haptic([400, 150, 400, 150, 400], { crisis: !quiet });
     }
@@ -208,6 +208,27 @@ export function AlertCenter() {
       );
       advice = ar ? "اتصل به أو ابقَ في المناوبة." : "Call them, or stay on duty.";
       break;
+    case "reposition_overdue": {
+      title = ar ? "تأخر تقليب المريض (تجنب قرح الفراش)" : "Repositioning overdue (prevent pressure sores)";
+      advice = ar
+        ? "تأخر التقليب لأكثر من 45 دقيقة عن الموعد المحدد. يرجى تقليب المريض الآن لتجنب تقرحات الضغط."
+        : "Repositioning is overdue by more than 45 minutes. Please reposition the patient now to prevent pressure injuries.";
+      break;
+    }
+    case "bowel_overdue": {
+      title = ar ? "تنبيه: لم يحدث إخراج بطن منذ 3 أيام" : "Alert: No bowel movement in 3 days";
+      advice = ar
+        ? "مرت 3 أيام أو أكثر دون تسجيل إخراج. يرجى المتابعة واستشارة الطبيب أو إعطاء الملين إذا لزم الأمر."
+        : "3 or more days without a recorded bowel movement. Please follow up and consult doctor or give prescribed laxative if needed.";
+      break;
+    }
+    case "low_fluid": {
+      title = ar ? "تنبيه: انخفاض كمية السوائل اليومية" : "Alert: Low daily fluid intake";
+      advice = ar
+        ? `السوائل المستهلكة اليوم أقل من 50% من الهدف اليومي (${p.total_ml ?? 0} مل من أصل ${p.target_ml ?? 1500} مل). يرجى تقديم السوائل للمريض.`
+        : `Daily fluid intake is below 50% of the target (${p.total_ml ?? 0} ml of ${p.target_ml ?? 1500} ml). Please offer fluids.`;
+      break;
+    }
     case "vomited":
       title = <>{ar ? "استفرغت بعد جرعة" : "Vomited after a dose"}{medName && <>: <bdi>{medName}</bdi></>}</>;
       break;
@@ -321,3 +342,36 @@ export function EmergencySetupBanner() {
     </div>
   );
 }
+
+/** Admins see this when the server timezone does not match device timezone (issue #26). */
+export function TimezoneMismatchBanner() {
+  const { locale } = useLanguage();
+  const { currentCaregiver } = useCaregiver();
+  const [serverTz, setServerTz] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchApi<{ timezone?: string }>("/health")
+      .then((data) => {
+        if (data?.timezone) {
+          setServerTz(data.timezone);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const role = currentCaregiver?.role;
+  if (role !== "admin" && role !== "super_admin") return null;
+  if (!serverTz) return null;
+
+  const deviceTz = typeof Intl !== "undefined" && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : null;
+  if (!deviceTz || serverTz === deviceTz) return null;
+
+  return (
+    <div role="alert" data-testid="timezone-mismatch-banner" className="bg-amber-600 px-4 py-2 text-center text-sm font-bold text-white">
+      {locale === "ar"
+        ? `تنبيه المنطقة الزمنية: الخادم يعمل بتوقيت (${serverTz}) بينما جهازك مضبوط على (${deviceTz}). قد تختلف تواريخ الجرعات والتقارير بين منتصف الليل وفجر اليوم.`
+        : `Time zone mismatch: Server is in (${serverTz}) while your device is set to (${deviceTz}). Dose dates and reports may differ around midnight.`}
+    </div>
+  );
+}
+

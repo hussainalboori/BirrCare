@@ -81,6 +81,10 @@ export interface Medication {
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */
   is_critical?: boolean;
+  /** PRN (as-needed) medication (issue #25). */
+  is_prn?: boolean;
+  prn_min_hours?: number | null;
+  prn_max_per_24h?: number | null;
   /** Pills/units in the box (issue #20); null = stock not tracked. */
   stock_units?: number | null;
   units_per_dose?: number;
@@ -298,10 +302,33 @@ export interface DoctorSummary {
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
   /** Lowest SpO2 and highest temperature per household-local day (issue #22). */
   daily_oxygen_temp?: { date: string; min_spo2?: number; max_temperature_c?: number; readings: number }[];
+  /** 14-day fluid intake per household-local day (issue #28). */
+  daily_fluid?: DailyFluid[];
+  /** Bowel movement summary and longest gap (issue #28). */
+  bowel_summary?: BowelSummary;
   alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
   insulin_logs?: InsulinLog[];
+  prn_logs?: PRNExportLog[];
+}
+
+export interface DailyFluid {
+  date: string;
+  total_ml: number;
+  thickened_ml: number;
+  target_ml: number;
+  percent_of_target: number;
+}
+
+export interface BowelSummary {
+  total_movements: number;
+  hard_count: number;
+  normal_count: number;
+  loose_count: number;
+  last_movement_at?: string | null;
+  days_since_last?: number | null;
+  longest_gap_days: number;
 }
 
 /** One row of the doctor's correction scale: min inclusive, max exclusive, mmol/L. */
@@ -372,3 +399,106 @@ export interface HomeLocation {
   radius_meters: number;
   updated_at?: string;
 }
+export type CareKind = "reposition" | "fluid" | "bowel" | "hygiene" | "physio";
+export type RepositionSide = "left" | "back" | "right";
+export type SkinCondition = "ok" | "red_area" | "";
+export type BowelConsistency = "hard" | "normal" | "loose";
+
+export interface CareEvent {
+  id: string;
+  kind: CareKind;
+  value: string;
+  caregiver_id: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  skin_condition?: SkinCondition;
+  thickened?: boolean;
+  notes?: string;
+  created_at: string;
+  client_request_id?: string;
+}
+
+export interface CareStatus {
+  kind: CareKind;
+  last_at?: string | null;
+  last_value?: string | null;
+  last_caregiver_id?: string | null;
+  last_caregiver_name?: string | null;
+  last_avatar_color?: string | null;
+  last_skin_condition?: SkinCondition | null;
+  interval_minutes: number;
+  next_due_at?: string | null;
+  minutes_since?: number | null;
+  minutes_until_due?: number | null;
+  is_overdue_warning: boolean;
+  is_overdue_critical: boolean;
+  on_duty_caregiver?: Caregiver | null;
+  today_total_ml?: number;
+  today_thickened_ml?: number;
+  target_ml?: number;
+  progress_percent?: number;
+  is_low_fluid?: boolean;
+  days_since_bowel?: number | null;
+  is_bowel_overdue?: boolean;
+}
+
+export interface CareOverview {
+  reposition: CareStatus;
+  fluid: CareStatus;
+  bowel: CareStatus;
+}
+
+export type PRNReasonTag = "headache" | "pain" | "fever" | "other";
+
+export interface PRNLog {
+  id: string;
+  medication_id: string;
+  caregiver_id: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  given_at: string;
+  reason_tag: PRNReasonTag;
+  notes?: string;
+  voided_at?: string;
+  voided_by_name?: string;
+  void_reason?: string;
+  dosage_snapshot?: string;
+  /** When the entry was made (given_at may be earlier): own undo for 10 minutes. */
+  recorded_at?: string;
+}
+
+export interface PRNLastGiven {
+  log_id: string;
+  given_at: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  reason_tag: PRNReasonTag;
+  hours_since: number;
+}
+
+export interface PRNMedicationStatus {
+  medication: Medication;
+  count_last_24h: number;
+  max_per_24h?: number | null;
+  min_hours?: number | null;
+  last_given?: PRNLastGiven | null;
+  next_allowed_at?: string;
+  can_give: boolean;
+  lock_reason?: "limit_reached" | "too_soon" | string;
+  recent_logs: PRNLog[];
+}
+
+export interface PRNExportLog {
+  id: string;
+  medication_id: string;
+  name_ar: string;
+  name_en: string;
+  dosage: string;
+  given_at: string;
+  date: string;
+  reason_tag: PRNReasonTag | string;
+  notes?: string;
+  caregiver_name: string;
+}
+

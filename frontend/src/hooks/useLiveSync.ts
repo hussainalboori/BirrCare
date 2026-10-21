@@ -18,6 +18,7 @@ interface UseLiveSyncOptions {
   onCaregiverSwitched?: (event: SSEEvent) => void;
   onShiftUpdated?: (event: SSEEvent) => void;
   onDutyUpdated?: (event: SSEEvent) => void;
+  onCareEvent?: (event: SSEEvent) => void;
   /**
    * Called whenever events may have been missed: after the stream re-opens
    * following a drop, and when the page returns from the background / bfcache.
@@ -153,6 +154,10 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
             break;
           case "DUTY_UPDATED":
             o.onDutyUpdated?.(parsed);
+            break;
+          case "CARE_EVENT_LOGGED":
+          case "CARE_OVERDUE":
+            o.onCareEvent?.(parsed);
             break;
         }
         // Dispatch browser window event for toasts

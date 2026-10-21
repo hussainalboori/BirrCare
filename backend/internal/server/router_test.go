@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +27,9 @@ import (
 
 func setup(t *testing.T, cfg auth.Config, timeout time.Duration) (*httptest.Server, *sql.DB, *sse.Broker) {
 	t.Helper()
+	if os.Getenv("APP_ENV") == "production" && os.Getenv("APP_TIMEZONE") == "" {
+		t.Setenv("APP_TIMEZONE", "Asia/Riyadh")
+	}
 	database, err := db.InitDB(filepath.Join(t.TempDir(), "birrcare.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -750,6 +754,21 @@ func TestEmergencyCard(t *testing.T) {
 	}
 	if code := do(t, "GET", srv.URL+"/api/v1/emergency/"+random, nil, map[string]string{"Cf-Connecting-Ip": "198.51.100.3"}).StatusCode; code != http.StatusNotFound {
 		t.Fatalf("a different IP was blocked: %d", code)
+	}
+}
+
+func TestHealthReturnsTimezone(t *testing.T) {
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	r := do(t, "GET", srv.URL+"/api/v1/health", nil, nil)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", r.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatalf("failed decoding health response: %v", err)
+	}
+	if body["status"] != "healthy" || body["timezone"] == "" {
+		t.Fatalf("unexpected health body: %+v", body)
 	}
 }
 

@@ -30,6 +30,7 @@ func main() {
 	}
 
 	log.Printf("Starting Birrcare backend on :%s (Database: %s)", port, dbPath)
+	log.Printf("Household clinical time zone: %s", handlers.ClinicalLocation())
 
 	// 1. Initialize SQLite connection pool in WAL mode
 	database, err := db.InitDB(dbPath)
@@ -67,6 +68,9 @@ func main() {
 	reminderCtx, stopReminders := context.WithCancel(context.Background())
 	defer stopReminders()
 	handlers.StartDutyReminders(reminderCtx, database, notifier, broker)
+
+	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
+	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),
