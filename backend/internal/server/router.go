@@ -232,8 +232,9 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/patient/emergency-link", emergencyHandler.RotateLink)
 				api.Post("/shifts/handover/{id}/accept", shiftsHandler.AcceptDuty)
 
-				// Care Events & Repositioning (issue #27)
+				// Care Events, Repositioning, Fluids, Bowel (issues #27, #28)
 				api.Get("/care/status", careHandler.GetStatus)
+				api.Get("/care/overview", careHandler.GetOverview)
 				api.Post("/care/events", careHandler.LogEvent)
 				api.Get("/care/events", careHandler.ListEvents)
 				api.Post("/care/check-overdue", careHandler.CheckOverdue)

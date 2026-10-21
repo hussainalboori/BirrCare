@@ -192,3 +192,204 @@ func TestRepositionSkinRedAreaCreatesUrgentHandover(t *testing.T) {
 		t.Fatalf("expected urgent_flag=1 on handover note for red_area, got %d", urgentFlag)
 	}
 }
+
+func TestFluidTotalsGroupByHouseholdLocalDay(t *testing.T) {
+	med, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// 1. Configure timezone: Asia/Riyadh (UTC+3)
+	riyadh, err := time.LoadLocation("Asia/Riyadh")
+	if err != nil {
+		t.Skip("Asia/Riyadh timezone not loaded on system")
+	}
+	prev := handlers.ClinicalLocation()
+	handlers.SetClinicalLocationForTest(riyadh)
+	defer handlers.SetClinicalLocationForTest(prev)
+
+	h := &handlers.CareHandler{DB: med.DB, Broker: med.Broker}
+	fatima := &models.Caregiver{ID: "cg_fatima", Name: "Fatima", Role: models.RoleCaregiver}
+
+	handlers.SetFluidDailyTarget(1500)
+
+	// In Asia/Riyadh, local midnight of today:
+	now := time.Now().In(riyadh)
+	y, mo, d := now.Date()
+	todayMidnightLocal := time.Date(y, mo, d, 0, 0, 0, 0, riyadh)
+
+	// Event A: 30 minutes before local midnight (yesterday in local time, even if same or different UTC date)
+	yesterdayLocalTimeUTC := todayMidnightLocal.Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	_, err = med.DB.Exec(`
+		INSERT INTO care_events (id, kind, value, caregiver_id, thickened, created_at)
+		VALUES ('ev_fluid_yest', 'fluid', '100', 'cg_fatima', 0, ?)
+	`, yesterdayLocalTimeUTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Event B: 30 minutes after local midnight (today in local time)
+	todayEarlyLocalTimeUTC := todayMidnightLocal.Add(30 * time.Minute).UTC().Format(time.RFC3339)
+	_, err = med.DB.Exec(`
+		INSERT INTO care_events (id, kind, value, caregiver_id, thickened, created_at)
+		VALUES ('ev_fluid_today_1', 'fluid', '150', 'cg_fatima', 1, ?)
+	`, todayEarlyLocalTimeUTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Event C: logged right now via API
+	code, out := logCareEvent(t, h, fatima, map[string]interface{}{
+		"kind":      "fluid",
+		"value":     "200",
+		"thickened": false,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("expected 201 from logCareEvent, got %d %v", code, out)
+	}
+	if out["thickened"] != false {
+		t.Fatalf("expected thickened=false, got %v", out["thickened"])
+	}
+
+	// Fetch fluid status
+	code, status := getCareStatus(t, h, fatima, "fluid")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 from getCareStatus, got %d %v", code, status)
+	}
+
+	// Acceptance criteria: Fluid totals group by household-local day (with APP_TIMEZONE)
+	// Today's total must be 150 + 200 = 350 ml (Event A of 100 ml belongs to yesterday's local day!)
+	totalML, _ := status["today_total_ml"].(float64)
+	if int(totalML) != 350 {
+		t.Fatalf("expected today_total_ml=350, got %v (status: %v)", totalML, status)
+	}
+
+	thickenedML, _ := status["today_thickened_ml"].(float64)
+	if int(thickenedML) != 150 {
+		t.Fatalf("expected today_thickened_ml=150, got %v", thickenedML)
+	}
+
+	targetML, _ := status["target_ml"].(float64)
+	if int(targetML) != 1500 {
+		t.Fatalf("expected target_ml=1500, got %v", targetML)
+	}
+
+	progress, _ := status["progress_percent"].(float64)
+	expectedProgress := 350 * 100 / 1500 // 23%
+	if int(progress) != expectedProgress {
+		t.Fatalf("expected progress_percent=%d, got %v", expectedProgress, progress)
+	}
+}
+
+func TestBowelMovementTrackingAndOverdue(t *testing.T) {
+	med, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	h := &handlers.CareHandler{DB: med.DB, Broker: med.Broker}
+	fatima := &models.Caregiver{ID: "cg_fatima", Name: "Fatima", Role: models.RoleCaregiver}
+
+	// 1. Initial status with no bowel movements is overdue
+	code, status := getCareStatus(t, h, fatima, "bowel")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", code)
+	}
+	if status["is_bowel_overdue"] != true {
+		t.Fatalf("expected is_bowel_overdue=true when no bowel movement recorded yet, got %v", status["is_bowel_overdue"])
+	}
+
+	// 2. Log normal bowel movement
+	code, out := logCareEvent(t, h, fatima, map[string]interface{}{
+		"kind":  "bowel",
+		"value": "normal",
+		"notes": "well hydrated",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d %v", code, out)
+	}
+
+	code, status = getCareStatus(t, h, fatima, "bowel")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", code)
+	}
+	if status["last_value"] != "normal" {
+		t.Fatalf("expected last_value 'normal', got %v", status["last_value"])
+	}
+	if status["is_bowel_overdue"] != false {
+		t.Fatalf("expected is_bowel_overdue=false immediately after log, got %v", status["is_bowel_overdue"])
+	}
+
+	// 3. Test bowel movement from 4 days ago -> triggers is_bowel_overdue
+	fourDaysAgo := time.Now().UTC().Add(-4 * 24 * time.Hour).Format(time.RFC3339)
+	_, err := med.DB.Exec(`
+		UPDATE care_events SET created_at = ? WHERE kind = 'bowel'
+	`, fourDaysAgo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, status = getCareStatus(t, h, fatima, "bowel")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", code)
+	}
+	daysSince, _ := status["days_since_bowel"].(float64)
+	if int(daysSince) < 3 {
+		t.Fatalf("expected days_since_bowel >= 3, got %v", daysSince)
+	}
+	if status["is_bowel_overdue"] != true {
+		t.Fatalf("expected is_bowel_overdue=true after 4 days, got %v", status["is_bowel_overdue"])
+	}
+}
+
+func TestDoctorExportFluidTableAndBowelGap(t *testing.T) {
+	med, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	exp := &handlers.ExportHandler{DB: med.DB}
+	handlers.SetFluidDailyTarget(1500)
+
+	now := time.Now()
+	// Insert fluid events across the past days
+	for i := 0; i < 5; i++ {
+		tPast := now.AddDate(0, 0, -i).UTC().Format(time.RFC3339)
+		_, err := med.DB.Exec(`
+			INSERT INTO care_events (id, kind, value, caregiver_id, thickened, created_at)
+			VALUES (?, 'fluid', '200', 'cg_fatima', ?, ?)
+		`, "ev_fl_"+time.Now().Format("150405")+string(rune('a'+i)), i%2, tPast)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Insert bowel movements with known gap
+	// Movement 1: 8 days ago
+	tBowel1 := now.Add(-8 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	med.DB.Exec(`INSERT INTO care_events (id, kind, value, caregiver_id, created_at) VALUES ('b1', 'bowel', 'hard', 'cg_fatima', ?)`, tBowel1)
+	// Movement 2: 4 days ago (gap of 4 days)
+	tBowel2 := now.Add(-4 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	med.DB.Exec(`INSERT INTO care_events (id, kind, value, caregiver_id, created_at) VALUES ('b2', 'bowel', 'normal', 'cg_fatima', ?)`, tBowel2)
+
+	rec := httptest.NewRecorder()
+	exp.ExportDoctorSummary(rec, httptest.NewRequest(http.MethodGet, "/api/v1/export/summary?days=14", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from export, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	var res handlers.DoctorSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed decoding doctor summary: %v", err)
+	}
+
+	// Acceptance criteria: 14-day fluid table
+	if len(res.DailyFluid) != 14 {
+		t.Fatalf("expected 14 rows in daily_fluid table, got %d", len(res.DailyFluid))
+	}
+
+	// Acceptance criteria: longest gap between bowel movements
+	if res.BowelSummary.TotalMovements != 2 {
+		t.Fatalf("expected 2 total bowel movements, got %d", res.BowelSummary.TotalMovements)
+	}
+	if res.BowelSummary.LongestGapDays < 4 {
+		t.Fatalf("expected longest_gap_days >= 4, got %d", res.BowelSummary.LongestGapDays)
+	}
+	if res.BowelSummary.HardCount != 1 || res.BowelSummary.NormalCount != 1 {
+		t.Fatalf("expected 1 hard and 1 normal bowel movement, got hard=%d, normal=%d", res.BowelSummary.HardCount, res.BowelSummary.NormalCount)
+	}
+}

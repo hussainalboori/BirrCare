@@ -340,11 +340,12 @@ type CareEvent struct {
 	AvatarColor     string  `json:"avatar_color,omitempty"`
 	SkinCondition   string  `json:"skin_condition,omitempty"`
 	Notes           string  `json:"notes,omitempty"`
+	Thickened       bool    `json:"thickened"`
 	CreatedAt       string  `json:"created_at"`
 	ClientRequestID *string `json:"client_request_id,omitempty"`
 }
 
-// CareStatus conveys real-time status of a care task category (e.g. repositioning).
+// CareStatus conveys real-time status of a care task category (e.g. repositioning, fluid, bowel).
 type CareStatus struct {
 	Kind              string     `json:"kind"`
 	LastAt            *string    `json:"last_at"`
@@ -360,5 +361,23 @@ type CareStatus struct {
 	IsOverdueWarning  bool       `json:"is_overdue_warning"`
 	IsOverdueCritical bool       `json:"is_overdue_critical"`
 	OnDutyCaregiver   *Caregiver `json:"on_duty_caregiver,omitempty"`
+
+	// Fluid intake fields (issue #28)
+	TodayTotalML     int  `json:"today_total_ml"`
+	TodayThickenedML int  `json:"today_thickened_ml"`
+	TargetML         int  `json:"target_ml"`
+	ProgressPercent  int  `json:"progress_percent"`
+	IsLowFluid       bool `json:"is_low_fluid"`
+
+	// Bowel movement fields (issue #28)
+	DaysSinceBowel *int `json:"days_since_bowel,omitempty"`
+	IsBowelOverdue bool `json:"is_bowel_overdue"`
+}
+
+// CareOverview groups statuses for all active care task types.
+type CareOverview struct {
+	Reposition CareStatus `json:"reposition"`
+	Fluid      CareStatus `json:"fluid"`
+	Bowel      CareStatus `json:"bowel"`
 }
 

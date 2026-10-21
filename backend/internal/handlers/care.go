@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type LogCareEventRequest struct {
 	Value           string  `json:"value"`
 	SkinCondition   string  `json:"skin_condition,omitempty"`
 	Notes           string  `json:"notes,omitempty"`
+	Thickened       bool    `json:"thickened,omitempty"`
 	ClientRequestID *string `json:"client_request_id,omitempty"`
 }
 
@@ -66,7 +68,7 @@ func valueLabelAr(val string) string {
 	}
 }
 
-// GetStatus returns the real-time status of repositioning (and care tasks).
+// GetStatus returns the real-time status of repositioning, fluid intake, or bowel movement.
 func (h *CareHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
 	if kind == "" {
@@ -87,6 +89,32 @@ func (h *CareHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+// GetOverview returns a combined status of reposition, fluid, and bowel movements.
+func (h *CareHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
+	repo, err := FetchCareStatus(r.Context(), h.DB, "reposition")
+	if err != nil {
+		internalError(w, "failed fetching reposition status", err)
+		return
+	}
+	fluid, err := FetchCareStatus(r.Context(), h.DB, "fluid")
+	if err != nil {
+		internalError(w, "failed fetching fluid status", err)
+		return
+	}
+	bowel, err := FetchCareStatus(r.Context(), h.DB, "bowel")
+	if err != nil {
+		internalError(w, "failed fetching bowel status", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models.CareOverview{
+		Reposition: repo,
+		Fluid:      fluid,
+		Bowel:      bowel,
+	})
+}
+
 func FetchCareStatus(ctx context.Context, db *sql.DB, kind string) (models.CareStatus, error) {
 	intervalMinutes := currentRepositionInterval()
 
@@ -99,17 +127,18 @@ func FetchCareStatus(ctx context.Context, db *sql.DB, kind string) (models.CareS
 
 	var id, value, caregiverID, caregiverName, avatarColor, createdAtStr string
 	var skinCond, notes, clientReqID sql.NullString
+	var thick int
 
 	err := db.QueryRowContext(ctx, `
 		SELECT 
 			e.id, e.value, e.caregiver_id, c.name, c.avatar_color, 
-			COALESCE(e.skin_condition, ''), COALESCE(e.notes, ''), e.created_at, e.client_request_id
+			COALESCE(e.skin_condition, ''), COALESCE(e.notes, ''), COALESCE(e.thickened, 0), e.created_at, e.client_request_id
 		FROM care_events e
 		JOIN caregivers c ON e.caregiver_id = c.id
 		WHERE e.kind = ?
 		ORDER BY e.created_at DESC
 		LIMIT 1
-	`, kind).Scan(&id, &value, &caregiverID, &caregiverName, &avatarColor, &skinCond, &notes, &createdAtStr, &clientReqID)
+	`, kind).Scan(&id, &value, &caregiverID, &caregiverName, &avatarColor, &skinCond, &notes, &thick, &createdAtStr, &clientReqID)
 
 	now := time.Now().UTC()
 
@@ -149,24 +178,86 @@ func FetchCareStatus(ctx context.Context, db *sql.DB, kind string) (models.CareS
 			}
 			status.MinutesSince = &minutesSince
 
-			nextDue := lastTime.UTC().Add(time.Duration(intervalMinutes) * time.Minute)
-			nextDueStr := nextDue.Format(time.RFC3339)
-			status.NextDueAt = &nextDueStr
+			if kind == "reposition" {
+				nextDue := lastTime.UTC().Add(time.Duration(intervalMinutes) * time.Minute)
+				nextDueStr := nextDue.Format(time.RFC3339)
+				status.NextDueAt = &nextDueStr
 
-			minutesUntilDue := int(nextDue.Sub(now).Minutes())
-			status.MinutesUntilDue = &minutesUntilDue
+				minutesUntilDue := int(nextDue.Sub(now).Minutes())
+				status.MinutesUntilDue = &minutesUntilDue
 
-			// Overdue by 15 min: warning
-			if minutesSince >= intervalMinutes+15 {
-				status.IsOverdueWarning = true
-			}
-			// Overdue by 45 min: critical
-			if minutesSince >= intervalMinutes+45 {
-				status.IsOverdueCritical = true
+				// Overdue by 15 min: warning
+				if minutesSince >= intervalMinutes+15 {
+					status.IsOverdueWarning = true
+				}
+				// Overdue by 45 min: critical
+				if minutesSince >= intervalMinutes+45 {
+					status.IsOverdueCritical = true
+				}
 			}
 		}
 	} else if err != sql.ErrNoRows {
 		return status, err
+	}
+
+	// Specific computations for fluid and bowel (issue #28)
+	loc := ClinicalLocation()
+	nowInLoc := time.Now().In(loc)
+
+	if kind == "fluid" {
+		targetML := currentFluidDailyTarget()
+		status.TargetML = targetML
+
+		y, mo, d := nowInLoc.Date()
+		todayStartUTC := time.Date(y, mo, d, 0, 0, 0, 0, loc).UTC().Format(sqliteTimeLayout)
+		todayEndUTC := time.Date(y, mo, d, 0, 0, 0, 0, loc).AddDate(0, 0, 1).UTC().Format(sqliteTimeLayout)
+
+		rows, qErr := db.QueryContext(ctx, `
+			SELECT COALESCE(value, '0'), COALESCE(thickened, 0)
+			FROM care_events
+			WHERE kind = 'fluid' AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
+		`, todayStartUTC, todayEndUTC)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var vStr string
+				var thk int
+				if err := rows.Scan(&vStr, &thk); err == nil {
+					if ml, err := strconv.Atoi(vStr); err == nil && ml > 0 {
+						status.TodayTotalML += ml
+						if thk == 1 {
+							status.TodayThickenedML += ml
+						}
+					}
+				}
+			}
+		}
+
+		if targetML > 0 {
+			status.ProgressPercent = int(float64(status.TodayTotalML) / float64(targetML) * 100)
+		}
+		// Below 50% by 18:00 (household local time) -> amber card / warning
+		if nowInLoc.Hour() >= 18 && status.TodayTotalML < (targetML/2) {
+			status.IsLowFluid = true
+			status.IsOverdueWarning = true
+		}
+	}
+
+	if kind == "bowel" {
+		if status.LastAt != nil {
+			if lastTime, parseErr := parseDBTime(*status.LastAt); parseErr == nil {
+				daysSince := int(nowInLoc.Sub(lastTime.In(loc)).Hours() / 24)
+				status.DaysSinceBowel = &daysSince
+				if daysSince >= 3 {
+					status.IsBowelOverdue = true
+					status.IsOverdueWarning = true
+				}
+			}
+		} else {
+			// No bowel movement recorded yet
+			status.IsBowelOverdue = true
+			status.IsOverdueWarning = true
+		}
 	}
 
 	return status, nil
@@ -203,12 +294,36 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Kind == "fluid" {
+		ml, err := strconv.Atoi(req.Value)
+		if err != nil || ml <= 0 || ml > 5000 {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_VALUE", "fluid value must be a positive number in ml (1-5000)")
+			return
+		}
+		req.Value = strconv.Itoa(ml)
+	}
+	if req.Kind == "bowel" {
+		req.Value = strings.ToLower(req.Value)
+		if req.Value != "hard" && req.Value != "normal" && req.Value != "loose" {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_VALUE", "bowel value must be hard, normal, or loose")
+			return
+		}
+	}
+	if req.Kind == "reposition" {
+		req.Value = strings.ToLower(req.Value)
+		if req.Value != "left" && req.Value != "back" && req.Value != "right" {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_VALUE", "reposition value must be left, back, or right")
+			return
+		}
+	}
+
 	// Idempotency check if client_request_id provided
 	if req.ClientRequestID != nil && *req.ClientRequestID != "" {
 		var existingID, existingValue, existingCreatedAt string
+		var existingThickened int
 		if err := h.DB.QueryRowContext(r.Context(), `
-			SELECT id, value, created_at FROM care_events WHERE client_request_id = ?
-		`, *req.ClientRequestID).Scan(&existingID, &existingValue, &existingCreatedAt); err == nil {
+			SELECT id, value, COALESCE(thickened, 0), created_at FROM care_events WHERE client_request_id = ?
+		`, *req.ClientRequestID).Scan(&existingID, &existingValue, &existingThickened, &existingCreatedAt); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(models.CareEvent{
 				ID:              existingID,
@@ -219,6 +334,7 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 				AvatarColor:     me.AvatarColor,
 				SkinCondition:   req.SkinCondition,
 				Notes:           req.Notes,
+				Thickened:       existingThickened == 1,
 				CreatedAt:       existingCreatedAt,
 				ClientRequestID: req.ClientRequestID,
 			})
@@ -241,10 +357,15 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 		clientReq = sql.NullString{String: *req.ClientRequestID, Valid: true}
 	}
 
+	thickVal := 0
+	if req.Thickened {
+		thickVal = 1
+	}
+
 	_, err = tx.ExecContext(r.Context(), `
-		INSERT INTO care_events (id, kind, value, caregiver_id, skin_condition, notes, created_at, client_request_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, eventID, req.Kind, req.Value, me.ID, req.SkinCondition, req.Notes, nowUTC, clientReq)
+		INSERT INTO care_events (id, kind, value, caregiver_id, skin_condition, notes, thickened, created_at, client_request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, eventID, req.Kind, req.Value, me.ID, req.SkinCondition, req.Notes, thickVal, nowUTC, clientReq)
 	if err != nil {
 		internalError(w, "failed inserting care event", err)
 		return
@@ -269,7 +390,7 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := audit.Record(tx, me.ID, "LOG_CARE_EVENT", "care_events", eventID,
-		fmt.Sprintf("kind: %s, value: %s, skin: %s", req.Kind, req.Value, req.SkinCondition)); err != nil {
+		fmt.Sprintf("kind: %s, value: %s, skin: %s, thickened: %v", req.Kind, req.Value, req.SkinCondition, req.Thickened)); err != nil {
 		internalError(w, "failed to write audit log", err)
 		return
 	}
@@ -288,6 +409,7 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 		AvatarColor:     me.AvatarColor,
 		SkinCondition:   req.SkinCondition,
 		Notes:           req.Notes,
+		Thickened:       req.Thickened,
 		CreatedAt:       nowUTC,
 		ClientRequestID: req.ClientRequestID,
 	}
@@ -318,7 +440,7 @@ func (h *CareHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT 
 			e.id, e.kind, e.value, e.caregiver_id, c.name, c.avatar_color, 
-			COALESCE(e.skin_condition, ''), COALESCE(e.notes, ''), e.created_at, e.client_request_id
+			COALESCE(e.skin_condition, ''), COALESCE(e.notes, ''), COALESCE(e.thickened, 0), e.created_at, e.client_request_id
 		FROM care_events e
 		JOIN caregivers c ON e.caregiver_id = c.id
 	`
@@ -340,13 +462,15 @@ func (h *CareHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var e models.CareEvent
 		var skinCond, notes, clientReq sql.NullString
-		if err := rows.Scan(&e.ID, &e.Kind, &e.Value, &e.CaregiverID, &e.CaregiverName, &e.AvatarColor, &skinCond, &notes, &e.CreatedAt, &clientReq); err == nil {
+		var thick int
+		if err := rows.Scan(&e.ID, &e.Kind, &e.Value, &e.CaregiverID, &e.CaregiverName, &e.AvatarColor, &skinCond, &notes, &thick, &e.CreatedAt, &clientReq); err == nil {
 			if skinCond.Valid {
 				e.SkinCondition = skinCond.String
 			}
 			if notes.Valid {
 				e.Notes = notes.String
 			}
+			e.Thickened = thick == 1
 			if clientReq.Valid {
 				s := clientReq.String
 				e.ClientRequestID = &s

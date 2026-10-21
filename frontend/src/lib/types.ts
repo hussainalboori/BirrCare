@@ -302,11 +302,33 @@ export interface DoctorSummary {
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
   /** Lowest SpO2 and highest temperature per household-local day (issue #22). */
   daily_oxygen_temp?: { date: string; min_spo2?: number; max_temperature_c?: number; readings: number }[];
+  /** 14-day fluid intake per household-local day (issue #28). */
+  daily_fluid?: DailyFluid[];
+  /** Bowel movement summary and longest gap (issue #28). */
+  bowel_summary?: BowelSummary;
   alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
   insulin_logs?: InsulinLog[];
   prn_logs?: PRNExportLog[];
+}
+
+export interface DailyFluid {
+  date: string;
+  total_ml: number;
+  thickened_ml: number;
+  target_ml: number;
+  percent_of_target: number;
+}
+
+export interface BowelSummary {
+  total_movements: number;
+  hard_count: number;
+  normal_count: number;
+  loose_count: number;
+  last_movement_at?: string | null;
+  days_since_last?: number | null;
+  longest_gap_days: number;
 }
 
 /** One row of the doctor's correction scale: min inclusive, max exclusive, mmol/L. */
@@ -357,6 +379,7 @@ export interface InsulinPlanStatus {
 export type CareKind = "reposition" | "fluid" | "bowel" | "hygiene" | "physio";
 export type RepositionSide = "left" | "back" | "right";
 export type SkinCondition = "ok" | "red_area" | "";
+export type BowelConsistency = "hard" | "normal" | "loose";
 
 export interface CareEvent {
   id: string;
@@ -366,6 +389,7 @@ export interface CareEvent {
   caregiver_name?: string;
   avatar_color?: string;
   skin_condition?: SkinCondition;
+  thickened?: boolean;
   notes?: string;
   created_at: string;
   client_request_id?: string;
@@ -386,6 +410,19 @@ export interface CareStatus {
   is_overdue_warning: boolean;
   is_overdue_critical: boolean;
   on_duty_caregiver?: Caregiver | null;
+  today_total_ml?: number;
+  today_thickened_ml?: number;
+  target_ml?: number;
+  progress_percent?: number;
+  is_low_fluid?: boolean;
+  days_since_bowel?: number | null;
+  is_bowel_overdue?: boolean;
+}
+
+export interface CareOverview {
+  reposition: CareStatus;
+  fluid: CareStatus;
+  bowel: CareStatus;
 }
 
 export type PRNReasonTag = "headache" | "pain" | "fever" | "other";

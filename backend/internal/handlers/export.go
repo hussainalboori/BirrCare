@@ -28,15 +28,40 @@ type DoctorSummaryResponse struct {
 	// Blood pressure per household-local day.
 	DailyBP []DailyBP `json:"daily_bp"`
 	// Lowest oxygen and highest temperature per household-local day (issue #22).
-	DailyOxygenTemp []DailyOxygenTemp     `json:"daily_oxygen_temp"`
-	Alertness       map[string]int        `json:"alertness_distribution"`
-	RecentNotes     []models.HandoverNote `json:"recent_notes"`
-	RecentVitals    []models.VitalsLog    `json:"recent_vitals"`
+	DailyOxygenTemp []DailyOxygenTemp `json:"daily_oxygen_temp"`
+	// Daily fluid intake per household-local day (issue #28).
+	DailyFluid []DailyFluid `json:"daily_fluid"`
+	// Bowel movement summary and longest gap between movements (issue #28).
+	BowelSummary BowelSummary          `json:"bowel_summary"`
+	Alertness    map[string]int        `json:"alertness_distribution"`
+	RecentNotes  []models.HandoverNote `json:"recent_notes"`
+	RecentVitals []models.VitalsLog    `json:"recent_vitals"`
 	// Every injection with the reading and what the scale said, so the doctor can
 	// see how the scale is performing and adjust it.
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
 	// PRN (as-needed) medication intake with reasons per day (issue #25).
 	PRNLogs []models.PRNExportLog `json:"prn_logs"`
+}
+
+// DailyFluid is one household-local day of fluid intake (issue #28).
+type DailyFluid struct {
+	Date            string `json:"date"`
+	TotalML         int    `json:"total_ml"`
+	ThickenedML     int    `json:"thickened_ml"`
+	TargetML        int    `json:"target_ml"`
+	PercentOfTarget int    `json:"percent_of_target"`
+	Entries         int    `json:"entries"`
+}
+
+// BowelSummary captures frequency, stool consistency, and gaps between bowel movements (issue #28).
+type BowelSummary struct {
+	TotalMovements int     `json:"total_movements"`
+	LastMovementAt *string `json:"last_movement_at,omitempty"`
+	DaysSinceLast  *int    `json:"days_since_last,omitempty"`
+	LongestGapDays int     `json:"longest_gap_days"`
+	HardCount      int     `json:"hard_count"`
+	NormalCount    int     `json:"normal_count"`
+	LooseCount     int     `json:"loose_count"`
 }
 
 type VitalsStats struct {
@@ -386,6 +411,104 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// 5. Daily fluid intake (issue #28)
+	dailyFluid := []DailyFluid{}
+	targetML := currentFluidDailyTarget()
+	fluidDays := map[string]*DailyFluid{}
+	fluidRows, err := h.DB.Query(`
+		SELECT value, COALESCE(thickened, 0), created_at
+		FROM care_events
+		WHERE kind = 'fluid' AND datetime(created_at) >= datetime(?)
+		ORDER BY created_at ASC
+	`, sinceUTC)
+	if err == nil {
+		defer fluidRows.Close()
+		for fluidRows.Next() {
+			var val, createdAt string
+			var thick int
+			if err := fluidRows.Scan(&val, &thick, &createdAt); err == nil {
+				if t, err := parseDBTime(createdAt); err == nil {
+					day := t.In(loc).Format("2006-01-02")
+					d := fluidDays[day]
+					if d == nil {
+						d = &DailyFluid{Date: day, TargetML: targetML}
+						fluidDays[day] = d
+					}
+					d.Entries++
+					if ml, err := strconv.Atoi(val); err == nil && ml > 0 {
+						d.TotalML += ml
+						if thick == 1 {
+							d.ThickenedML += ml
+						}
+					}
+				}
+			}
+		}
+	}
+	// Walk from startDate to endDate
+	for dt := startDate; !dt.After(endDate); dt = dt.AddDate(0, 0, 1) {
+		dayStr := dt.Format("2006-01-02")
+		d := fluidDays[dayStr]
+		if d == nil {
+			d = &DailyFluid{Date: dayStr, TargetML: targetML}
+		}
+		if targetML > 0 {
+			d.PercentOfTarget = int(float64(d.TotalML) / float64(targetML) * 100)
+		}
+		dailyFluid = append(dailyFluid, *d)
+	}
+
+	// 6. Bowel movements and longest gap (issue #28)
+	var bowel BowelSummary
+	bowelRows, err := h.DB.Query(`
+		SELECT value, created_at
+		FROM care_events
+		WHERE kind = 'bowel'
+		ORDER BY created_at ASC
+	`)
+	if err == nil {
+		defer bowelRows.Close()
+		var prevTime time.Time
+		hasPrev := false
+		var lastTime time.Time
+		hasLast := false
+		for bowelRows.Next() {
+			var val, createdAt string
+			if err := bowelRows.Scan(&val, &createdAt); err == nil {
+				if t, err := parseDBTime(createdAt); err == nil {
+					bowel.TotalMovements++
+					switch strings.ToLower(val) {
+					case "hard":
+						bowel.HardCount++
+					case "normal":
+						bowel.NormalCount++
+					case "loose":
+						bowel.LooseCount++
+					}
+					if hasPrev {
+						gap := int(t.Sub(prevTime).Hours() / 24)
+						if gap > bowel.LongestGapDays {
+							bowel.LongestGapDays = gap
+						}
+					}
+					prevTime = t
+					hasPrev = true
+					lastTime = t
+					hasLast = true
+				}
+			}
+		}
+		if hasLast {
+			lastStr := lastTime.UTC().Format(time.RFC3339)
+			bowel.LastMovementAt = &lastStr
+			daysSince := int(time.Now().Sub(lastTime).Hours() / 24)
+			bowel.DaysSinceLast = &daysSince
+			if daysSince > bowel.LongestGapDays {
+				bowel.LongestGapDays = daysSince
+			}
+		}
+	}
+
 	res := DoctorSummaryResponse{
 		GeneratedAt:     time.Now().UTC(),
 		DaysCovered:     days,
@@ -396,6 +519,8 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		PerMedication:   perMedication,
 		DailyBP:         dailyBP,
 		DailyOxygenTemp: dailyOxy,
+		DailyFluid:      dailyFluid,
+		BowelSummary:    bowel,
 		Alertness:       alertnessMap,
 		RecentNotes:     recentNotes,
 		RecentVitals:    recentVitals,

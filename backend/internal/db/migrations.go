@@ -107,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS care_events (
     caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
     skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
     notes TEXT,
+    thickened INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     client_request_id TEXT UNIQUE
 );
@@ -822,31 +823,31 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
-	// Migrate alerts for reposition_overdue (issue #27)
+	// Migrate alerts for reposition_overdue, bowel_overdue, low_fluid (issues #27, #28)
 	alertsSQL = ""
 	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
-	if !strings.Contains(alertsSQL, "'reposition_overdue'") {
-		log.Println("Migrating alerts: reposition_overdue kind...")
+	if !strings.Contains(alertsSQL, "'bowel_overdue'") {
+		log.Println("Migrating alerts: adding bowel_overdue and low_fluid kinds...")
 		if _, err := database.Exec(`
 			PRAGMA foreign_keys = OFF;
-			DROP TABLE IF EXISTS alerts_v7;
-			CREATE TABLE alerts_v7 (
+			DROP TABLE IF EXISTS alerts_v8;
+			CREATE TABLE alerts_v8 (
 				id TEXT PRIMARY KEY,
-				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue')),
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid')),
 				ref_id TEXT,
 				created_by TEXT REFERENCES caregivers(id),
 				payload TEXT NOT NULL DEFAULT '{}',
 				created_at TEXT DEFAULT (datetime('now')),
 				target_caregiver_id TEXT REFERENCES caregivers(id)
 			);
-			INSERT INTO alerts_v7 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+			INSERT INTO alerts_v8 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
 				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
 			DROP TABLE alerts;
-			ALTER TABLE alerts_v7 RENAME TO alerts;
+			ALTER TABLE alerts_v8 RENAME TO alerts;
 			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
 			PRAGMA foreign_keys = ON;
 		`); err != nil {
-			return fmt.Errorf("failed migrating alerts for reposition_overdue: %w", err)
+			return fmt.Errorf("failed migrating alerts for bowel_overdue: %w", err)
 		}
 	}
 
@@ -859,6 +860,7 @@ func Migrate(database *sql.DB) error {
 			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
 			skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
 			notes TEXT,
+			thickened INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT DEFAULT (datetime('now')),
 			client_request_id TEXT UNIQUE
 		);
@@ -866,6 +868,15 @@ func Migrate(database *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
 	`); err != nil {
 		return fmt.Errorf("failed creating care_events table: %w", err)
+	}
+
+	// Ensure thickened column exists on care_events (issue #28)
+	var thickenedColCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('care_events') WHERE name = 'thickened'").Scan(&thickenedColCount)
+	if thickenedColCount == 0 {
+		if _, err := database.Exec("ALTER TABLE care_events ADD COLUMN thickened INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed adding thickened column to care_events: %w", err)
+		}
 	}
 	// The immutability trigger below must cover the new values too.
 	var trigSQL string
