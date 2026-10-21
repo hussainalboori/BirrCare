@@ -224,7 +224,14 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	daysJSON, _ := json.Marshal(days)
 	timesJSON, _ := json.Marshal(slotTimes)
 
-	_, err := h.DB.Exec(`
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to create medication", err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, is_critical, created_by, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, req.IsCritical, caregiver.ID)
@@ -234,13 +241,32 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "CREATE_MEDICATION", "medication", id, fmt.Sprintf("Added prescription: %s (%s)", req.NameAr, req.Dosage))
-	stockCh, err := h.saveStockSettings(id, caregiver, req.StockSettings)
-	if err != nil {
-		internalError(w, "failed to save stock settings", err)
+	auditDetail := fmt.Sprintf("Added prescription: %s (%s)", req.NameAr, req.Dosage)
+	if err := audit.Record(tx, caregiver.ID, "CREATE_MEDICATION", "medication", id, auditDetail); err != nil {
+		internalError(w, "failed to record audit log", err)
 		return
 	}
-	h.broadcastStock(stockCh, caregiver)
+
+	var stockCh *stockChange
+	if req.StockSettings.StockUnits != nil || req.StockSettings.TrackStock != nil || req.StockSettings.UnitsPerDose != nil || req.StockSettings.RefillThresholdDays != nil {
+		stockCh, err = applyStockSettings(tx, id, caregiver.ID, req.StockSettings, time.Now())
+		if err != nil {
+			internalError(w, "failed to save stock settings", err)
+			return
+		}
+		if err := audit.Record(tx, caregiver.ID, "STOCK_SETTINGS", "medication", id, fmt.Sprintf("Stock settings: %+v", describeStock(req.StockSettings))); err != nil {
+			internalError(w, "failed to record stock audit", err)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit medication creation", err)
+		return
+	}
+	if stockCh != nil {
+		h.broadcastStock(stockCh, caregiver)
+	}
 
 	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
 		ID:          caregiver.ID,
@@ -321,8 +347,47 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	var before struct {
+		NameAr          string
+		NameEn          string
+		Dosage          string
+		InstructionsAr  sql.NullString
+		InstructionsEn  sql.NullString
+		FrequencySlots  string
+		DaysOfWeek      string
+		SlotTimes       string
+		ImageURL        string
+		MinHoursBetween sql.NullFloat64
+		IsCritical      bool
+		IsActive        bool
+	}
+	err = tx.QueryRow(`
+		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
+		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''),
+		       min_hours_between, is_critical, is_active
+		FROM medications WHERE id = ?
+	`, medID).Scan(
+		&before.NameAr, &before.NameEn, &before.Dosage, &before.InstructionsAr, &before.InstructionsEn, &before.FrequencySlots,
+		&before.DaysOfWeek, &before.SlotTimes, &before.ImageURL,
+		&before.MinHoursBetween, &before.IsCritical, &before.IsActive,
+	)
+	if err == sql.ErrNoRows {
+		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "Medication not found")
+		return
+	} else if err != nil {
+		internalError(w, "failed to query medication", err)
+		return
+	}
+
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
-	_, err = h.DB.Exec(`
+	_, err = tx.Exec(`
 		UPDATE medications
 		SET name_ar = COALESCE(NULLIF(?, ''), name_ar),
 		    name_en = COALESCE(NULLIF(?, ''), name_en),
@@ -341,28 +406,37 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 
 	if req.DaysOfWeek != nil && len(req.DaysOfWeek) > 0 {
 		daysJSON, _ := json.Marshal(req.DaysOfWeek)
-		_, _ = h.DB.Exec("UPDATE medications SET days_of_week = ? WHERE id = ?", string(daysJSON), medID)
+		if _, err := tx.Exec("UPDATE medications SET days_of_week = ? WHERE id = ?", string(daysJSON), medID); err != nil {
+			internalError(w, "failed to update days of week", err)
+			return
+		}
 	}
 
 	if req.SlotTimes != nil {
 		var currentSlotsJSON string
-		_ = h.DB.QueryRow("SELECT frequency_slots FROM medications WHERE id = ?", medID).Scan(&currentSlotsJSON)
+		if err := tx.QueryRow("SELECT frequency_slots FROM medications WHERE id = ?", medID).Scan(&currentSlotsJSON); err != nil {
+			internalError(w, "failed to read frequency slots", err)
+			return
+		}
 		var currentSlots []string
 		_ = json.Unmarshal([]byte(currentSlotsJSON), &currentSlots)
 		normalizedTimes := normalizeSlotTimes(req.SlotTimes, currentSlots)
 		timesJSON, _ := json.Marshal(normalizedTimes)
-		_, _ = h.DB.Exec("UPDATE medications SET slot_times = ? WHERE id = ?", string(timesJSON), medID)
+		if _, err := tx.Exec("UPDATE medications SET slot_times = ? WHERE id = ?", string(timesJSON), medID); err != nil {
+			internalError(w, "failed to update slot times", err)
+			return
+		}
 	}
 
 	if req.IsCritical != nil {
-		if _, err := h.DB.Exec("UPDATE medications SET is_critical = ? WHERE id = ?", *req.IsCritical, medID); err != nil {
+		if _, err := tx.Exec("UPDATE medications SET is_critical = ? WHERE id = ?", *req.IsCritical, medID); err != nil {
 			internalError(w, "failed to update medication", err)
 			return
 		}
 	}
 
 	if setMinHours {
-		if _, err := h.DB.Exec("UPDATE medications SET min_hours_between = ? WHERE id = ?", minHours, medID); err != nil {
+		if _, err := tx.Exec("UPDATE medications SET min_hours_between = ? WHERE id = ?", minHours, medID); err != nil {
 			internalError(w, "failed to update medication", err)
 			return
 		}
@@ -373,17 +447,106 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		if *req.IsActive {
 			activeInt = 1
 		}
-		_, _ = h.DB.Exec("UPDATE medications SET is_active = ? WHERE id = ?", activeInt, medID)
+		if _, err := tx.Exec("UPDATE medications SET is_active = ? WHERE id = ?", activeInt, medID); err != nil {
+			internalError(w, "failed to update active status", err)
+			return
+		}
 	}
 
-	stockCh, err := h.saveStockSettings(medID, caregiver, req.StockSettings)
-	if err != nil {
-		internalError(w, "failed to save stock settings", err)
+	var stockCh *stockChange
+	if req.StockSettings.StockUnits != nil || req.StockSettings.TrackStock != nil || req.StockSettings.UnitsPerDose != nil || req.StockSettings.RefillThresholdDays != nil {
+		stockCh, err = applyStockSettings(tx, medID, caregiver.ID, req.StockSettings, time.Now())
+		if err != nil {
+			internalError(w, "failed to save stock settings", err)
+			return
+		}
+		if err := audit.Record(tx, caregiver.ID, "STOCK_SETTINGS", "medication", medID, fmt.Sprintf("Stock settings: %+v", describeStock(req.StockSettings))); err != nil {
+			internalError(w, "failed to record stock audit", err)
+			return
+		}
+	}
+
+	var after struct {
+		NameAr          string
+		NameEn          string
+		Dosage          string
+		InstructionsAr  sql.NullString
+		InstructionsEn  sql.NullString
+		FrequencySlots  string
+		DaysOfWeek      string
+		SlotTimes       string
+		ImageURL        string
+		MinHoursBetween sql.NullFloat64
+		IsCritical      bool
+		IsActive        bool
+	}
+	if err := tx.QueryRow(`
+		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
+		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''),
+		       min_hours_between, is_critical, is_active
+		FROM medications WHERE id = ?
+	`, medID).Scan(
+		&after.NameAr, &after.NameEn, &after.Dosage, &after.InstructionsAr, &after.InstructionsEn, &after.FrequencySlots,
+		&after.DaysOfWeek, &after.SlotTimes, &after.ImageURL,
+		&after.MinHoursBetween, &after.IsCritical, &after.IsActive,
+	); err != nil {
+		internalError(w, "failed to query updated medication", err)
 		return
 	}
-	h.broadcastStock(stockCh, caregiver)
 
-	audit.Log(h.DB, caregiver.ID, "UPDATE_MEDICATION", "medication", medID, fmt.Sprintf("Updated prescription %s", medID))
+	beforeMap := map[string]any{
+		"name_ar":         before.NameAr,
+		"name_en":         before.NameEn,
+		"dosage":          before.Dosage,
+		"instructions_ar": before.InstructionsAr.String,
+		"instructions_en": before.InstructionsEn.String,
+		"frequency_slots": before.FrequencySlots,
+		"days_of_week":    before.DaysOfWeek,
+		"slot_times":      before.SlotTimes,
+		"image_url":       before.ImageURL,
+		"is_critical":     before.IsCritical,
+		"is_active":       before.IsActive,
+	}
+	if before.MinHoursBetween.Valid {
+		beforeMap["min_hours_between"] = before.MinHoursBetween.Float64
+	}
+
+	afterMap := map[string]any{
+		"name_ar":         after.NameAr,
+		"name_en":         after.NameEn,
+		"dosage":          after.Dosage,
+		"instructions_ar": after.InstructionsAr.String,
+		"instructions_en": after.InstructionsEn.String,
+		"frequency_slots": after.FrequencySlots,
+		"days_of_week":    after.DaysOfWeek,
+		"slot_times":      after.SlotTimes,
+		"image_url":       after.ImageURL,
+		"is_critical":     after.IsCritical,
+		"is_active":       after.IsActive,
+	}
+	if after.MinHoursBetween.Valid {
+		afterMap["min_hours_between"] = after.MinHoursBetween.Float64
+	}
+
+	auditPayload, _ := json.Marshal(map[string]any{
+		"action": "Updated prescription",
+		"id":     medID,
+		"before": beforeMap,
+		"after":  afterMap,
+	})
+	if err := audit.Record(tx, caregiver.ID, "UPDATE_MEDICATION", "medication", medID, string(auditPayload)); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit medication update", err)
+		return
+	}
+
+	if stockCh != nil {
+		h.broadcastStock(stockCh, caregiver)
+	}
 
 	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
 		ID:          caregiver.ID,
@@ -459,7 +622,14 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 	daysJSON, _ := json.Marshal(daysToSave)
 	timesJSON, _ := json.Marshal(normalizedTimes)
 
-	_, err = h.DB.Exec(`
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		UPDATE medications
 		SET days_of_week = ?,
 		    slot_times = ?
@@ -470,7 +640,15 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "UPDATE_SCHEDULE", "medication", medID, fmt.Sprintf("Updated schedule for %s", medID))
+	if err := audit.Record(tx, caregiver.ID, "UPDATE_SCHEDULE", "medication", medID, fmt.Sprintf("Updated schedule for %s", medID)); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit schedule update", err)
+		return
+	}
 
 	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
 		ID:          caregiver.ID,
@@ -505,13 +683,28 @@ func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_, err := h.DB.Exec("UPDATE medications SET is_active = 0 WHERE id = ?", medID)
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("UPDATE medications SET is_active = 0 WHERE id = ?", medID)
 	if err != nil {
 		internalError(w, "failed to deactivate medication", err)
 		return
 	}
 
-	audit.Log(h.DB, caregiver.ID, "DEACTIVATE_MEDICATION", "medication", medID, "Deactivated prescription")
+	if err := audit.Record(tx, caregiver.ID, "DEACTIVATE_MEDICATION", "medication", medID, "Deactivated prescription"); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit deactivation", err)
+		return
+	}
 
 	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
 		ID:          caregiver.ID,

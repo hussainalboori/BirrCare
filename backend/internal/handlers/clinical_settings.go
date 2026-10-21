@@ -151,7 +151,14 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fever_c must be 37.5-39.0")
 		return
 	}
-	if _, err := h.DB.ExecContext(r.Context(), `INSERT INTO app_settings (key, value) VALUES
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES
 		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		strconv.Itoa(bp.LowSystolic), strconv.Itoa(bp.LowDiastolic), strconv.Itoa(o.SpO2Warn), strconv.Itoa(o.SpO2Critical),
@@ -159,10 +166,17 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to save thresholds", err)
 		return
 	}
+	if err := audit.Record(tx, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
+		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC)); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit thresholds", err)
+		return
+	}
 	SetBPLowThresholds(bp)
 	SetOxygenFeverThresholds(o)
-	audit.Log(h.DB, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
-		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ClinicalSettings{bp, o})
 }
