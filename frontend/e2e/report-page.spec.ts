@@ -40,7 +40,7 @@ for (const locale of ["ar", "en"] as const) {
   test(`${locale}: at 375px every bottom-bar label is whole and apart from its neighbours`, async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 375, height: 800 });
     await open(page, baseURL!, "/report", locale);
-    await expect(page.locator("nav a")).toHaveCount(7);
+    await expect(page.locator("nav a")).toHaveCount(6);
     const boxes = await page.evaluate(() =>
       [...document.querySelectorAll("nav a")].map((a) => {
         const r = document.createRange();

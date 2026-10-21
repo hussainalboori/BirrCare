@@ -146,7 +146,7 @@ export default function VitalsPage() {
     modalBodyRef.current?.scrollTo?.({ top: 0 });
   }, [liveCrisis]);
 
-  // Quick BP from the bottom bar: /vitals?quick=bp, or an event when already here.
+  // /vitals?quick=bp opens straight on the BP form (crisis links and tests use it).
   const quickFocusRef = useRef(false);
   const openQuickBP = useCallback(() => {
     if (!currentCaregiver || isViewer(currentCaregiver.role)) return;

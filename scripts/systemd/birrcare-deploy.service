@@ -6,5 +6,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# ~/.local/bin first: jq can be installed there without root.
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=%h/birrcare/scripts/auto-deploy.sh
 TimeoutStartSec=30min
