@@ -50,6 +50,9 @@ fi
 # the app can confirm an update took effect (issue #43).
 GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo dev)}"
 export GIT_SHA
+# Leftovers from a build that failed half-way (step 4 below never ran).
+docker image prune -f >/dev/null 2>&1 || true
+docker builder prune -af >/dev/null 2>&1 || true
 echo "--> Rebuilding and starting Docker services (version ${GIT_SHA:0:7})..."
 docker compose build --pull
 docker compose up -d --remove-orphans
@@ -95,6 +98,16 @@ else
   docker compose logs --tail=30 birrcare-frontend
   exit 1
 fi
+
+# 4. Clean up after the build, so the disk doesn't fill up update by update.
+# Each build leaves roughly 2-3 GB: the previous app images (now untagged) and
+# Docker's build cache. Only unused images and cache are removed; the running
+# containers, the database and the backups are untouched. The base images
+# (golang, node, alpine) are kept, so the next build doesn't download them again.
+echo "--> Cleaning up old images and build cache..."
+docker image prune -f >/dev/null 2>&1 || true
+docker builder prune -af >/dev/null 2>&1 || true
+df -h . | awk 'NR==2 {print "    Disk: " $3 " used of " $2 " (" $5 ")"}'
 
 echo "=========================================================="
 echo " ✔ Birrcare successfully deployed and verified!"
