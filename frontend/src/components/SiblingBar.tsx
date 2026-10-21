@@ -45,7 +45,7 @@ export function SiblingBar({ className = "" }: { className?: string }) {
               <span className={`w-full truncate text-center text-xs ${active ? "font-black text-emerald-800 dark:text-emerald-300" : "font-semibold text-slate-700 dark:text-slate-300"}`}>
                 {firstName(c.name)}
               </span>
-              {active && <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">{ar ? "أنت الآن" : "You now"}</span>}
+              {active && <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">{ar ? "أنت الآن" : "You now"}</span>}
             </button>
           );
         })}

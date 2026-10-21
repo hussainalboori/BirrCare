@@ -26,10 +26,12 @@ type DoctorSummaryResponse struct {
 	// medications (anticoagulants, antiplatelets) come first.
 	PerMedication []MedReport `json:"per_medication"`
 	// Blood pressure per household-local day.
-	DailyBP      []DailyBP             `json:"daily_bp"`
-	Alertness    map[string]int        `json:"alertness_distribution"`
-	RecentNotes  []models.HandoverNote `json:"recent_notes"`
-	RecentVitals []models.VitalsLog    `json:"recent_vitals"`
+	DailyBP []DailyBP `json:"daily_bp"`
+	// Lowest oxygen and highest temperature per household-local day (issue #22).
+	DailyOxygenTemp []DailyOxygenTemp     `json:"daily_oxygen_temp"`
+	Alertness       map[string]int        `json:"alertness_distribution"`
+	RecentNotes     []models.HandoverNote `json:"recent_notes"`
+	RecentVitals    []models.VitalsLog    `json:"recent_vitals"`
 	// Every injection with the reading and what the scale said, so the doctor can
 	// see how the scale is performing and adjust it.
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
@@ -54,6 +56,20 @@ type VitalsStats struct {
 	FastPositiveCount int `json:"fast_positive_count"`
 	// Readings flagged as possibly the old form's pre-filled 6.4; left out of the average.
 	UnverifiedSugarCount int `json:"unverified_sugar_count"`
+	// Issue #22: oxygen and temperature over the period.
+	MinSpO2           *int     `json:"min_spo2,omitempty"`
+	LowSpO2Count      int      `json:"low_spo2_count"`      // at or below the warning threshold
+	CriticalSpO2Count int      `json:"critical_spo2_count"` // at or below the critical threshold
+	MaxTemperatureC   *float64 `json:"max_temperature_c,omitempty"`
+	FeverCount        int      `json:"fever_count"`
+}
+
+// DailyOxygenTemp is one household-local day of SpO2 and temperature readings.
+type DailyOxygenTemp struct {
+	Date            string   `json:"date"`
+	MinSpO2         *int     `json:"min_spo2,omitempty"`
+	MaxTemperatureC *float64 `json:"max_temperature_c,omitempty"`
+	Readings        int      `json:"readings"`
 }
 
 type MedAdherence struct {
@@ -91,7 +107,8 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
 		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, ''),
 		       COALESCE(v.supersedes_id, ''), o.systolic, o.diastolic, o.pulse, o.blood_sugar, o.alertness_level, COALESCE(oc.name, ''),
-		       COALESCE(v.correction_reason, ''), COALESCE(v.corrected_at, '')
+		       COALESCE(v.correction_reason, ''), COALESCE(v.corrected_at, ''),
+		       v.spo2, v.temperature_c, o.spo2, o.temperature_c
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		LEFT JOIN vitals_logs o ON o.id = v.supersedes_id
@@ -111,6 +128,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	var bpCount, pulseCount, sugarCount int
 	type bpDay struct{ sumSys, sumDia, n, maxSys, minSys int }
 	bpDays := map[string]*bpDay{}
+	oxyDays := map[string]*DailyOxygenTemp{}
 
 	{
 		defer rows.Close()
@@ -123,8 +141,11 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			var recordedAtStr string
 			var fastResult, lastNormal string
 			var corr correctionScan
+			var spo2 sql.NullInt64
+			var tempC sql.NullFloat64
 			if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &sugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal,
-				&corr.id, &corr.sys, &corr.dia, &corr.pulse, &corr.sugar, &corr.alertness, &corr.by, &corr.reason, &corr.at); err != nil {
+				&corr.id, &corr.sys, &corr.dia, &corr.pulse, &corr.sugar, &corr.alertness, &corr.by, &corr.reason, &corr.at,
+				&spo2, &tempC, &corr.spo2, &corr.temp); err != nil {
 				continue
 			}
 			if sys.Valid && dia.Valid {
@@ -205,6 +226,48 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 			}
 			v.LastNormalAt = sqliteToRFC3339(lastNormal)
 			v.Correction = corr.toModel()
+			setOxygenTemp(&v, spo2, tempC)
+			if v.SpO2 != nil || v.TemperatureC != nil {
+				if v.SpO2 != nil {
+					if stats.MinSpO2 == nil || *v.SpO2 < *stats.MinSpO2 {
+						n := *v.SpO2
+						stats.MinSpO2 = &n
+					}
+					switch v.SpO2Status {
+					case "CRITICAL":
+						stats.CriticalSpO2Count++
+						stats.LowSpO2Count++
+					case "LOW":
+						stats.LowSpO2Count++
+					}
+				}
+				if v.TemperatureC != nil {
+					if stats.MaxTemperatureC == nil || *v.TemperatureC > *stats.MaxTemperatureC {
+						t := *v.TemperatureC
+						stats.MaxTemperatureC = &t
+					}
+					if v.TempStatus == "FEVER" {
+						stats.FeverCount++
+					}
+				}
+				if t, err := time.Parse(sqliteTimeLayout, recordedAtStr); err == nil {
+					day := t.In(loc).Format("2006-01-02")
+					d := oxyDays[day]
+					if d == nil {
+						d = &DailyOxygenTemp{Date: day}
+						oxyDays[day] = d
+					}
+					d.Readings++
+					if v.SpO2 != nil && (d.MinSpO2 == nil || *v.SpO2 < *d.MinSpO2) {
+						n := *v.SpO2
+						d.MinSpO2 = &n
+					}
+					if v.TemperatureC != nil && (d.MaxTemperatureC == nil || *v.TemperatureC > *d.MaxTemperatureC) {
+						t := *v.TemperatureC
+						d.MaxTemperatureC = &t
+					}
+				}
+			}
 			if v.VitalType == "fast" && (strings.Contains(fastResult, `"face":true`) || strings.Contains(fastResult, `"arm":true`) || strings.Contains(fastResult, `"speech":true`)) {
 				stats.FastPositiveCount++
 			}
@@ -228,8 +291,12 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	dailyBP := []DailyBP{}
+	dailyOxy := []DailyOxygenTemp{}
 	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
 		key := day.Format("2006-01-02")
+		if d := oxyDays[key]; d != nil {
+			dailyOxy = append(dailyOxy, *d)
+		}
 		if b := bpDays[key]; b != nil {
 			dailyBP = append(dailyBP, DailyBP{Date: key, AvgSys: float64(b.sumSys) / float64(b.n), AvgDia: float64(b.sumDia) / float64(b.n), MaxSys: b.maxSys, MinSys: b.minSys, Readings: b.n})
 		}
@@ -320,19 +387,20 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	}
 
 	res := DoctorSummaryResponse{
-		GeneratedAt:   time.Now().UTC(),
-		DaysCovered:   days,
-		StartDate:     startDateStr,
-		EndDate:       endDateStr,
-		VitalsStats:   stats,
-		Adherence:     adherence,
-		PerMedication: perMedication,
-		DailyBP:       dailyBP,
-		Alertness:     alertnessMap,
-		RecentNotes:   recentNotes,
-		RecentVitals:  recentVitals,
-		InsulinLogs:   insulinLogs,
-		PRNLogs:       prnLogs,
+		GeneratedAt:     time.Now().UTC(),
+		DaysCovered:     days,
+		StartDate:       startDateStr,
+		EndDate:         endDateStr,
+		VitalsStats:     stats,
+		Adherence:       adherence,
+		PerMedication:   perMedication,
+		DailyBP:         dailyBP,
+		DailyOxygenTemp: dailyOxy,
+		Alertness:       alertnessMap,
+		RecentNotes:     recentNotes,
+		RecentVitals:    recentVitals,
+		InsulinLogs:     insulinLogs,
+		PRNLogs:         prnLogs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

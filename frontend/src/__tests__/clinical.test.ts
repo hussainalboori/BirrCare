@@ -84,3 +84,22 @@ describe("classifyBloodPressure shared fixture (clinical/bp-cases.json)", () => 
     expect(classifyBloodPressure(95, 70).status).toBe("NORMAL");
   });
 });
+
+// Issue #22: the same cases as the Go SpO2 / temperature tests.
+import bands from "../../../clinical/vitals-bands.json";
+import { classifySpO2, classifyTemperature, setOxygenFeverThresholds } from "@/lib/clinical";
+
+describe("SpO2 and temperature shared fixture (clinical/vitals-bands.json)", () => {
+  it("matches every case, in lockstep with the Go classifiers", () => {
+    setOxygenFeverThresholds(bands.spo2_warn, bands.spo2_critical, bands.fever_c);
+    for (const c of bands.spo2_cases) expect(classifySpO2(c.value), `SpO2 ${c.value}`).toBe(c.expected);
+    for (const c of bands.temp_cases) expect(classifyTemperature(c.value), `temp ${c.value}`).toBe(c.expected);
+  });
+  it("follows the doctor's own thresholds", () => {
+    setOxygenFeverThresholds(88, 85, 37.8);
+    expect(classifySpO2(87)).toBe("LOW");
+    expect(classifySpO2(85)).toBe("CRITICAL");
+    expect(classifyTemperature(37.8)).toBe("FEVER");
+    setOxygenFeverThresholds(bands.spo2_warn, bands.spo2_critical, bands.fever_c);
+  });
+});

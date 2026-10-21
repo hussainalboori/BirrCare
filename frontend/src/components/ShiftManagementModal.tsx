@@ -277,7 +277,7 @@ export function ShiftManagementModal({
                 >
                   {t.manageShifts}
                 </h2>
-                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
+                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-bold text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
                   <ShieldAlert className="h-3 w-3" />
                   <span>{locale === "ar" ? "مشرف عام فقط" : "Super Admin"}</span>
                 </span>
@@ -390,7 +390,7 @@ export function ShiftManagementModal({
                       <Sparkles className="h-4 w-4 text-amber-600" />
                       <span>{t.shiftPresets}</span>
                     </h3>
-                    <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-1">
+                    <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-1">
                       {locale === "ar"
                         ? "يمكنك الآن التبديل بضغطة زر واحدة بين وردية الـ 24 ساعة الحالية، أو تفعيل نمط ورديات الـ 4 ساعات (6 ورديات يومياً) عند الحاجة مستقبلاً."
                         : "Easily toggle with 1 click between the current 24-hour shift model or 4-hour shifts (6 daily windows) for future staffing."}
@@ -419,7 +419,7 @@ export function ShiftManagementModal({
                               <span className="text-sm font-extrabold text-slate-900 dark:text-white">
                                 {t[p.titleKey]}
                               </span>
-                              <bdi className="shrink-0 rounded-md bg-slate-100 dark:bg-slate-700 px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:text-slate-200">
+                              <bdi className="shrink-0 rounded-md bg-slate-100 dark:bg-slate-700 px-2 py-0.5 text-xs font-bold text-slate-600 dark:text-slate-200">
                                 {p.badge[locale]}
                               </bdi>
                             </div>
@@ -485,7 +485,7 @@ export function ShiftManagementModal({
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                             {t.shiftNameAr} *
                           </label>
                           <input
@@ -499,7 +499,7 @@ export function ShiftManagementModal({
                         </div>
 
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                             {t.shiftNameEn} *
                           </label>
                           <input
@@ -515,7 +515,7 @@ export function ShiftManagementModal({
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                             {t.shiftStartTime}
                           </label>
                           <input
@@ -528,7 +528,7 @@ export function ShiftManagementModal({
                         </div>
 
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                             {t.shiftEndTime}
                           </label>
                           <input
@@ -541,7 +541,7 @@ export function ShiftManagementModal({
                         </div>
 
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                             {t.shiftColor}
                           </label>
                           <div className="flex items-center gap-1.5 pt-1">
@@ -599,11 +599,11 @@ export function ShiftManagementModal({
                               <span className="text-xs font-bold text-slate-900 dark:text-white">
                                 {locale === "ar" ? s.name_ar : s.name_en}
                               </span>
-                              <span className="text-[10px] text-slate-400 font-normal">
+                              <span className="text-xs text-slate-400 font-normal">
                                 ({locale === "ar" ? s.name_en : s.name_ar})
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                            <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                               <Clock className="h-3 w-3" />
                               <span className="font-mono">
                                 {s.start_time} - {s.end_time}
@@ -637,7 +637,7 @@ export function ShiftManagementModal({
                   {/* Date Picker & Current Duty Banner */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/40">
                     <div>
-                      <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block mb-1">
+                      <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block mb-1">
                         {locale === "ar" ? "تاريخ المناوبة" : "Schedule Date"}
                       </span>
                       <div className="flex items-center gap-2">
@@ -662,7 +662,7 @@ export function ShiftManagementModal({
                       <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-700 shadow-sm">
                         <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                             {t.onDutyNow}
                           </span>
                           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
@@ -670,7 +670,7 @@ export function ShiftManagementModal({
                               {dutyStatus.active_caregiver?.name || t.noCaregiverAssigned}
                             </span>
                             {dutyStatus.active_shift && (
-                              <span className="text-[10px] font-normal text-purple-600 dark:text-purple-400">
+                              <span className="text-xs font-normal text-purple-600 dark:text-purple-400">
                                 ({locale === "ar"
                                   ? dutyStatus.active_shift.name_ar
                                   : dutyStatus.active_shift.name_en})
@@ -705,11 +705,11 @@ export function ShiftManagementModal({
                                 <span className="text-xs font-bold text-slate-900 dark:text-white">
                                   {locale === "ar" ? s.name_ar : s.name_en}
                                 </span>
-                                <span className="rounded-md bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-bold font-mono">
+                                <span className="rounded-md bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 px-1.5 py-0.5 text-xs font-bold font-mono">
                                   {s.start_time} - {s.end_time}
                                 </span>
                               </div>
-                              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
                                 {s.duration_hours} {locale === "ar" ? "ساعات عمل" : "hours duration"}
                               </span>
                             </div>
@@ -747,7 +747,7 @@ export function ShiftManagementModal({
 
             {/* Footer */}
             <div className="flex items-center justify-between p-4 border-t border-slate-100 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
                 {locale === "ar"
                   ? "تنعكس جميع التعديلات فورياً لدى كافة مقدمي الرعاية عبر المزامنة الحية."
                   : "All shift adjustments sync in real-time across all caregiver screens."}

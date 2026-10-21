@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"birrcare/backend/internal/audit"
 )
 
 const SchemaSQL = `
@@ -105,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -177,7 +179,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity_type TEXT NOT NULL,
     entity_id TEXT,
     details TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    prev_hash TEXT,
+    row_hash TEXT
 );
 
 -- 7. Server-side settings (e.g. persisted session signing secret)
@@ -453,6 +457,7 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	var operatorResetID string
 	// Break-glass: an operator with server access can clear 2FA for a caregiver who
 	// lost both their phone and recovery codes (DISABLE_2FA_FOR=<caregiver id>).
 	if id := strings.TrimSpace(os.Getenv("DISABLE_2FA_FOR")); id != "" {
@@ -461,7 +466,8 @@ func Migrate(database *sql.DB) error {
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				log.Printf("[SECURITY] Two-factor authentication DISABLED for %s via DISABLE_2FA_FOR. Remove the variable and restart.", id)
-				_, _ = database.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details) VALUES (lower(hex(randomblob(16))), NULL, '2FA_RESET_BY_OPERATOR', 'caregiver', ?, 'DISABLE_2FA_FOR')`, id)
+				// Audited below, through audit.Record, once the hash-chain columns exist.
+				operatorResetID = id
 			}
 		}
 	}
@@ -755,12 +761,59 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	// Issue #22: oxygen saturation and temperature, and their alert.
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'spo2_low'") {
+		log.Println("Migrating alerts: low oxygen kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v6;
+			CREATE TABLE alerts_v6 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v6 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v6 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for low oxygen: %w", err)
+		}
+	}
+	for _, c := range []struct{ col, def string }{
+		{"spo2", "INTEGER CHECK (spo2 IS NULL OR spo2 BETWEEN 50 AND 100)"},
+		{"temperature_c", "REAL CHECK (temperature_c IS NULL OR temperature_c BETWEEN 30 AND 43)"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vitals_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE vitals_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding vitals_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+	// The immutability trigger below must cover the new values too.
+	var trigSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='vitals_values_immutable'").Scan(&trigSQL)
+	if trigSQL != "" && !strings.Contains(trigSQL, "temperature_c") {
+		if _, err := database.Exec("DROP TRIGGER vitals_values_immutable"); err != nil {
+			return fmt.Errorf("failed replacing vitals immutability trigger: %w", err)
+		}
+	}
+
 	// Issue #15: a reading's values can never be changed in place, only corrected by a
 	// new row, and a reading can be superseded once. (Created after any rebuild above,
 	// which would have dropped them.)
 	if _, err := database.Exec(`
 		CREATE TRIGGER IF NOT EXISTS vitals_values_immutable
-		BEFORE UPDATE OF caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, supersedes_id
+		BEFORE UPDATE OF caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, supersedes_id, spo2, temperature_c
 		ON vitals_logs
 		BEGIN SELECT RAISE(ABORT, 'vitals readings are immutable: post a correction instead'); END;
 		CREATE TRIGGER IF NOT EXISTS vitals_superseded_once
@@ -769,6 +822,97 @@ func Migrate(database *sql.DB) error {
 		BEGIN SELECT RAISE(ABORT, 'this reading was already corrected'); END;
 	`); err != nil {
 		return fmt.Errorf("failed creating vitals immutability triggers: %w", err)
+	}
+
+	// Issue #23: Immutability triggers on clinical columns and append-only audit trail
+	for _, c := range []struct{ col, def string }{
+		{"prev_hash", "TEXT"},
+		{"row_hash", "TEXT"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE audit_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding audit_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+
+	// Backfill hashes for legacy audit rows, once: before the append-only trigger
+	// exists. After that an unhashed row can't be patched (the trigger refuses it,
+	// which would stop the backend from starting); /audit/verify reports it instead.
+	var appendOnly int
+	_ = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='audit_no_update'").Scan(&appendOnly)
+	if appendOnly == 0 {
+		type legacyRow struct {
+			rowid                                                             int64
+			id, caregiverID, action, entityType, entityID, details, createdAt string
+		}
+		// Read every row and close the cursor before the next query: the pool has a
+		// single connection, so querying with the cursor open would hang the boot.
+		rows, err := database.Query("SELECT rowid, id, COALESCE(caregiver_id, ''), action, entity_type, COALESCE(entity_id, ''), COALESCE(details, ''), COALESCE(created_at, datetime('now')) FROM audit_logs WHERE row_hash IS NULL ORDER BY rowid ASC")
+		if err != nil {
+			return fmt.Errorf("failed querying unhashed audit logs: %w", err)
+		}
+		var legacy []legacyRow
+		for rows.Next() {
+			var lr legacyRow
+			if err := rows.Scan(&lr.rowid, &lr.id, &lr.caregiverID, &lr.action, &lr.entityType, &lr.entityID, &lr.details, &lr.createdAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("failed scanning unhashed audit row: %w", err)
+			}
+			legacy = append(legacy, lr)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("failed reading unhashed audit logs: %w", err)
+		}
+
+		var prevHash string
+		_ = database.QueryRow("SELECT row_hash FROM audit_logs WHERE row_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1").Scan(&prevHash)
+		for _, lr := range legacy {
+			rowHash := audit.ComputeHash(prevHash, lr.id, lr.caregiverID, lr.action, lr.entityID, lr.details, lr.createdAt)
+			if _, err := database.Exec("UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE rowid = ?", prevHash, rowHash, lr.rowid); err != nil {
+				return fmt.Errorf("failed backfilling audit hash: %w", err)
+			}
+			prevHash = rowHash
+		}
+	}
+
+	// Triggers for append-only audit trail and immutable clinical logs:
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS audit_no_update
+		BEFORE UPDATE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS audit_no_delete
+		BEFORE DELETE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, slot, scheduled_date, status, notes, dosage_snapshot
+		ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication log entries are immutable: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON medication_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this dose was already voided'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_no_delete
+		BEFORE DELETE ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication logs cannot be deleted: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS vitals_no_delete
+		BEFORE DELETE ON vitals_logs
+		BEGIN SELECT RAISE(ABORT, 'vitals logs cannot be deleted: post a correction instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating immutability triggers: %w", err)
+	}
+	if operatorResetID != "" {
+		if err := audit.Record(database, "", "2FA_RESET_BY_OPERATOR", "caregiver", operatorResetID, "DISABLE_2FA_FOR"); err != nil {
+			return fmt.Errorf("failed auditing the operator 2FA reset: %w", err)
+		}
 	}
 
 	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.

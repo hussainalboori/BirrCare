@@ -99,6 +99,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه صحي — افتح رعاية بر"
 		}
 	}
+	if kind == "spo2_low" {
+		body = "Oxygen level alert — open Birrcare"
+		if ar {
+			body = "تنبيه نسبة الأكسجين — افتح رعاية بر"
+		}
+	}
 	if kind == "bp_crisis" || kind == "bp_low" {
 		body = "Blood pressure alert — open Birrcare"
 		if ar {

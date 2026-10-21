@@ -218,6 +218,11 @@ type VitalsLog struct {
 	Correction  *VitalCorrection `json:"correction,omitempty"`
 	BPStatus    string           `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
 	SugarStatus string           `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+	// Issue #22: oxygen saturation (%) and temperature (C).
+	SpO2         *int     `json:"spo2,omitempty"`
+	TemperatureC *float64 `json:"temperature_c,omitempty"`
+	SpO2Status   string   `json:"spo2_status,omitempty"` // 'NORMAL', 'LOW', 'CRITICAL'
+	TempStatus   string   `json:"temp_status,omitempty"` // 'NORMAL', 'FEVER', 'LOW'
 }
 
 // VitalCorrection describes the reading a correction replaced.
@@ -228,6 +233,8 @@ type VitalCorrection struct {
 	OriginalPulse        *int     `json:"original_pulse,omitempty"`
 	OriginalBloodSugar   *float64 `json:"original_blood_sugar,omitempty"`
 	OriginalAlertness    *string  `json:"original_alertness_level,omitempty"`
+	OriginalSpO2         *int     `json:"original_spo2,omitempty"`
+	OriginalTemperatureC *float64 `json:"original_temperature_c,omitempty"`
 	OriginalLoggedByName string   `json:"original_logged_by_name"`
 	Reason               string   `json:"reason"`
 	CorrectedAt          string   `json:"corrected_at"` // RFC3339

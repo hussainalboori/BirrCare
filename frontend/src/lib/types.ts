@@ -169,7 +169,7 @@ export interface DailyScheduleResponse {
   schedule: ScheduledDose[];
 }
 
-export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast";
+export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast" | "spo2" | "temp";
 
 export interface VitalsLog {
   id: string;
@@ -190,6 +190,11 @@ export interface VitalsLog {
   fast_result?: { face: boolean; arm: boolean; speech: boolean };
   /** When she was last seen normal (RFC3339), for the paramedics. */
   last_normal_at?: string;
+  /** Issue #22: oxygen saturation (%) and temperature (°C). */
+  spo2?: number;
+  temperature_c?: number;
+  spo2_status?: "NORMAL" | "LOW" | "CRITICAL";
+  temp_status?: "NORMAL" | "FEVER" | "LOW";
   /** Set on a corrected reading: what was first entered (issue #15). */
   correction?: {
     original_id: string;
@@ -198,6 +203,8 @@ export interface VitalsLog {
     original_pulse?: number;
     original_blood_sugar?: number;
     original_alertness_level?: string;
+    original_spo2?: number;
+    original_temperature_c?: number;
     original_logged_by_name: string;
     reason: string;
     corrected_at: string;
@@ -256,6 +263,11 @@ export interface DoctorSummary {
     avg_blood_sugar?: number;
     /** Readings flagged as possibly the old pre-filled 6.4; left out of the average. */
     unverified_sugar_count?: number;
+    min_spo2?: number;
+    low_spo2_count?: number;
+    critical_spo2_count?: number;
+    max_temperature_c?: number;
+    fever_count?: number;
   };
   adherence: {
     total_scheduled: number;
@@ -288,6 +300,8 @@ export interface DoctorSummary {
   }[];
   /** Blood pressure per household-local day. */
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
+  /** Lowest SpO2 and highest temperature per household-local day (issue #22). */
+  daily_oxygen_temp?: { date: string; min_spo2?: number; max_temperature_c?: number; readings: number }[];
   alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];

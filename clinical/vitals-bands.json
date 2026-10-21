@@ -1,0 +1,27 @@
+{
+  "_comment": "Issue #22: shared by the Go (CalculateSpO2Status, CalculateTempStatus) and TypeScript (classifySpO2, classifyTemperature) tests so both stay in lockstep. Default thresholds: SpO2 <= 92 LOW (re-check, call the doctor), <= 88 CRITICAL (alert); temperature >= 38.0 FEVER, < 35.0 LOW.",
+  "spo2_warn": 92,
+  "spo2_critical": 88,
+  "fever_c": 38.0,
+  "spo2_cases": [
+    { "value": 100, "expected": "NORMAL" },
+    { "value": 95, "expected": "NORMAL" },
+    { "value": 93, "expected": "NORMAL" },
+    { "value": 92, "expected": "LOW" },
+    { "value": 90, "expected": "LOW" },
+    { "value": 89, "expected": "LOW" },
+    { "value": 88, "expected": "CRITICAL" },
+    { "value": 87, "expected": "CRITICAL" },
+    { "value": 70, "expected": "CRITICAL" },
+    { "value": 50, "expected": "CRITICAL" }
+  ],
+  "temp_cases": [
+    { "value": 36.6, "expected": "NORMAL" },
+    { "value": 37.9, "expected": "NORMAL" },
+    { "value": 38.0, "expected": "FEVER" },
+    { "value": 39.5, "expected": "FEVER" },
+    { "value": 35.0, "expected": "NORMAL" },
+    { "value": 34.9, "expected": "LOW" },
+    { "value": 30.0, "expected": "LOW" }
+  ]
+}

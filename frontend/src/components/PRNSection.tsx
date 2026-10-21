@@ -195,7 +195,7 @@ export function PRNSection() {
             <h2 className="text-sm font-black text-slate-800 dark:text-slate-100">
               {locale === "ar" ? "أدوية عند الحاجة (PRN)" : "As-needed (PRN) Medications"}
             </h2>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               {locale === "ar"
                 ? "محمية بسقف ٢٤ ساعة والفاصل الزمني الآمن لمنع تراكم الجرعات"
                 : "Locked with 24-hour maximum and minimum intervals against accidental overdose"}
@@ -244,7 +244,7 @@ export function PRNSection() {
                       <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800 dark:bg-blue-950/80 dark:text-blue-300">
                         {med.dosage}
                       </span>
-                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                         <Ltr>{count24} / {max24}</Ltr> {locale === "ar" ? "اليوم" : "today"}
                       </span>
                     </div>
@@ -336,7 +336,7 @@ export function PRNSection() {
                   <button
                     type="button"
                     onClick={() => setExpandedMedId(isExpanded ? null : med.id)}
-                    className="flex w-full items-center justify-between text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 py-1"
+                    className="flex w-full items-center justify-between text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 py-1"
                   >
                     <span>
                       {locale === "ar" ? "سجل الجرعات السابقة" : "Previous intake history"} ({medStatus.recent_logs.length})
@@ -367,10 +367,10 @@ export function PRNSection() {
                               <span style={{ color: log.avatar_color || undefined }} className="font-bold">
                                 {log.caregiver_name}
                               </span>
-                              <span className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px]">
+                              <span className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-xs">
                                 {reasonChip?.[locale === "ar" ? "ar" : "en"] || log.reason_tag}
                               </span>
-                              {log.notes && <span className="text-[11px] text-slate-400 italic truncate max-w-[120px]">“{log.notes}”</span>}
+                              {log.notes && <span className="text-xs text-slate-400 italic truncate max-w-[120px]">“{log.notes}”</span>}
                             </div>
 
                             {!isVoided && (
@@ -378,7 +378,7 @@ export function PRNSection() {
                                 type="button"
                                 onClick={() => handleVoidDose(log.id)}
                                 title={locale === "ar" ? "إلغاء نقرة خطأ" : "Void mis-tap"}
-                                className="flex items-center gap-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 px-1.5 py-0.5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                                className="flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 px-1.5 py-0.5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/50"
                               >
                                 <RotateCcw className="h-3 w-3" />
                                 <span>{locale === "ar" ? "تراجع" : "Undo"}</span>
@@ -468,7 +468,7 @@ export function PRNSection() {
                           ? "صداع حاد ومفاجئ («الأسوأ في حياتها» / انفجاري)؟"
                           : "Sudden, severe headache ('worst headache of life')?"}
                       </span>
-                      <span className="text-rose-800/80 dark:text-rose-300/80 text-[11px]">
+                      <span className="text-rose-800/80 dark:text-rose-300/80 text-xs">
                         {locale === "ar"
                           ? "علامة تحذيرية حمراء لاحتمال نزيف دماغي حاد"
                           : "Critical red flag for potential intracranial hemorrhage"}
