@@ -356,7 +356,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "الاسم بالعربية *" : "Arabic Name *"}
                   </label>
                   <input
@@ -370,7 +370,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "الاسم بالإنجليزية" : "English Name"}
                   </label>
                   <input
@@ -383,7 +383,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "الجرعة المقررة *" : "Prescribed Dosage *"}
                   </label>
                   <input
@@ -399,7 +399,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
               {/* FREQUENCY SLOTS & EXACT TIMES */}
               <div className="mb-4">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -436,7 +436,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                         {/* Clock Time input */}
                         {isChecked && (
                           <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
-                            <span className="text-[10px] text-slate-400 font-mono">⏰</span>
+                            <span className="text-xs text-slate-400 font-mono">⏰</span>
                             <input
                               type="time"
                               value={currentSlotTime}
@@ -458,7 +458,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
               {/* MINIMUM INTERVAL (cross-midnight double-dose lock) */}
               <div className="mb-4">
-                <label htmlFor="min-hours" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="min-hours" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   {locale === "ar" ? "أقل عدد ساعات بين جرعتين (حسب الطبيب)" : "Minimum hours between two doses (doctor's value)"}
                 </label>
                 <input
@@ -524,13 +524,13 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
               {/* DAYS OF WEEK SELECTION */}
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                     {locale === "ar" ? "أيام أخذ الدواء في الأسبوع *" : "Prescription Days of Week *"}
                   </label>
                   <button
                     type="button"
                     onClick={() => setDaysOfWeek(ALL_DAY_IDS)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${
+                    className={`text-xs font-bold px-2 py-0.5 rounded-md border transition-all ${
                       daysOfWeek.length === 7
                         ? "bg-amber-500 text-white border-amber-500"
                         : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700"
@@ -563,7 +563,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
               {/* INSTRUCTIONS */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "تعليمات الاستخدام (عربي)" : "Instructions (Arabic)"}
                   </label>
                   <input
@@ -576,7 +576,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "تعليمات الاستخدام (إنجليزي)" : "Instructions (English)"}
                   </label>
                   <input
@@ -591,7 +591,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
               {/* PILL APPEARANCE & IMAGE SELECTOR */}
               <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white/70 dark:bg-slate-800/50 p-3">
-                <label className="block text-[11px] font-bold text-slate-800 dark:text-slate-200 mb-2">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">
                   {locale === "ar" ? "شكل ولون الحبة للتعرف البصري (Pill Appearance)" : "Pill Appearance & Visual Identifier"}
                 </label>
 
@@ -617,7 +617,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                           type="button"
                           key={p.id}
                           onClick={() => setImageUrl(p.url)}
-                          className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[11px] font-semibold transition-all ${
+                          className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-xs font-semibold transition-all ${
                             isSelected
                               ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 ring-1 ring-amber-500"
                               : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
@@ -707,7 +707,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                           <span className="text-sm font-bold text-slate-900 dark:text-white">
                             {name}
                           </span>
-                          <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
+                          <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
                             {med.dosage}
                           </span>
                         </div>
@@ -721,7 +721,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                       {/* Scheduled days & slots */}
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Days badge */}
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-[10px] font-bold text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-xs font-bold text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
                           <Check className="h-3 w-3" />
                           <span>
                             {!med.days_of_week || med.days_of_week.length === 7
@@ -741,7 +741,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                           return (
                             <span
                               key={s}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-700 dark:text-slate-300"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300"
                             >
                               <Clock className="h-3 w-3 text-slate-400" />
                               <span>{locale === "ar" ? slotDef?.labelAr || s : slotDef?.labelEn || s}</span>

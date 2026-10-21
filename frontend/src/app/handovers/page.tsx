@@ -317,7 +317,7 @@ export default function HandoversPage() {
                           }`}
                         >
                           <span>{ar ? s.name_ar : s.name_en}</span>
-                          <span className="text-[10px] opacity-75 font-mono">
+                          <span className="text-xs opacity-75 font-mono">
                             {s.start_time} - {s.end_time}
                           </span>
                         </button>
@@ -448,7 +448,7 @@ export default function HandoversPage() {
                           : (t.shifts as Record<string, string>)[note.shift_type] || note.shift_type;
                         return (
                           <span
-                            className="rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            className="rounded-md px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
                             style={
                               matchedShift?.color
                                 ? { borderInlineStart: `3px solid ${matchedShift.color}` }
@@ -461,14 +461,14 @@ export default function HandoversPage() {
                       })()}
                     </div>
 
-                    <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <div className="flex items-center gap-1 text-xs text-slate-400">
                       <Clock className="h-3 w-3" />
                       <Ltr>{dateStr} • {timeStr}</Ltr>
                     </div>
                   </div>
 
                   {note.urgent_flag && (
-                    <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                    <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-0.5 text-xs font-bold text-white">
                       <AlertTriangle className="h-3 w-3" />
                       <span>{t.urgentFlag}</span>
                     </div>
