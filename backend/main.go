@@ -30,6 +30,7 @@ func main() {
 	}
 
 	log.Printf("Starting Birrcare backend on :%s (Database: %s)", port, dbPath)
+	log.Printf("Household clinical time zone: %s", handlers.ClinicalLocation())
 
 	// 1. Initialize SQLite connection pool in WAL mode
 	database, err := db.InitDB(dbPath)

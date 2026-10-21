@@ -274,6 +274,15 @@ CREATE INDEX IF NOT EXISTS idx_shift_assignments_date ON shift_assignments(date)
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.
 func Migrate(database *sql.DB) error {
+	if os.Getenv("APP_ENV") == "production" {
+		tz := strings.TrimSpace(os.Getenv("APP_TIMEZONE"))
+		if tz == "" {
+			return fmt.Errorf("APP_TIMEZONE is required when APP_ENV=production (e.g. APP_TIMEZONE=Asia/Riyadh)")
+		}
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("invalid APP_TIMEZONE %q: %w", tz, err)
+		}
+	}
 	// Whether medication_logs is created by this run (fresh database): only then, or
 	// right after rebuilding it, may Migrate create the dose-lock index. If it later
 	// goes missing or is replaced, boot is refused rather than silently "repaired".

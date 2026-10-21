@@ -321,3 +321,36 @@ export function EmergencySetupBanner() {
     </div>
   );
 }
+
+/** Admins see this when the server timezone does not match device timezone (issue #26). */
+export function TimezoneMismatchBanner() {
+  const { locale } = useLanguage();
+  const { currentCaregiver } = useCaregiver();
+  const [serverTz, setServerTz] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchApi<{ timezone?: string }>("/health")
+      .then((data) => {
+        if (data?.timezone) {
+          setServerTz(data.timezone);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const role = currentCaregiver?.role;
+  if (role !== "admin" && role !== "super_admin") return null;
+  if (!serverTz) return null;
+
+  const deviceTz = typeof Intl !== "undefined" && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : null;
+  if (!deviceTz || serverTz === deviceTz) return null;
+
+  return (
+    <div role="alert" data-testid="timezone-mismatch-banner" className="bg-amber-600 px-4 py-2 text-center text-sm font-bold text-white">
+      {locale === "ar"
+        ? `تنبيه المنطقة الزمنية: الخادم يعمل بتوقيت (${serverTz}) بينما جهازك مضبوط على (${deviceTz}). قد تختلف تواريخ الجرعات والتقارير بين منتصف الليل وفجر اليوم.`
+        : `Time zone mismatch: Server is in (${serverTz}) while your device is set to (${deviceTz}). Dose dates and reports may differ around midnight.`}
+    </div>
+  );
+}
+
