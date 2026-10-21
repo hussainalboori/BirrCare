@@ -42,7 +42,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 	defer rows.Close()
 
 	now := time.Now().UTC()
-	var list []models.PRNMedicationStatus
+	list := []models.PRNMedicationStatus{} // [] not null when there are none
 
 	type prnBase struct {
 		med      models.Medication
@@ -188,7 +188,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 		logRows, err := h.DB.QueryContext(r.Context(), `
 			SELECT l.id, l.medication_id, l.caregiver_id, c.name, COALESCE(c.avatar_color, ''),
 			       l.given_at, l.reason_tag, COALESCE(l.notes, ''), COALESCE(l.voided_at, ''),
-			       COALESCE(v.name, ''), COALESCE(l.void_reason, ''), COALESCE(l.dosage_snapshot, '')
+			       COALESCE(v.name, ''), COALESCE(l.void_reason, ''), COALESCE(l.dosage_snapshot, ''), COALESCE(l.recorded_at, '')
 			FROM prn_logs l
 			JOIN caregivers c ON l.caregiver_id = c.id
 			LEFT JOIN caregivers v ON l.voided_by = v.id
@@ -199,9 +199,12 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 		if err == nil {
 			for logRows.Next() {
 				var pl models.PRNLog
-				var givenAt, voidedAt string
+				var givenAt, voidedAt, recordedAt string
 				if err := logRows.Scan(&pl.ID, &pl.MedicationID, &pl.CaregiverID, &pl.CaregiverName, &pl.AvatarColor,
-					&givenAt, &pl.ReasonTag, &pl.Notes, &voidedAt, &pl.VoidedByName, &pl.VoidReason, &pl.DosageSnapshot); err == nil {
+					&givenAt, &pl.ReasonTag, &pl.Notes, &voidedAt, &pl.VoidedByName, &pl.VoidReason, &pl.DosageSnapshot, &recordedAt); err == nil {
+					if recordedAt != "" {
+						pl.RecordedAt = sqliteToRFC3339(recordedAt)
+					}
 					pl.GivenAt = sqliteToRFC3339(givenAt)
 					if voidedAt != "" {
 						pl.VoidedAt = sqliteToRFC3339(voidedAt)
@@ -353,7 +356,8 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 
 	// Query last given dose for conflict reporting
 	var lastGivenID, lastGivenAt, lastGiverName, lastAvatar, lastReason string
-	lastErr := tx.QueryRow(`
+	// Last dose, named in the 24h-limit reply.
+	_ = tx.QueryRow(`
 		SELECT l.id, l.given_at, c.name, COALESCE(c.avatar_color, ''), l.reason_tag
 		FROM prn_logs l
 		JOIN caregivers c ON l.caregiver_id = c.id
@@ -395,9 +399,19 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enforce minimum hours gap
+	// Enforce minimum hours gap against the nearest dose in either direction, so a
+	// late entry with an earlier given_at can't land next to an older dose (#7).
 	var intervalOverridden bool
-	if prnMinHours != nil && *prnMinHours > 0 && lastErr == nil {
+	var nearAt, nearName, nearAvatar string
+	nearErr := tx.QueryRow(`
+		SELECT l.given_at, c.name, COALESCE(c.avatar_color, '')
+		FROM prn_logs l JOIN caregivers c ON l.caregiver_id = c.id
+		WHERE l.medication_id = ? AND l.voided_at IS NULL
+		ORDER BY ABS(julianday(l.given_at) - julianday(?)) ASC
+		LIMIT 1
+	`, req.MedicationID, givenAtStr).Scan(&nearAt, &nearName, &nearAvatar)
+	if prnMinHours != nil && *prnMinHours > 0 && nearErr == nil {
+		lastGivenAt, lastGiverName, lastAvatar := nearAt, nearName, nearAvatar
 		if t, err := time.Parse(sqliteTimeLayout, lastGivenAt); err == nil {
 			hoursSince := math.Abs(givenAt.Sub(t.UTC()).Hours())
 			if hoursSince < *prnMinHours {
@@ -426,9 +440,9 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 	// 3. Insert PRN log
 	logID := "prn_" + uuid.New().String()[:8]
 	_, err = tx.Exec(`
-		INSERT INTO prn_logs (id, medication_id, caregiver_id, given_at, reason_tag, notes, dosage_snapshot)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, logID, req.MedicationID, caregiver.ID, givenAtStr, req.ReasonTag, req.Notes, dosage)
+		INSERT INTO prn_logs (id, medication_id, caregiver_id, given_at, reason_tag, notes, dosage_snapshot, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, logID, req.MedicationID, caregiver.ID, givenAtStr, req.ReasonTag, req.Notes, dosage, now.Format(sqliteTimeLayout))
 	if err != nil {
 		internalError(w, "failed to insert PRN dose log", err)
 		return
@@ -470,7 +484,10 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 		}
 
 		auditMsg := fmt.Sprintf("Overrode %s for %s (%s). Reason: %s", overrideType, nameAr, req.MedicationID, req.OverrideReason)
-		_ = audit.Record(tx, caregiver.ID, "PRN_OVERRIDE", "prn_log", logID, auditMsg)
+		if err := audit.Record(tx, caregiver.ID, "PRN_OVERRIDE", "prn_log", logID, auditMsg); err != nil {
+			internalError(w, "failed to write audit log", err)
+			return
+		}
 	}
 
 	// Commit transaction
@@ -540,12 +557,11 @@ func (h *MedicationHandler) VoidPRNDose(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req VoidPRNDoseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		req.Reason = "Mistake / cancellation"
-	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.Reason == "" {
-		req.Reason = "Mistake / cancellation"
+	if len(req.Reason) > maxOverrideReasonLen {
+		writeJSONError(w, http.StatusBadRequest, "REASON_TOO_LONG", "reason is too long")
+		return
 	}
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
@@ -555,8 +571,8 @@ func (h *MedicationHandler) VoidPRNDose(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tx.Rollback()
 
-	var medID, voidedAt sql.NullString
-	err = tx.QueryRow(`SELECT medication_id, voided_at FROM prn_logs WHERE id = ?`, logID).Scan(&medID, &voidedAt)
+	var medID, voidedAt, loggedBy, recordedAt sql.NullString
+	err = tx.QueryRow(`SELECT medication_id, voided_at, caregiver_id, recorded_at FROM prn_logs WHERE id = ?`, logID).Scan(&medID, &voidedAt, &loggedBy, &recordedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSONError(w, http.StatusNotFound, "LOG_NOT_FOUND", "PRN dose log not found")
 		return
@@ -573,6 +589,25 @@ func (h *MedicationHandler) VoidPRNDose(w http.ResponseWriter, r *http.Request) 
 	now := time.Now().UTC()
 	nowStr := now.Format(sqliteTimeLayout)
 
+	// Cancelling frees a place in the 24h cap, so the rule of #8 applies: your own
+	// entry within 10 minutes; otherwise only an admin, with a reason.
+	tapped, terr := time.Parse(sqliteTimeLayout, recordedAt.String)
+	ownUndo := recordedAt.Valid && terr == nil && loggedBy.String == caregiver.ID && now.Sub(tapped) <= undoWindow
+	if !ownUndo {
+		if !auth.CanManageMedications(caregiver) {
+			writeJSONError(w, http.StatusForbidden, "VOID_NOT_ALLOWED",
+				"Only the person who recorded it can cancel within 10 minutes; after that, ask an admin")
+			return
+		}
+		if req.Reason == "" {
+			writeJSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "Write why this entry is being cancelled")
+			return
+		}
+	}
+	if req.Reason == "" {
+		req.Reason = "Undo"
+	}
+
 	_, err = tx.Exec(`
 		UPDATE prn_logs
 		SET voided_at = ?, voided_by = ?, void_reason = ?
@@ -584,11 +619,18 @@ func (h *MedicationHandler) VoidPRNDose(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Restore stock if tracked
-	stockCh, _ := returnDoseToStock(tx, medID.String, logID, caregiver.ID, now)
+	stockCh, err := returnDoseToStock(tx, medID.String, logID, caregiver.ID, now)
+	if err != nil {
+		internalError(w, "failed to restore stock", err)
+		return
+	}
 
 	// Record audit trail
-	auditDetails := fmt.Sprintf("Voided PRN dose %s for med %s. Reason: %s", logID, medID.String, req.Reason)
-	_ = audit.Record(tx, caregiver.ID, "PRN_VOIDED", "prn_log", logID, auditDetails)
+	auditDetails := fmt.Sprintf("Voided PRN dose %s for med %s (recorded by %s). Reason: %s", logID, medID.String, loggedBy.String, req.Reason)
+	if err := audit.Record(tx, caregiver.ID, "PRN_VOIDED", "prn_log", logID, auditDetails); err != nil {
+		internalError(w, "failed to write audit log", err)
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		internalError(w, "failed to commit PRN void", err)

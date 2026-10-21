@@ -980,6 +980,32 @@ func Migrate(database *sql.DB) error {
 	`); err != nil {
 		return fmt.Errorf("failed creating prn_logs table: %w", err)
 	}
+	// When the entry was made (given_at may be backdated): the own-undo window.
+	var prnRecorded int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('prn_logs') WHERE name = 'recorded_at'").Scan(&prnRecorded)
+	if prnRecorded == 0 {
+		if _, err := database.Exec("ALTER TABLE prn_logs ADD COLUMN recorded_at TEXT"); err != nil {
+			return fmt.Errorf("failed adding prn_logs.recorded_at: %w", err)
+		}
+	}
+	// PRN history follows the same audit-trail rules as medication_logs (#23).
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS prn_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, given_at, reason_tag, notes, dosage_snapshot, recorded_at
+		ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries are immutable: cancel the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON prn_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this PRN dose was already cancelled'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_no_delete
+		BEFORE DELETE ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries cannot be deleted: cancel the dose instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs triggers: %w", err)
+	}
 
 	if err := seedSuperAdmin(database); err != nil {
 		return fmt.Errorf("failed seeding super admin: %w", err)

@@ -369,6 +369,8 @@ export interface PRNLog {
   voided_by_name?: string;
   void_reason?: string;
   dosage_snapshot?: string;
+  /** When the entry was made (given_at may be earlier): own undo for 10 minutes. */
+  recorded_at?: string;
 }
 
 export interface PRNLastGiven {

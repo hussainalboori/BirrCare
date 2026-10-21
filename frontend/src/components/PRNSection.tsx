@@ -8,7 +8,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { fetchApi } from "@/lib/api";
 import { canTakeActions, canManageMedications } from "@/lib/permissions";
-import { PRNMedicationStatus, PRNReasonTag } from "@/lib/types";
+import { PRNLog, PRNMedicationStatus, PRNReasonTag } from "@/lib/types";
 import { formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import {
@@ -53,11 +53,17 @@ export function PRNSection() {
   const [overrideReason, setOverrideReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [expandedMedId, setExpandedMedId] = useState<string | null>(null);
+  // Ticks so "Undo" disappears when the 10-minute window ends.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const loadPRNMeds = useCallback(async () => {
     try {
       const data = await fetchApi<PRNMedicationStatus[]>("/medications/prn");
-      setPrnMeds(data || []);
+      setPrnMeds(Array.isArray(data) ? data : []); // never let an odd response break Home
       setError(null);
     } catch (err: any) {
       console.warn("Failed fetching PRN medications:", err);
@@ -142,7 +148,15 @@ export function PRNSection() {
     }
   };
 
-  const handleVoidDose = async (logId: string) => {
+  // Same rule as scheduled doses (#8): your own entry for 10 minutes; after that
+  // (or someone else's), an admin with a reason. The server enforces it too.
+  const canUndo = (log: PRNLog) =>
+    !!currentCaregiver &&
+    log.caregiver_id === currentCaregiver.id &&
+    !!log.recorded_at &&
+    nowMs - new Date(log.recorded_at).getTime() <= 10 * 60_000;
+  const handleVoidDose = async (log: PRNLog) => {
+    const logId = log.id;
     if (!currentCaregiver) {
       openPinModal();
       return;
@@ -152,16 +166,22 @@ export function PRNSection() {
       return;
     }
 
-    const confirmMsg =
-      locale === "ar"
-        ? "هل أنت متأكد من إلغاء هذه الجرعة؟ (نقرة خطأ)"
-        : "Are you sure you want to void this dose? (Mis-tap undo)";
-    if (!window.confirm(confirmMsg)) return;
+    let reason = "";
+    if (canUndo(log)) {
+      const confirmMsg =
+        locale === "ar"
+          ? "هل أنت متأكد من إلغاء هذه الجرعة؟ (نقرة خطأ)"
+          : "Are you sure you want to void this dose? (Mis-tap undo)";
+      if (!window.confirm(confirmMsg)) return;
+    } else {
+      reason = (window.prompt(locale === "ar" ? "لماذا تُلغى هذه الجرعة؟ (مطلوب)" : "Why is this dose being cancelled? (required)") || "").trim();
+      if (!reason) return;
+    }
 
     try {
       await fetchApi(`/medications/prn/log/${logId}/void`, {
         method: "POST",
-        body: JSON.stringify({ reason: "Mistake / cancellation" }),
+        body: JSON.stringify({ reason }),
       });
       loadPRNMeds();
     } catch (err: any) {
@@ -373,10 +393,10 @@ export function PRNSection() {
                               {log.notes && <span className="text-xs text-slate-400 italic truncate max-w-[120px]">“{log.notes}”</span>}
                             </div>
 
-                            {!isVoided && (
+                            {!isVoided && (canUndo(log) || isAdmin) && (
                               <button
                                 type="button"
-                                onClick={() => handleVoidDose(log.id)}
+                                onClick={() => handleVoidDose(log)}
                                 title={locale === "ar" ? "إلغاء نقرة خطأ" : "Void mis-tap"}
                                 className="flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 px-1.5 py-0.5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/50"
                               >

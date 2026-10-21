@@ -98,6 +98,8 @@ type PRNLog struct {
 	VoidedByName   string `json:"voided_by_name,omitempty"`
 	VoidReason     string `json:"void_reason,omitempty"`
 	DosageSnapshot string `json:"dosage_snapshot,omitempty"`
+	// When the entry was made (given_at may be earlier): the 10-minute own undo.
+	RecordedAt string `json:"recorded_at,omitempty"` // RFC3339
 }
 
 // PRNLastGiven tracks the most recent intake of a PRN medication.
