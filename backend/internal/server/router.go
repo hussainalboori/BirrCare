@@ -82,6 +82,7 @@ func NewRouter(o Options) http.Handler {
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
+	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 
 	r := chi.NewRouter()
 
@@ -216,6 +217,12 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/patient/emergency-link", emergencyHandler.EmergencyLink)
 				api.Post("/patient/emergency-link", emergencyHandler.RotateLink)
 				api.Post("/shifts/handover/{id}/accept", shiftsHandler.AcceptDuty)
+
+				// Care Events & Repositioning (issue #27)
+				api.Get("/care/status", careHandler.GetStatus)
+				api.Post("/care/events", careHandler.LogEvent)
+				api.Get("/care/events", careHandler.ListEvents)
+				api.Post("/care/check-overdue", careHandler.CheckOverdue)
 			})
 		})
 	})

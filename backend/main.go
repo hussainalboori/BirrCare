@@ -68,6 +68,9 @@ func main() {
 	defer stopReminders()
 	handlers.StartDutyReminders(reminderCtx, database, notifier, broker)
 
+	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
+	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),
 		Handler:           r,

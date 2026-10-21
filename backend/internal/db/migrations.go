@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -241,6 +241,19 @@ CREATE TABLE IF NOT EXISTS insulin_logs (
     scale_snapshot TEXT     -- the plan as it was, so later scale edits never rewrite history
 );
 
+CREATE TABLE IF NOT EXISTS care_events (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio')),
+    value TEXT NOT NULL,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    client_request_id TEXT UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_plan ON insulin_logs(plan_id, given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_date ON insulin_logs(given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
@@ -773,6 +786,52 @@ func Migrate(database *sql.DB) error {
 				return fmt.Errorf("failed adding vitals_logs.%s: %w", c.col, err)
 			}
 		}
+	}
+
+	// Migrate alerts for reposition_overdue (issue #27)
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'reposition_overdue'") {
+		log.Println("Migrating alerts: reposition_overdue kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v7;
+			CREATE TABLE alerts_v7 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v7 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v7 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for reposition_overdue: %w", err)
+		}
+	}
+
+	// Ensure care_events table exists
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS care_events (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio')),
+			value TEXT NOT NULL,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
+			notes TEXT,
+			created_at TEXT DEFAULT (datetime('now')),
+			client_request_id TEXT UNIQUE
+		);
+		CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating care_events table: %w", err)
 	}
 	// The immutability trigger below must cover the new values too.
 	var trigSQL string

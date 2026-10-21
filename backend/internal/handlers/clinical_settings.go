@@ -55,10 +55,29 @@ func currentOxygenFever() OxygenFeverThresholds {
 // SetOxygenFeverThresholds replaces the in-memory thresholds (startup, admin change, tests).
 func SetOxygenFeverThresholds(t OxygenFeverThresholds) { oxygenFever.Store(&t) }
 
+var defaultRepositionInterval = 120 // 2 hours default
+var repositionInterval atomic.Int64
+
+func currentRepositionInterval() int {
+	v := repositionInterval.Load()
+	if v > 0 {
+		return int(v)
+	}
+	return defaultRepositionInterval
+}
+
+// SetRepositionInterval replaces the in-memory interval in minutes (startup, admin change, tests).
+func SetRepositionInterval(minutes int) {
+	if minutes > 0 {
+		repositionInterval.Store(int64(minutes))
+	}
+}
+
 // ClinicalSettings is everything GET/PUT /settings/clinical carries.
 type ClinicalSettings struct {
 	BPLowThresholds
 	OxygenFeverThresholds
+	RepositionIntervalMinutes int `json:"reposition_interval_minutes"`
 }
 
 // LoadClinicalSettings reads the doctor's thresholds from app_settings, if set.
@@ -90,6 +109,15 @@ func LoadClinicalSettings(db *sql.DB) {
 		}
 	}
 	SetBPLowThresholds(t)
+
+	var rStr string
+	if db.QueryRow(`SELECT value FROM app_settings WHERE key = 'reposition_interval_minutes'`).Scan(&rStr) == nil {
+		if n, err := strconv.Atoi(rStr); err == nil && n >= 30 && n <= 360 {
+			SetRepositionInterval(n)
+		}
+	} else {
+		SetRepositionInterval(defaultRepositionInterval)
+	}
 }
 
 type ClinicalSettingsHandler struct {
@@ -98,15 +126,16 @@ type ClinicalSettingsHandler struct {
 
 func (h *ClinicalSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever()})
+	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever(), currentRepositionInterval()})
 }
 
 type clinicalSettingsRequest struct {
-	LowSystolic  *int     `json:"bp_low_systolic"`
-	LowDiastolic *int     `json:"bp_low_diastolic"`
-	SpO2Warn     *int     `json:"spo2_warn"`
-	SpO2Critical *int     `json:"spo2_critical"`
-	FeverC       *float64 `json:"fever_c"`
+	LowSystolic               *int     `json:"bp_low_systolic"`
+	LowDiastolic              *int     `json:"bp_low_diastolic"`
+	SpO2Warn                  *int     `json:"spo2_warn"`
+	SpO2Critical              *int     `json:"spo2_critical"`
+	FeverC                    *float64 `json:"fever_c"`
+	RepositionIntervalMinutes *int     `json:"reposition_interval_minutes"`
 }
 
 // Put sets the doctor's thresholds (admin). Fields left out keep their value.
@@ -151,18 +180,27 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fever_c must be 37.5-39.0")
 		return
 	}
+	repInterval := currentRepositionInterval()
+	if req.RepositionIntervalMinutes != nil {
+		if *req.RepositionIntervalMinutes < 30 || *req.RepositionIntervalMinutes > 360 {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "reposition_interval_minutes must be between 30 and 360")
+			return
+		}
+		repInterval = *req.RepositionIntervalMinutes
+	}
 	if _, err := h.DB.ExecContext(r.Context(), `INSERT INTO app_settings (key, value) VALUES
-		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?)
+		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?), ('reposition_interval_minutes', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		strconv.Itoa(bp.LowSystolic), strconv.Itoa(bp.LowDiastolic), strconv.Itoa(o.SpO2Warn), strconv.Itoa(o.SpO2Critical),
-		strconv.FormatFloat(o.FeverC, 'f', 1, 64)); err != nil {
+		strconv.FormatFloat(o.FeverC, 'f', 1, 64), strconv.Itoa(repInterval)); err != nil {
 		internalError(w, "failed to save thresholds", err)
 		return
 	}
 	SetBPLowThresholds(bp)
 	SetOxygenFeverThresholds(o)
+	SetRepositionInterval(repInterval)
 	audit.Log(h.DB, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
-		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC))
+		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C; reposition %d min", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, repInterval))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{bp, o})
+	json.NewEncoder(w).Encode(ClinicalSettings{bp, o, repInterval})
 }
