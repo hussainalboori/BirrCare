@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,7 @@ import { ShiftManagementModal } from "./ShiftManagementModal";
 import { ChangePinModal } from "./ChangePinModal";
 import { TwoFactorModal } from "./TwoFactorModal";
 import { ThemePicker, themeLabel, useThemeMode } from "./ThemePicker";
+import { DevicePairingModal } from "./DevicePairingModal";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -24,7 +25,7 @@ interface CaregiverHeaderProps {
 }
 
 export function CaregiverHeader({ connectionStatus = "connected", onMedicationsUpdated }: CaregiverHeaderProps) {
-  const { currentCaregiver, openPinModal, refreshCaregiver } = useCaregiver();
+  const { currentCaregiver, openPinModal, refreshCaregiver, trustStatus } = useCaregiver();
   const { locale, toggleLocale, t } = useLanguage();
 
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -34,6 +35,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isTwoFactorOpen, setIsTwoFactorOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
+  const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const themeMode = useThemeMode();
 
   const role = currentCaregiver?.role || "caregiver";
@@ -69,6 +71,16 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           { key: "schedule", icon: Calendar, label: t.manageSchedule, short: ar ? "مواعيد الأدوية" : "Schedule", tone: "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60", onClick: () => setIsScheduleModalOpen(true) },
           { key: "meds", icon: Pill, label: t.manageMedications, short: ar ? "الأدوية" : "Medicines", tone: "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60", onClick: () => setIsMedModalOpen(true) },
         ]
+      : []),
+    ...(canManageMedications(role) || isSuperAdmin(role)
+      ? [{
+          key: "devices",
+          icon: Tablet,
+          label: ar ? "أجهزة وشبكة المنزل (التبديل الذكي)" : "Home Devices & Smart Network",
+          short: ar ? "أجهزة المنزل" : "Home Devices",
+          tone: "bg-teal-50 hover:bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 dark:hover:bg-teal-900/60",
+          onClick: () => setIsDeviceModalOpen(true),
+        }]
       : []),
     ...(currentCaregiver
       ? [{ key: "pin", icon: KeyRound, label: ar ? "تغيير الرمز السري" : "Change PIN", short: ar ? "تغيير الرمز" : "My PIN", tone: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700", onClick: () => setIsChangePinOpen(true) }]
@@ -190,6 +202,36 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                   )}
                   <span>{locale === "ar" ? roleMeta.labelAr : roleMeta.labelEn}</span>
                 </span>
+
+                {/* Network Status Badge */}
+                {trustStatus && (
+                  <button
+                    type="button"
+                    data-testid="network-status-badge"
+                    onClick={() => (canManageMedications(role) || isSuperAdmin(role)) && setIsDeviceModalOpen(true)}
+                    title={
+                      trustStatus.trusted
+                        ? (ar ? "شبكة موثوقة: يمكنك التبديل بلمسة واحدة" : "Trusted network: 1-Tap switch active")
+                        : (ar ? "شبكة خارجية: يتطلب الرمز السري للتبديل" : "External network: PIN required")
+                    }
+                    className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-md text-xs font-bold border transition-colors ${
+                      trustStatus.trusted
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+                        : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
+                    }`}
+                  >
+                    {trustStatus.trusted ? (
+                      <Wifi className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <Lock className="h-3 w-3 text-slate-500" />
+                    )}
+                    <span>
+                      {trustStatus.trusted
+                        ? (ar ? "شبكة المنزل (تبديل مباشر)" : "Home Network (1-Tap)")
+                        : (ar ? "خارج المنزل (مطلوب رمز المرور)" : "External (PIN Protected)")}
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -292,6 +334,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
       <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
       <ThemePicker isOpen={isThemeOpen} onClose={() => setIsThemeOpen(false)} />
+      <DevicePairingModal isOpen={isDeviceModalOpen} onClose={() => setIsDeviceModalOpen(false)} />
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (

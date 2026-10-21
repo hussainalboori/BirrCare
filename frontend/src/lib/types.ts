@@ -376,6 +376,29 @@ export interface InsulinPlanStatus {
   recent: InsulinLog[];
 }
 
+export type TrustReason = "paired_device" | "geofence" | "trusted_ip" | "untrusted";
+
+export interface TrustStatus {
+  trusted: boolean;
+  reason: TrustReason;
+  device_name?: string;
+  home_geofence_configured?: boolean;
+}
+
+export interface PairedDevice {
+  id: string;
+  device_name: string;
+  created_at: string;
+  last_used_at?: string;
+  is_active: boolean;
+}
+
+export interface HomeLocation {
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  updated_at?: string;
+}
 export type CareKind = "reposition" | "fluid" | "bowel" | "hygiene" | "physio";
 export type RepositionSide = "left" | "back" | "right";
 export type SkinCondition = "ok" | "red_area" | "";

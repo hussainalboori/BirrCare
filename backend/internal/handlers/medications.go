@@ -740,6 +740,11 @@ func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Destructive admin settings (e.g., deleting medications) still require PIN regardless of location.
+	if !requireAdminPIN(w, h.DB, auth.DefaultPINLimiter, caregiver.ID, r.Header.Get("X-Admin-PIN")) {
+		return
+	}
+
 	medID := chi.URLParam(r, "id")
 	if medID == "" {
 		http.Error(w, `{"error":"missing medication id"}`, http.StatusBadRequest)

@@ -136,6 +136,9 @@ func NewRouter(o Options) http.Handler {
 			api.Get("/caregivers", authHandler.ListCaregivers)
 			api.Post("/auth/verify-pin", authHandler.VerifyPIN)
 			api.Post("/auth/logout", authHandler.Logout)
+			// Smart Caregiver Auth (Issue #29)
+			api.Get("/auth/trust-status", authHandler.GetTrustStatus)
+			api.Post("/auth/switch-caregiver", authHandler.SwitchCaregiver)
 			// Second login step after a PIN for accounts with an authenticator app.
 			api.Post("/auth/verify-2fa", authHandler.VerifyTwoFactor)
 			// Public: a crisis screen must show the doctor's number even if the PIN
@@ -156,6 +159,13 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/auth/2fa/setup", authHandler.SetupTwoFactor)
 				api.Post("/auth/2fa/enable", authHandler.EnableTwoFactor)
 				api.Post("/auth/2fa/disable", authHandler.DisableTwoFactor)
+				// Device pairing & home location management (Issue #29)
+				api.Post("/auth/pair-device", authHandler.PairDevice)
+				api.Get("/auth/paired-devices", authHandler.ListPairedDevices)
+				api.Delete("/auth/paired-devices/{id}", authHandler.RevokePairedDevice)
+				api.Get("/settings/home-location", authHandler.GetHomeLocation)
+				api.Put("/settings/home-location", authHandler.SetHomeLocation)
+				api.Post("/auth/verify-admin-pin", authHandler.VerifyAdminPIN)
 
 				// User Management & Audit (Super Admin only - enforced in handlers)
 				api.Get("/users", usersHandler.ListUsers)

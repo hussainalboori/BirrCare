@@ -284,6 +284,19 @@ CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_vitals_date ON vitals_logs(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_handover_date ON handover_notes(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shift_assignments_date ON shift_assignments(date);
+
+-- Paired bedside / home devices (issue #29): persistent paired-device token
+-- allows instant 1-tap switcher on home devices without PIN, resilient to dynamic IP rotation.
+CREATE TABLE IF NOT EXISTS paired_devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    paired_by TEXT REFERENCES caregivers(id),
+    device_token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT DEFAULT (datetime('now')),
+    is_revoked INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_paired_devices_hash ON paired_devices(device_token_hash);
 `
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.

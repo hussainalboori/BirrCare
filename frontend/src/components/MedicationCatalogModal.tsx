@@ -277,12 +277,24 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     const medName = locale === "ar" ? med.name_ar : med.name_en;
     if (!confirm(locale === "ar" ? `هل تريد تعطيل دواء ${medName}؟` : `Deactivate ${medName}?`)) return;
 
+    // Destructive Admin Settings Guard:
+    // Prompt for admin PIN to protect against accidental medication deletion on shared/unlocked bedside tablets.
+    const pin = window.prompt(
+      locale === "ar"
+        ? `لحماية سلامة المريض، يرجى إدخال الرمز السري للمشرف لتعطيل ${medName}:`
+        : `For patient safety, please enter your Admin PIN to deactivate ${medName}:`
+    );
+    if (!pin) return;
+
     try {
-      await fetchApi(`/medications/${med.id}`, { method: "DELETE" });
+      await fetchApi(`/medications/${med.id}`, {
+        method: "DELETE",
+        headers: { "X-Admin-PIN": pin },
+      });
       await loadMeds();
       onUpdated?.();
     } catch (err: any) {
-      alert(err.message || "Failed to delete");
+      alert(err.message || (locale === "ar" ? "فشل التعطيل: الرمز السري غير صحيح" : "Failed to deactivate: Invalid PIN"));
     }
   };
 
