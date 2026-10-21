@@ -14,6 +14,7 @@ import (
 	"birrcare/backend/internal/handlers"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/sse"
+	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -147,28 +148,70 @@ func TestEvaluateTrustGeofence(t *testing.T) {
 	}
 }
 
-func TestEvaluateTrustLANSubnet(t *testing.T) {
+func TestEvaluateTrustHomeIP(t *testing.T) {
 	database, _, cleanup := setupSmartAuthTestDB(t)
 	defer cleanup()
+	t.Setenv("TRUSTED_HOME_IP", "198.51.100.7")
 
-	// 1. Local LAN IP 192.168.1.15
-	reqLAN := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
-	reqLAN.RemoteAddr = "192.168.1.15:52341"
-
-	statusLAN := auth.EvaluateTrust(reqLAN, database, nil, nil)
-	if !statusLAN.IsTrusted {
-		t.Errorf("expected 192.168.x.x private LAN to be trusted")
+	// Behind the Cloudflare Tunnel every request arrives from loopback or the
+	// Docker network, so those addresses alone must never skip the PIN.
+	for _, addr := range []string{"127.0.0.1:8080", "192.168.1.15:52341", "172.18.0.3:40000", "10.0.0.5:1234"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+		req.RemoteAddr = addr
+		if st := auth.EvaluateTrust(req, database, nil, nil); st.IsTrusted {
+			t.Errorf("%s must not be trusted by itself (reason %s)", addr, st.TrustReason)
+		}
 	}
-	if statusLAN.TrustReason != "lan_subnet" {
-		t.Errorf("expected trust reason 'lan_subnet', got %s", statusLAN.TrustReason)
+
+	// Client-controlled forwarding headers are ignored.
+	spoof := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+	spoof.RemoteAddr = "127.0.0.1:8080"
+	spoof.Header.Set("X-Forwarded-For", "198.51.100.7")
+	spoof.Header.Set("X-Real-IP", "198.51.100.7")
+	if st := auth.EvaluateTrust(spoof, database, nil, nil); st.IsTrusted {
+		t.Errorf("X-Forwarded-For / X-Real-IP must not grant trust")
 	}
 
-	// 2. Localhost 127.0.0.1
-	reqLocal := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
-	reqLocal.RemoteAddr = "127.0.0.1:8080"
-	statusLocal := auth.EvaluateTrust(reqLocal, database, nil, nil)
-	if !statusLocal.IsTrusted || statusLocal.TrustReason != "lan_subnet" {
-		t.Errorf("expected 127.0.0.1 to be trusted lan_subnet")
+	// The configured home IP, as reported by Cloudflare, is trusted.
+	home := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+	home.RemoteAddr = "127.0.0.1:8080"
+	home.Header.Set("Cf-Connecting-Ip", "198.51.100.7")
+	if st := auth.EvaluateTrust(home, database, nil, nil); !st.IsTrusted || st.TrustReason != "trusted_ip" {
+		t.Errorf("expected Cf-Connecting-Ip = TRUSTED_HOME_IP to be trusted_ip, got %+v", st)
+	}
+
+	// CIDR form.
+	t.Setenv("TRUSTED_HOME_IP", "")
+	t.Setenv("TRUSTED_HOME_SUBNETS", "198.51.100.0/24")
+	if st := auth.EvaluateTrust(home, database, nil, nil); !st.IsTrusted {
+		t.Errorf("expected TRUSTED_HOME_SUBNETS CIDR match to be trusted")
+	}
+}
+
+func TestTrustStatusJSONMatchesFrontend(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
+	defer cleanup()
+	authH := &handlers.AuthHandler{DB: database, Broker: broker}
+	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_latitude', '24.713600'), ('home_longitude', '46.675300')")
+
+	// The frontend sends ?latitude=&longitude= and reads trusted / reason.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status?latitude=24.7137&longitude=46.67535", nil)
+	rec := httptest.NewRecorder()
+	authH.GetTrustStatus(rec, req)
+	var body map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body["trusted"] != true || body["reason"] != "geofence" {
+		t.Errorf("expected {trusted:true, reason:geofence}, got %v", body)
+	}
+
+	// Switch with latitude / longitude in the body, as the frontend sends it.
+	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
+	sw := httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver",
+		bytes.NewBufferString(`{"caregiver_id":"caregiver2","latitude":24.7137,"longitude":46.67535}`))
+	swRec := httptest.NewRecorder()
+	authH.SwitchCaregiver(swRec, sw)
+	if swRec.Code != http.StatusOK {
+		t.Errorf("expected 1-tap switch inside the geofence, got %d (%s)", swRec.Code, swRec.Body.String())
 	}
 }
 
@@ -180,6 +223,18 @@ func TestSwitchCaregiver1TapOnTrusted(t *testing.T) {
 
 	createTestCaregiver(t, database, "caregiver1", "Hussain", "caregiver", "1234")
 	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
+
+	t.Setenv("TRUSTED_HOME_IP", "198.51.100.7")
+
+	// 0. A forged X-Forwarded-For from the LAN range does not skip the PIN.
+	reqSpoof := httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver", bytes.NewBufferString(`{"caregiver_id":"caregiver2"}`))
+	reqSpoof.RemoteAddr = "127.0.0.1:8080"
+	reqSpoof.Header.Set("X-Forwarded-For", "192.168.1.10")
+	recSpoof := httptest.NewRecorder()
+	authH.SwitchCaregiver(recSpoof, reqSpoof)
+	if recSpoof.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for forged X-Forwarded-For, got %d", recSpoof.Code)
+	}
 
 	// 1. Attempt switch from untrusted external IP -> 403 PIN_REQUIRED
 	payload := `{"caregiver_id":"caregiver2"}`
@@ -200,7 +255,8 @@ func TestSwitchCaregiver1TapOnTrusted(t *testing.T) {
 
 	// 2. Attempt switch from home private LAN -> 200 OK with session cookie!
 	reqTrusted := httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver", bytes.NewBufferString(payload))
-	reqTrusted.RemoteAddr = "192.168.1.55:54321" // Home Wi-Fi
+	reqTrusted.RemoteAddr = "127.0.0.1:8080"
+	reqTrusted.Header.Set("Cf-Connecting-Ip", "198.51.100.7") // home public IP
 	recTrusted := httptest.NewRecorder()
 
 	authH.SwitchCaregiver(recTrusted, reqTrusted)
@@ -242,8 +298,26 @@ func TestDevicePairingAndManagement(t *testing.T) {
 		Role: "admin",
 	})
 
-	// 1. Pair device
-	pairPayload := `{"name":"Living Room Bedside Tablet"}`
+	// 0. Pairing needs the admin's PIN, and only admins can pair.
+	for _, tc := range []struct {
+		ctx     context.Context
+		payload string
+		code    int
+	}{
+		{adminContext, `{"device_name":"Tablet"}`, http.StatusForbidden},
+		{adminContext, `{"device_name":"Tablet","pin":"9999"}`, http.StatusForbidden},
+		{context.WithValue(context.Background(), auth.CaregiverContextKey, &models.Caregiver{ID: "admin1", Role: "caregiver"}), `{"device_name":"Tablet","pin":"1234"}`, http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/pair-device", bytes.NewBufferString(tc.payload)).WithContext(tc.ctx)
+		rec := httptest.NewRecorder()
+		authH.PairDevice(rec, req)
+		if rec.Code != tc.code {
+			t.Errorf("pair %s: expected %d, got %d", tc.payload, tc.code, rec.Code)
+		}
+	}
+
+	// 1. Pair device (field names as the frontend sends them)
+	pairPayload := `{"device_name":"Living Room Bedside Tablet","pin":"1234"}`
 	reqPair := httptest.NewRequest(http.MethodPost, "/api/v1/auth/pair-device", bytes.NewBufferString(pairPayload)).WithContext(adminContext)
 	recPair := httptest.NewRecorder()
 
@@ -324,3 +398,33 @@ func TestVerifyAdminPIN(t *testing.T) {
 	}
 }
 
+func TestDeleteMedicationRequiresAdminPIN(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
+	defer cleanup()
+	createTestCaregiver(t, database, "admin1", "Admin Sarah", "admin", "1234")
+	medH := &handlers.MedicationHandler{DB: database, Broker: broker}
+	admin := &models.Caregiver{ID: "admin1", Name: "Admin Sarah", Role: "admin"}
+
+	del := func(pin string) int {
+		rc := chi.NewRouteContext()
+		rc.URLParams.Add("id", "no-such-med")
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/medications/no-such-med", nil)
+		if pin != "" {
+			req.Header.Set("X-Admin-PIN", pin)
+		}
+		ctx := context.WithValue(context.WithValue(req.Context(), auth.CaregiverContextKey, admin), chi.RouteCtxKey, rc)
+		rec := httptest.NewRecorder()
+		medH.DeleteMedication(rec, req.WithContext(ctx))
+		return rec.Code
+	}
+
+	if code := del(""); code != http.StatusForbidden {
+		t.Errorf("no PIN: expected 403, got %d", code)
+	}
+	if code := del("9999"); code != http.StatusForbidden {
+		t.Errorf("wrong PIN: expected 403, got %d", code)
+	}
+	if code := del("1234"); code == http.StatusForbidden {
+		t.Errorf("correct PIN must pass the PIN check, got %d", code)
+	}
+}

@@ -20,6 +20,7 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
   const [devices, setDevices] = useState<PairedDevice[]>([]);
   const [loading, setLoading] = useState(false);
   const [pairingName, setPairingName] = useState("");
+  const [pairingPin, setPairingPin] = useState("");
   const [pairingLoading, setPairingLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -63,21 +64,24 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
 
   const handlePairCurrentDevice = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pairingName.trim()) return;
+    if (!pairingName.trim() || pairingPin.length !== 4) return;
     setPairingLoading(true);
     setError(null);
     setSuccess(null);
     try {
       await fetchApi("/auth/pair-device", {
         method: "POST",
-        body: JSON.stringify({ device_name: pairingName.trim() }),
+        // The admin's own PIN: a paired device skips the PIN for everyone.
+        body: JSON.stringify({ device_name: pairingName.trim(), pin: pairingPin }),
       });
       setSuccess(ar ? "تم اعتماد هذا الجهاز بنجاح كجهاز منزلي" : "Device paired successfully as a trusted home device");
       setPairingName("");
+      setPairingPin("");
       await loadData();
       await checkTrustStatus();
-    } catch (err: any) {
-      setError(err?.message || (ar ? "فشل ربط الجهاز" : "Failed to pair device"));
+    } catch {
+      setPairingPin("");
+      setError(ar ? "تعذر اعتماد الجهاز: تأكد من رمزك السري" : "Could not pair the device: check your PIN");
     } finally {
       setPairingLoading(false);
     }
@@ -154,8 +158,6 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
           : `Paired Home Device (${trust.device_name || "Bedside Device"})`;
       case "geofence":
         return ar ? "ضمن النطاق الجغرافي للمنزل (Geofence)" : "Inside Home Geofence";
-      case "lan_subnet":
-        return ar ? "شبكة Wi-Fi المنزلية الخاصة (LAN)" : "Home Local Network (LAN)";
       case "trusted_ip":
         return ar ? "عنوان IP منزلي معتمد" : "Trusted Home IP";
       default:
@@ -261,17 +263,29 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
                 : "Allows stationary devices (like a bedside tablet) to switch profiles instantly even if the home router dynamic IP changes."}
             </p>
 
-            <form onSubmit={handlePairCurrentDevice} className="mt-3 flex gap-2">
+            <form onSubmit={handlePairCurrentDevice} className="mt-3 flex flex-wrap gap-2">
               <input
                 type="text"
                 value={pairingName}
                 onChange={(e) => setPairingName(e.target.value)}
                 placeholder={ar ? "مثال: آيباد غرفة الوالد" : "e.g., Bedside iPad"}
-                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="min-w-40 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={4}
+                data-testid="pairing-pin"
+                aria-label={ar ? "رمزك السري (4 أرقام)" : "Your PIN (4 digits)"}
+                value={pairingPin}
+                onChange={(e) => setPairingPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder={ar ? "رمزك السري" : "Your PIN"}
+                className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
               <button
                 type="submit"
-                disabled={pairingLoading || !pairingName.trim()}
+                disabled={pairingLoading || !pairingName.trim() || pairingPin.length !== 4}
                 className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition-opacity hover:bg-emerald-700 disabled:opacity-50"
               >
                 {pairingLoading ? (ar ? "جارٍ الحفظ..." : "Pairing...") : (ar ? "اعتماد الجهاز" : "Pair Device")}

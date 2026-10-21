@@ -82,12 +82,13 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
 
   const checkTrustStatus = useCallback(async (): Promise<TrustStatus | null> => {
     try {
-      const loc = await getCurrentLocation();
-      let url = "/auth/trust-status";
-      if (loc) {
-        url += `?latitude=${loc.latitude}&longitude=${loc.longitude}`;
+      // Ask for GPS only when an admin set a home location and nothing else
+      // already trusts this device: no location prompt for everyone else.
+      let res = await fetchApi<TrustStatus>("/auth/trust-status");
+      if (res && !res.trusted && res.home_geofence_configured) {
+        const loc = await getCurrentLocation();
+        if (loc) res = await fetchApi<TrustStatus>(`/auth/trust-status?latitude=${loc.latitude}&longitude=${loc.longitude}`);
       }
-      const res = await fetchApi<TrustStatus>(url);
       if (res) {
         setTrustStatus(res);
         return res;
@@ -100,7 +101,7 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
 
   const switchCaregiverDirect = async (caregiverId: string): Promise<boolean> => {
     try {
-      const loc = await getCurrentLocation();
+      const loc = trustStatus?.reason === "geofence" ? await getCurrentLocation() : null;
       const payload: { caregiver_id: string; latitude?: number; longitude?: number } = { caregiver_id: caregiverId };
       if (loc) {
         payload.latitude = loc.latitude;

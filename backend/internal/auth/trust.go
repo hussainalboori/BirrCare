@@ -23,10 +23,10 @@ const (
 )
 
 type TrustStatus struct {
-	IsTrusted              bool   `json:"is_trusted"`
-	TrustReason            string `json:"trust_reason"` // "paired_device", "geofence", "lan_subnet", "untrusted"
+	IsTrusted              bool   `json:"trusted"`
+	TrustReason            string `json:"reason"` // "paired_device", "geofence", "trusted_ip", "untrusted"
 	HomeGeofenceConfigured bool   `json:"home_geofence_configured"`
-	PairedDeviceName       string `json:"paired_device_name,omitempty"`
+	PairedDeviceName       string `json:"device_name,omitempty"`
 }
 
 type HomeLocationSettings struct {
@@ -37,7 +37,7 @@ type HomeLocationSettings struct {
 
 type PairedDeviceInfo struct {
 	ID           string `json:"id"`
-	Name         string `json:"name"`
+	Name         string `json:"device_name"`
 	PairedByID   string `json:"paired_by_id"`
 	PairedByName string `json:"paired_by_name"`
 	CreatedAt    string `json:"created_at"`
@@ -93,27 +93,14 @@ func DistanceMeters(lat1, lon1, lat2, lon2 float64) float64 {
 	return earthRadius * c
 }
 
-// GetClientIP extracts client IP taking headers into account.
+// GetClientIP returns the caller's address. Only Cf-Connecting-Ip is used:
+// Cloudflare sets it at the edge and the backend is bound to 127.0.0.1, so it
+// cannot be forged from outside. X-Forwarded-For / X-Real-IP are client
+// controlled and are ignored.
 func GetClientIP(r *http.Request) string {
-	// 1. Cloudflare connecting IP
 	if cfIP := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); cfIP != "" {
 		return cfIP
 	}
-	// 2. X-Forwarded-For
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			ip := strings.TrimSpace(parts[0])
-			if ip != "" {
-				return ip
-			}
-		}
-	}
-	// 3. X-Real-IP
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
-		return realIP
-	}
-	// 4. RemoteAddr
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil && host != "" {
 		return host
@@ -121,46 +108,37 @@ func GetClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// IsLocalOrPrivateIP checks if the IP is in private/loopback address space or configured TRUSTED_HOME_IP.
-func IsLocalOrPrivateIP(ipStr string) bool {
+// IsTrustedHomeIP reports whether ipStr matches TRUSTED_HOME_IP /
+// TRUSTED_HOME_SUBNETS (comma-separated IPs or CIDRs). Private and loopback
+// addresses are not trusted by themselves: behind the Cloudflare Tunnel every
+// request reaches the backend from 127.0.0.1 or the Docker network.
+func IsTrustedHomeIP(ipStr string) bool {
 	cleanIP := strings.Trim(strings.TrimSpace(ipStr), "[]")
 	ip := net.ParseIP(cleanIP)
-	if ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-			return true
-		}
+	if ip == nil {
+		return false
 	}
-
-	// Check environment variable TRUSTED_HOME_IP or TRUSTED_HOME_SUBNETS
-	envTrusted := os.Getenv("TRUSTED_HOME_IP")
-	if envTrusted == "" {
-		envTrusted = os.Getenv("TRUSTED_HOME_SUBNETS")
-	}
-	if envTrusted != "" {
-		subnets := strings.Split(envTrusted, ",")
-		for _, s := range subnets {
+	for _, env := range []string{"TRUSTED_HOME_IP", "TRUSTED_HOME_SUBNETS"} {
+		for _, s := range strings.Split(os.Getenv(env), ",") {
 			s = strings.TrimSpace(s)
 			if s == "" {
 				continue
 			}
-			if s == cleanIP {
+			if t := net.ParseIP(s); t != nil && t.Equal(ip) {
 				return true
 			}
-			if _, cidr, err := net.ParseCIDR(s); err == nil && ip != nil {
-				if cidr.Contains(ip) {
-					return true
-				}
+			if _, cidr, err := net.ParseCIDR(s); err == nil && cidr.Contains(ip) {
+				return true
 			}
 		}
 	}
-
 	return false
 }
 
 // EvaluateTrust checks all 3 layers:
 // Layer 1: Paired Home Device Token
 // Layer 2: Geofence Coordinates (Haversine <= 75m)
-// Layer 3: Local Private LAN / Subnet / Configured IP
+// Layer 3: Configured home IP / subnet (TRUSTED_HOME_IP)
 func EvaluateTrust(r *http.Request, db *sql.DB, lat, lon *float64) TrustStatus {
 	// Check if home geofence is configured in settings
 	var homeLatStr, homeLonStr, homeRadiusStr string
@@ -231,13 +209,13 @@ func EvaluateTrust(r *http.Request, db *sql.DB, lat, lon *float64) TrustStatus {
 	}
 
 	// -------------------------------------------------------------
-	// Layer 3: Local Private LAN / Subnet / Configured IP
+	// Layer 3: Configured home IP / subnet (TRUSTED_HOME_IP)
 	// -------------------------------------------------------------
 	clientIP := GetClientIP(r)
-	if IsLocalOrPrivateIP(clientIP) {
+	if IsTrustedHomeIP(clientIP) {
 		return TrustStatus{
 			IsTrusted:              true,
-			TrustReason:            "lan_subnet",
+			TrustReason:            "trusted_ip",
 			HomeGeofenceConfigured: homeConfigured,
 		}
 	}

@@ -376,13 +376,13 @@ export interface InsulinPlanStatus {
   recent: InsulinLog[];
 }
 
-export type TrustReason = "paired_device" | "geofence" | "lan_subnet" | "trusted_ip" | "untrusted";
+export type TrustReason = "paired_device" | "geofence" | "trusted_ip" | "untrusted";
 
 export interface TrustStatus {
   trusted: boolean;
   reason: TrustReason;
   device_name?: string;
-  client_ip: string;
+  home_geofence_configured?: boolean;
 }
 
 export interface PairedDevice {

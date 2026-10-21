@@ -19,7 +19,7 @@ vi.mock("@/lib/emergencyLink", () => ({
   useEmergencyToken: () => null,
 }));
 
-let currentCaregiverData: Caregiver = {
+const currentCaregiverData: Caregiver = {
   id: "c1",
   name: "Hussain Alboori",
   role: "super_admin",
@@ -29,7 +29,7 @@ let currentCaregiverData: Caregiver = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-let caregiversList: CaregiverOption[] = [
+const caregiversList: CaregiverOption[] = [
   { id: "c1", name: "Hussain", avatar_color: "#2563eb" },
   { id: "c2", name: "Ali", avatar_color: "#16a34a" },
   { id: "c3", name: "Fatima", avatar_color: "#db2777" },
@@ -37,8 +37,7 @@ let caregiversList: CaregiverOption[] = [
 
 let trustStatusData: TrustStatus = {
   trusted: true,
-  reason: "lan_subnet",
-  client_ip: "192.168.1.50",
+  reason: "trusted_ip",
 };
 
 let pairedDevicesData: PairedDevice[] = [
@@ -51,7 +50,7 @@ let homeLocationData: HomeLocation = {
   radius_meters: 75,
 };
 
-let switchCaregiverHandler = vi.fn(async (body: any) => {
+const switchCaregiverHandler = vi.fn(async (body: any) => {
   if (trustStatusData.trusted) {
     return {
       status: "authenticated",
@@ -119,8 +118,7 @@ beforeEach(() => {
   switchCaregiverHandler.mockClear();
   trustStatusData = {
     trusted: true,
-    reason: "lan_subnet",
-    client_ip: "192.168.1.50",
+    reason: "trusted_ip",
   };
 });
 
@@ -173,7 +171,6 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     trustStatusData = {
       trusted: false,
       reason: "untrusted",
-      client_ip: "198.51.100.5",
     };
 
     function TestConsumer() {
@@ -219,8 +216,7 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     // Trusted case
     trustStatusData = {
       trusted: true,
-      reason: "lan_subnet",
-      client_ip: "192.168.1.50",
+      reason: "trusted_ip",
     };
 
     const { rerender } = render(
@@ -240,7 +236,6 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     trustStatusData = {
       trusted: false,
       reason: "untrusted",
-      client_ip: "198.51.100.5",
     };
 
     rerender(
@@ -282,6 +277,10 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     const input = screen.getByPlaceholderText(/آيباد غرفة الوالد/);
     fireEvent.change(input, { target: { value: "Living Room Tablet" } });
 
+    // Pairing stays disabled until the admin types their 4-digit PIN.
+    expect((screen.getByText("اعتماد الجهاز").closest("button") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("pairing-pin"), { target: { value: "1234" } });
+
     const pairBtn = screen.getByText("اعتماد الجهاز");
     await act(async () => {
       fireEvent.click(pairBtn);
@@ -292,7 +291,7 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
         "/auth/pair-device",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ device_name: "Living Room Tablet" }),
+          body: JSON.stringify({ device_name: "Living Room Tablet", pin: "1234" }),
         })
       );
     });

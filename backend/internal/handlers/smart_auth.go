@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,8 +27,8 @@ func (h *AuthHandler) GetTrustStatus(w http.ResponseWriter, r *http.Request) {
 
 type SwitchCaregiverRequest struct {
 	CaregiverID string   `json:"caregiver_id"`
-	Latitude    *float64 `json:"lat,omitempty"`
-	Longitude   *float64 `json:"lon,omitempty"`
+	Latitude    *float64 `json:"latitude,omitempty"`
+	Longitude   *float64 `json:"longitude,omitempty"`
 }
 
 // SwitchCaregiver performs an optimistic 1-tap profile switch without a PIN prompt
@@ -89,20 +90,30 @@ func (h *AuthHandler) SwitchCaregiver(w http.ResponseWriter, r *http.Request) {
 }
 
 type PairDeviceRequest struct {
-	Name string `json:"name"`
+	DeviceName string `json:"device_name"`
+	Name       string `json:"name"`
+	PIN        string `json:"pin"`
 }
 
-// PairDevice registers the current browser / bedside tablet as a trusted home device.
+// PairDevice registers the current browser / bedside tablet as a trusted home
+// device. Admin only, and the admin's own PIN is checked every time: a paired
+// device skips the PIN for every sibling for a year.
 func (h *AuthHandler) PairDevice(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
-	if caregiver == nil {
-		http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
+	if caregiver == nil || (caregiver.Role != "admin" && caregiver.Role != "super_admin") {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Admin permissions required")
 		return
 	}
 
 	var req PairDeviceRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	name := strings.TrimSpace(req.Name)
+	if !requireAdminPIN(w, h.DB, h.limiter(), caregiver.ID, req.PIN) {
+		return
+	}
+	name := strings.TrimSpace(req.DeviceName)
+	if name == "" {
+		name = strings.TrimSpace(req.Name)
+	}
 	if name == "" {
 		name = "Bedside Tablet"
 	}
@@ -356,9 +367,39 @@ func (h *AuthHandler) VerifyAdminPIN(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "verified"})
 }
 
+// requireAdminPIN checks the signed-in admin's own PIN before a destructive or
+// trust-granting action (issue #29: 1-tap switching never skips this). It
+// writes the error response and returns false when the PIN is missing or wrong.
+func requireAdminPIN(w http.ResponseWriter, db *sql.DB, lim *auth.PINLimiter, caregiverID, pin string) bool {
+	pin = strings.TrimSpace(pin)
+	if pin == "" {
+		writeJSONError(w, http.StatusForbidden, "ADMIN_PIN_REQUIRED", "admin PIN required")
+		return false
+	}
+	var pinHash string
+	if err := db.QueryRow("SELECT pin_hash FROM caregivers WHERE id = ? AND is_active = 1", caregiverID).Scan(&pinHash); err != nil {
+		writeJSONError(w, http.StatusForbidden, "INCORRECT_ADMIN_PIN", "incorrect admin PIN")
+		return false
+	}
+	key := auth.PINLimitKey(caregiverID, "")
+	ok, retryAfter := lim.Begin(key)
+	if !ok {
+		writeTooManyAttempts(w, retryAfter)
+		return false
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(pin)); err != nil {
+		lim.Done(key, false)
+		audit.Log(db, caregiverID, "ADMIN_PIN_FAILED", "caregiver", caregiverID, "Incorrect admin PIN for a protected action")
+		writeJSONError(w, http.StatusForbidden, "INCORRECT_ADMIN_PIN", "incorrect admin PIN")
+		return false
+	}
+	lim.Done(key, true)
+	return true
+}
+
 func extractGeoCoords(r *http.Request) (*float64, *float64) {
-	latStr := r.URL.Query().Get("lat")
-	lonStr := r.URL.Query().Get("lon")
+	latStr := r.URL.Query().Get("latitude")
+	lonStr := r.URL.Query().Get("longitude")
 	if latStr == "" {
 		latStr = r.Header.Get("X-Geo-Lat")
 	}
