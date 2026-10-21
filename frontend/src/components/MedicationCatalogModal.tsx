@@ -453,7 +453,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
               {/* CRITICAL MEDICATION (doctor report) */}
               <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                 <input type="checkbox" checked={isCritical} onChange={(e) => setIsCritical(e.target.checked)} className="h-5 w-5" />
-                {locale === "ar" ? "دواء حرج (مميّع للدم أو مضاد للصفائح): يظهر أولاً في تقرير الطبيب" : "Critical medicine (blood thinner / antiplatelet): listed first in the doctor report"}
+                {locale === "ar" ? "دواء حرج (مميّع للدم أو مضاد للصفائح): يظهر أولاً في تقرير الطبيب ومعلَّماً في بطاقة الطوارئ" : "Critical medicine (blood thinner / antiplatelet): listed first in the doctor report and flagged on the emergency card"}
               </label>
 
               {/* DAYS OF WEEK SELECTION */}

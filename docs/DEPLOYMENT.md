@@ -148,6 +148,19 @@ Optional, to have Access sign family members straight in:
 
 When both values are set, the backend verifies Cloudflare's signed token and matches it to a caregiver by email. The PIN switcher still works on shared devices.
 
+### Emergency card for paramedics (Bypass for `/emergency/*` only)
+
+The emergency card QR code (Menu → *Emergency card for paramedics*) must open on a stranger's phone without a login. Add a **second** Access application that covers just that path and bypasses login:
+
+1. Zero Trust → Access → Applications → **Add an application** → *Self-hosted*.
+2. **Application domain:** `care.example.com`, **Path:** `emergency/*`. Cloudflare applies the most specific path, so the rest of the site stays protected by the first application.
+3. **Policy:** action **Bypass**, **Include → Everyone**.
+4. Save, then check from a phone that is not logged in, on mobile data: scanning the QR code opens the card. Opening `https://care.example.com/` on the same phone must still ask for the Access login.
+
+Only `/emergency/<token>` is exposed. That page is a single HTML file with no scripts or other files. The 64-character token in the QR code is the secret (256 bits). A wrong token gets a plain "not found". Requests are limited to 10 per minute per visitor IP. Every opening is audited, and the family gets an alert (at most one every 10 minutes). If a printed QR code is lost or shared, an admin taps **New QR code** and the old one stops working at once.
+
+Do **not** bypass `/api/*`: the card page fetches its data server-side, so the API stays behind Access.
+
 ## 7. First login and hardening
 
 Open `https://care.example.com`, pass Access, then in the app:
@@ -328,6 +341,7 @@ Check that the tunnel points at port 3000, which proxies the live stream, and no
 - [ ] Tunnel → `http://127.0.0.1:3000` only; Access policy lists the family's emails
 - [ ] Super Admin PIN changed, 2FA on, recovery codes stored safely, a second Super Admin added
 - [ ] `EMERGENCY_NUMBER` and `DOCTOR_PHONE` set and tested from a phone
+- [ ] Emergency card filled in, QR printed and on the fridge or front door, Access **Bypass** for `/emergency/*` only, tested from a logged-out phone
 - [ ] Lock-screen alerts turned on and tested on every family phone (iPhone: from the Home Screen app)
 - [ ] Auto-deploy timer enabled with linger, or a manual update routine agreed
 - [ ] Daily backup plus an off-host copy, and one test restore done

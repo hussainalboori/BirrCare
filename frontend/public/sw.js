@@ -25,17 +25,25 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname === "/sw.js") return;
+  // Emergency card (issue #19): one cached copy per card, whatever the query
+  // (the app refreshes it with ?prefetch=1), so SOS works in airplane mode. If
+  // the server is down, the last copy (with its "as of" time) beats an error.
+  const emergency = url.pathname.startsWith("/emergency/");
+  const key = emergency ? url.origin + url.pathname : req;
   event.respondWith(
     fetch(req)
-      .then((res) => {
+      .then(async (res) => {
         if (res.ok && res.type === "basic") {
           const copy = res.clone();
-          caches.open(SHELL_CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          caches.open(SHELL_CACHE).then((c) => c.put(key, copy)).catch(() => {});
+        } else if (emergency && res.status >= 500) {
+          const cached = await caches.match(key);
+          if (cached) return cached;
         }
         return res;
       })
       .catch(async () => {
-        const cached = await caches.match(req);
+        const cached = await caches.match(key);
         if (cached) return cached;
         if (req.mode === "navigate") return (await caches.match("/")) || Response.error();
         return Response.error();

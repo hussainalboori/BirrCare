@@ -9,6 +9,7 @@ import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
 import { OutboxBar } from "@/components/OutboxBar";
 import { SharedDeviceGuard } from "@/components/SharedDeviceGuard";
+import { EmergencyCardKeeper } from "@/components/EmergencyCardKeeper";
 import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 
@@ -53,6 +54,7 @@ export default async function RootLayout({
             <SseToast />
             <OutboxBar />
             <SharedDeviceGuard />
+            <EmergencyCardKeeper />
             <PinPadModal />
             {children}
             <Navigation />

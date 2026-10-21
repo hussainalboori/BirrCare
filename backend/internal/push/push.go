@@ -105,6 +105,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"
 		}
 	}
+	if kind == "emergency_card" {
+		body = "The emergency card was opened — open Birrcare"
+		if ar {
+			body = "فُتحت بطاقة الطوارئ — افتح رعاية بر"
+		}
+	}
 	if kind == "duty_handover" {
 		body = "Duty was passed to you — open Birrcare to accept"
 		if ar {

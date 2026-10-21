@@ -32,7 +32,7 @@ func recordAlertFor(tx *sql.Tx, kind, refID, createdBy, target string, payload m
 	id := uuid.New().String()
 	data, _ := json.Marshal(payload)
 	_, err := tx.Exec(`INSERT INTO alerts (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, kind, refID, createdBy, string(data), time.Now().UTC().Format(sqliteTimeLayout), nullIfEmpty(target))
+		id, kind, refID, nullIfEmpty(createdBy), string(data), time.Now().UTC().Format(sqliteTimeLayout), nullIfEmpty(target))
 	return id, err
 }
 

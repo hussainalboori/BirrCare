@@ -28,6 +28,8 @@ type Options struct {
 	AllowedOrigins []string
 	Contacts       handlers.Contacts
 	Push           *push.Notifier // nil = no Web Push
+	// EmergencyLimiter rate-limits the public emergency card (nil = 10/min per IP).
+	EmergencyLimiter *handlers.IPRateLimiter
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -78,6 +80,7 @@ func NewRouter(o Options) http.Handler {
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
+	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
 
 	r := chi.NewRouter()
@@ -129,6 +132,9 @@ func NewRouter(o Options) http.Handler {
 			// Public: a crisis screen must show the doctor's number even if the PIN
 			// session has expired. The whole site is already behind Cloudflare Access.
 			api.Get("/contacts", contactsHandler.GetContacts)
+			// Public (issue #19): the paramedics' card. The token is the secret;
+			// Cloudflare Access bypasses /emergency/* only.
+			api.Get("/emergency/{token}", emergencyHandler.Card)
 
 			api.Group(func(api chi.Router) {
 				api.Use(auth.RequireAuth)
@@ -203,6 +209,10 @@ func NewRouter(o Options) http.Handler {
 				api.Delete("/shifts/assignments/{id}", shiftsHandler.DeleteAssignment)
 				api.Get("/shifts/current-duty", shiftsHandler.GetCurrentDuty)
 				api.Post("/shifts/handover", shiftsHandler.PassDuty)
+				api.Get("/patient", emergencyHandler.GetProfile)
+				api.Put("/patient", emergencyHandler.UpdateProfile)
+				api.Get("/patient/emergency-link", emergencyHandler.EmergencyLink)
+				api.Post("/patient/emergency-link", emergencyHandler.RotateLink)
 				api.Post("/shifts/handover/{id}/accept", shiftsHandler.AcceptDuty)
 			})
 		})

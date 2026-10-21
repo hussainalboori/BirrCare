@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base32"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -623,5 +624,130 @@ func TestSharedDeviceMode(t *testing.T) {
 	}
 	if sharedOf(cookie(r, auth.SessionCookieName)) {
 		t.Fatal("still shared after switching to a personal phone")
+	}
+}
+
+// Issue #19: the paramedics' emergency card, public behind a 256-bit token.
+func TestEmergencyCard(t *testing.T) {
+	srv, database, _ := setup(t, prodCfg, time.Minute)
+	login := func(id string) *http.Cookie {
+		r := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": id, "pin": "1234"}, nil)
+		for _, c := range r.Cookies() {
+			if c.Name == auth.SessionCookieName {
+				return c
+			}
+		}
+		t.Fatalf("login %s failed: %d", id, r.StatusCode)
+		return nil
+	}
+	admin, fatima := login("cg_ali"), login("cg_fatima")
+	ip := map[string]string{"Cf-Connecting-Ip": "198.51.100.1"}
+	card := func(token string, cookies ...*http.Cookie) (int, string) {
+		r := do(t, "GET", srv.URL+"/api/v1/emergency/"+token, nil, ip, cookies...)
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, string(b)
+	}
+	count := func(q string) int {
+		var n int
+		if err := database.QueryRow(q).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	random := strings.Repeat("ab", 32)
+
+	// No link yet, or a wrong token: the same plain 404.
+	if code, body := card(random); code != http.StatusNotFound || strings.Contains(body, "token") {
+		t.Fatalf("no link yet: want a plain 404, got %d %s", code, body)
+	}
+	if do(t, "POST", srv.URL+"/api/v1/patient/emergency-link", nil, nil, fatima).StatusCode != http.StatusForbidden {
+		t.Fatal("a caregiver made an emergency link; admin only")
+	}
+	if do(t, "GET", srv.URL+"/api/v1/patient/emergency-link", nil, nil).StatusCode != http.StatusUnauthorized {
+		t.Fatal("the link was handed out without a login")
+	}
+	rotate := func() string {
+		r := do(t, "POST", srv.URL+"/api/v1/patient/emergency-link", nil, nil, admin)
+		var out map[string]string
+		json.NewDecoder(r.Body).Decode(&out)
+		if r.StatusCode != http.StatusOK || len(out["token"]) != 64 {
+			t.Fatalf("rotate: %d %v", r.StatusCode, out)
+		}
+		return out["token"]
+	}
+	token := rotate()
+
+	// Some data for the card.
+	if r := do(t, "PUT", srv.URL+"/api/v1/patient", map[string]string{"name": "Amina", "dob": "1950-03-02", "allergies_en": "Penicillin", "allergies_ar": "البنسلين", "baseline_bp": "130/80"}, nil, admin); r.StatusCode != http.StatusOK {
+		t.Fatalf("update profile: %d", r.StatusCode)
+	}
+	if do(t, "PUT", srv.URL+"/api/v1/patient", map[string]string{"name": "X"}, nil, fatima).StatusCode != http.StatusForbidden {
+		t.Fatal("a caregiver edited the patient profile")
+	}
+	mustExec := func(q string, args ...interface{}) {
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`INSERT INTO medications (id, name_ar, name_en, dosage, frequency_slots, is_critical) VALUES ('m_apix', 'إليكويس', 'Apixaban', '5 mg', '["morning","evening"]', 1)`)
+	mustExec(`INSERT INTO vitals_logs (id, caregiver_id, systolic, diastolic, pulse, vital_type, recorded_at) VALUES ('v1', 'cg_fatima', 150, 90, 80, 'bp', datetime('now'))`)
+	mustExec(`UPDATE caregivers SET phone = '+966500000001' WHERE id = 'cg_fatima'`)
+
+	code, body := card(token)
+	if code != http.StatusOK {
+		t.Fatalf("correct token: want 200, got %d %s", code, body)
+	}
+	for _, want := range []string{"Apixaban", `"blood_thinner":true`, "Penicillin", "150", "+966500000001", "Amina"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("card is missing %q: %s", want, body)
+		}
+	}
+	for _, never := range []string{"pin", "@test.local", "email", "audit", "session", token} {
+		if strings.Contains(strings.ToLower(body), strings.ToLower(never)) {
+			t.Errorf("card leaks %q: %s", never, body)
+		}
+	}
+	if count(`SELECT COUNT(*) FROM audit_logs WHERE action = 'EMERGENCY_CARD_VIEWED'`) != 1 {
+		t.Fatal("the view was not audited")
+	}
+	card(token)
+	if count(`SELECT COUNT(*) FROM audit_logs WHERE action = 'EMERGENCY_CARD_VIEWED'`) != 2 || count(`SELECT COUNT(*) FROM alerts WHERE kind = 'emergency_card'`) != 1 {
+		t.Fatal("want every view audited, but one alert per 10 minutes")
+	}
+	// A family phone refreshing its offline copy is not a view.
+	if code, _ := card(token+"?prefetch=1", fatima); code != http.StatusOK || count(`SELECT COUNT(*) FROM audit_logs WHERE action = 'EMERGENCY_CARD_VIEWED'`) != 2 {
+		t.Fatal("prefetch by a signed-in caregiver was audited as a view")
+	}
+	// ...but an anonymous ?prefetch=1 still is.
+	card(token + "?prefetch=1")
+	if count(`SELECT COUNT(*) FROM audit_logs WHERE action = 'EMERGENCY_CARD_VIEWED'`) != 3 {
+		t.Fatal("anonymous prefetch skipped the audit")
+	}
+	if code, _ := card(random); code != http.StatusNotFound {
+		t.Fatalf("wrong token: want 404, got %d", code)
+	}
+
+	// Rotating: the old QR stops working.
+	newToken := rotate()
+	if code, _ := card(token); code != http.StatusNotFound {
+		t.Fatalf("old token after rotation: want 404, got %d", code)
+	}
+	if code, _ := card(newToken); code != http.StatusOK {
+		t.Fatalf("new token: want 200, got %d", code)
+	}
+
+	// 11 requests in a minute from one IP: the 11th is refused; another IP is fine.
+	other := map[string]string{"Cf-Connecting-Ip": "198.51.100.2"}
+	for i := 1; i <= 11; i++ {
+		code := do(t, "GET", srv.URL+"/api/v1/emergency/"+random, nil, other).StatusCode
+		if i <= 10 && code != http.StatusNotFound {
+			t.Fatalf("request %d: want 404, got %d", i, code)
+		}
+		if i == 11 && code != http.StatusTooManyRequests {
+			t.Fatalf("request 11 in a minute: want 429, got %d", code)
+		}
+	}
+	if code := do(t, "GET", srv.URL+"/api/v1/emergency/"+random, nil, map[string]string{"Cf-Connecting-Ip": "198.51.100.3"}).StatusCode; code != http.StatusNotFound {
+		t.Fatalf("a different IP was blocked: %d", code)
 	}
 }

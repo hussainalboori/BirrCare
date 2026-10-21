@@ -26,7 +26,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -119,7 +119,7 @@ export function AlertCenter() {
 
   const p = current.payload;
   const duty = DUTY_KINDS.has(current.kind);
-  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction";
+  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction" && current.kind !== "emergency_card";
   const crisis = current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
@@ -161,6 +161,13 @@ export function AlertCenter() {
       advice = String(p.reason || "");
       break;
     }
+    case "emergency_card":
+      // Issue #19: someone opened the paramedics' card (QR or SOS).
+      title = ar ? "فُتحت بطاقة الطوارئ" : "The emergency card was opened";
+      advice = p.opened_by
+        ? ar ? `فتحها ${String(p.opened_by)} من التطبيق.` : `${String(p.opened_by)} opened it from the app.`
+        : ar ? "فُتحت بدون تسجيل دخول (غالباً المسعفون عبر رمز QR). اتصل بمن عند الوالدة الآن." : "Opened without a login (likely paramedics via the QR code). Call whoever is with her now.";
+      break;
     case "duty_handover": {
       const tags = Array.isArray(p.tags) ? (p.tags as string[]).map((k) => tagLabel(k, ar)).join(" · ") : "";
       title = <>{ar ? "سُلّمت إليك المناوبة" : "Duty was passed to you"}</>;

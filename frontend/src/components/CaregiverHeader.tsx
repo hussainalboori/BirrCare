@@ -4,8 +4,10 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode } from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
+import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
@@ -37,6 +39,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const ar = locale === "ar";
   const shared = !!currentCaregiver?.shared_device;
+  const emergencyToken = useEmergencyToken();
+  const router = useRouter();
 
   // Issue #17: a shared tablet signs each person out after 20 minutes without use.
   const [sharedError, setSharedError] = useState(false);
@@ -94,6 +98,17 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           onClick: toggleShared,
         }]
       : []),
+    ...(currentCaregiver && (emergencyToken || canManageMedications(role))
+      ? [{
+          key: "emergency",
+          icon: QrCode,
+          label: ar ? "بطاقة الطوارئ للمسعفين (رمز QR)" : "Emergency card for paramedics (QR)",
+          short: ar ? "بطاقة الطوارئ" : "Emergency card",
+          hint: emergencyToken ? undefined : ar ? "غير مُعدّة" : "Not set up",
+          tone: "bg-rose-50 hover:bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300",
+          onClick: () => router.push("/emergency-qr"),
+        }]
+      : []),
     { key: "lang", icon: Globe, label: ar ? "English" : "العربية", short: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },
   ];
 
@@ -144,7 +159,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                 {t.activeCaregiver}
               </span>
               <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-1.5">
-                <span className="max-w-full truncate text-sm font-bold text-slate-900 dark:text-white">
+                <span className="max-w-full text-sm font-bold leading-tight text-slate-900 dark:text-white">
                   {currentCaregiver?.name || "..."}
                 </span>
 
@@ -167,10 +182,10 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
           </div>
 
-          {/* One row: name, then (from xl, where they fit) every labelled action and
-              Switch. Below xl the actions live in the labelled Menu sheet. */}
+          {/* One row: name, then (from 1760px, where even the Super Admin's full set fits) every labelled action and
+              Switch. Below that the actions live in the labelled Menu sheet. */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <div className="hidden xl:flex items-center gap-1.5">
+            <div className="hidden min-[1760px]:flex items-center gap-1.5">
               {actions.map((a) => (
                 <button
                   key={a.key}
@@ -185,11 +200,23 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               ))}
             </div>
 
+            {/* SOS (issue #19): the paramedics' card, from this phone's cache if offline */}
+            {emergencyToken && (
+              <a
+                href={emergencyPath(emergencyToken)}
+                data-testid="sos"
+                className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-rose-700 px-1.5 text-[11px] font-black text-white active:scale-95 sm:flex-row sm:gap-1 sm:px-2.5 sm:text-xs"
+              >
+                <Siren className="h-4 w-4 shrink-0" />
+                <span>{ar ? "طوارئ" : "SOS"}</span>
+              </a>
+            )}
+
             {/* Switch Profile Button: always visible, it's the most used action */}
             <button
               type="button"
               onClick={() => openPinModal()}
-              className="flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              className="flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl bg-slate-100 hover:bg-slate-200 px-1.5 sm:flex-row sm:gap-1.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-slate-700 transition-colors active:scale-95 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               aria-label={t.switchCaregiver}
             >
               <Users className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -202,7 +229,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               onClick={() => setIsMenuOpen(true)}
               aria-label={locale === "ar" ? "القائمة" : "Menu"}
               aria-expanded={isMenuOpen}
-              className="relative flex min-h-12 min-w-12 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 xl:hidden"
+              className="relative flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 px-1.5 text-[11px] font-semibold sm:flex-row sm:gap-1.5 sm:px-3 sm:text-xs text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 min-[1760px]:hidden"
             >
               <Menu className="h-5 w-5 shrink-0" />
               <span>{ar ? "القائمة" : "Menu"}</span>
@@ -255,7 +282,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs xl:hidden" onClick={() => setIsMenuOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs min-[1760px]:hidden" onClick={() => setIsMenuOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"

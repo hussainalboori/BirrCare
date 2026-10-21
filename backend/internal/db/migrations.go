@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -577,6 +577,60 @@ func Migrate(database *sql.DB) error {
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts for duty handover: %w", err)
 		}
+	}
+
+	// Issue #19: "emergency card opened" alerts.
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'emergency_card'") {
+		log.Println("Migrating alerts: emergency card kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v4;
+			CREATE TABLE alerts_v4 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v4 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v4 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for the emergency card: %w", err)
+		}
+	}
+
+	// Issue #19: the one patient's profile for the paramedics' emergency card.
+	// emergency_token is kept so signed-in family can show the QR again; the
+	// public lookup compares SHA-256 hashes in constant time.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS patient_profile (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			name TEXT NOT NULL DEFAULT '',
+			dob TEXT NOT NULL DEFAULT '',
+			diagnosis_ar TEXT NOT NULL DEFAULT '',
+			diagnosis_en TEXT NOT NULL DEFAULT '',
+			stroke_date TEXT NOT NULL DEFAULT '',
+			allergies_ar TEXT NOT NULL DEFAULT '',
+			allergies_en TEXT NOT NULL DEFAULT '',
+			blood_type TEXT NOT NULL DEFAULT '',
+			baseline_bp TEXT NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			emergency_token TEXT,
+			emergency_token_hash TEXT,
+			token_rotated_at TEXT,
+			updated_at TEXT,
+			updated_by TEXT REFERENCES caregivers(id)
+		);
+		INSERT OR IGNORE INTO patient_profile (id) VALUES (1);
+	`); err != nil {
+		return fmt.Errorf("failed creating patient_profile: %w", err)
 	}
 
 	// Issue #18: quick-tap tags on handover notes, and "pass duty" records.
