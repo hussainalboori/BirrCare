@@ -1,6 +1,6 @@
 # User unit: install to ~/.config/systemd/user/ (see scripts/auto-deploy.sh)
 [Unit]
-Description=Birrcare pull-based deploy (fetch main, deploy if CI passed)
+Description=Birrcare updater (offer CI-passed updates, install on request)
 Wants=network-online.target
 After=network-online.target
 

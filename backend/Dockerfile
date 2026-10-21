@@ -30,4 +30,8 @@ ENV PORT=8080
 ENV DB_PATH=/data/birrcare.db
 ENV APP_ENV=production
 
+# Last, so a new commit only rebuilds this layer (issue #43).
+ARG GIT_SHA=dev
+ENV GIT_SHA=${GIT_SHA}
+
 ENTRYPOINT ["/app/birrcare-backend"]

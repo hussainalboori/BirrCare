@@ -62,12 +62,14 @@ func main() {
 	// 6. Router & Middleware
 	opts := server.OptionsFromEnv(database, broker)
 	opts.Push = notifier
+	opts.UpdateDir = handlers.UpdateDirFromEnv(dbPath)
 	r := server.NewRouter(opts)
 
 	// 7. Tell a sibling when the duty they passed has not been accepted (issue #18)
 	reminderCtx, stopReminders := context.WithCancel(context.Background())
 	defer stopReminders()
 	handlers.StartDutyReminders(reminderCtx, database, notifier, broker)
+	handlers.StartUpdateWatcher(reminderCtx, opts.UpdateDir, broker)
 
 	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
 	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)

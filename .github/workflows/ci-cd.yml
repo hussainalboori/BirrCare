@@ -102,6 +102,10 @@ jobs:
       - name: Validate Docker Compose Configuration
         run: docker compose config
 
+      # Host updater: manual by default, installs only on request (issue #43)
+      - name: Updater shell tests
+        run: bash scripts/tests/auto-deploy.test.sh
+
       - name: Build Backend Container
         uses: docker/build-push-action@v7
         with:

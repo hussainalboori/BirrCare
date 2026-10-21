@@ -1,0 +1,12 @@
+# User unit: install to ~/.config/systemd/user/ (see docs/DEPLOYMENT.md §8)
+# Starts the updater within seconds when the Super Admin taps Install in the
+# app, instead of waiting for the next timer tick (issue #43).
+[Unit]
+Description=Install a Birrcare update as soon as the Super Admin asks
+
+[Path]
+PathChanged=%h/birrcare/data/update/request.json
+Unit=birrcare-deploy.service
+
+[Install]
+WantedBy=paths.target

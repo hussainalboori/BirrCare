@@ -71,6 +71,8 @@ export function SseToast() {
     const handleEvent = (e: Event) => {
       const event = (e as CustomEvent<SSEEvent>).detail;
       if (!event || !event.actor) return;
+      // Update events have their own banner and Super Admin card (issue #43).
+      if (event.type?.startsWith("UPDATE_")) return;
       // The person who just tapped already sees the result on their own card.
       if (event.actor.id && event.actor.id === selfIdRef.current) return;
 

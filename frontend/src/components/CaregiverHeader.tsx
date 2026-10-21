@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
-import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock } from "lucide-react";
+import { ConnectionStatus, RESYNC_EVENT } from "@/hooks/useLiveSync";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock, Download } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
 import { useRouter } from "next/navigation";
@@ -18,6 +18,8 @@ import { ChangePinModal } from "./ChangePinModal";
 import { TwoFactorModal } from "./TwoFactorModal";
 import { ThemePicker, themeLabel, useThemeMode } from "./ThemePicker";
 import { DevicePairingModal } from "./DevicePairingModal";
+import { UpdatesModal } from "./UpdatesModal";
+import { UPDATE_STATUS_EVENT, fetchUpdateStatus } from "@/lib/updates";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -36,6 +38,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isTwoFactorOpen, setIsTwoFactorOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
+  const [isUpdatesOpen, setIsUpdatesOpen] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
   const themeMode = useThemeMode();
 
   const role = currentCaregiver?.role || "caregiver";
@@ -46,6 +50,30 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const shared = !!currentCaregiver?.shared_device;
   const emergencyToken = useEmergencyToken();
   const router = useRouter();
+
+  // Issue #43: a dot on the Super Admin's menu when an update is waiting.
+  const superAdmin = isSuperAdmin(role);
+  const updateDot = superAdmin && updateReady;
+  useEffect(() => {
+    if (!superAdmin) return;
+    const refresh = () =>
+      fetchUpdateStatus()
+        .then((s) => setUpdateReady(s.update_available && !s.pending))
+        .catch(() => {});
+    const onEvent = (e: Event) => {
+      const type = (e as CustomEvent<{ type?: string }>).detail?.type;
+      if (type === "UPDATE_AVAILABLE" || type === "UPDATE_STARTING") refresh();
+    };
+    refresh();
+    window.addEventListener("birrcare:sse_event", onEvent);
+    window.addEventListener(UPDATE_STATUS_EVENT, refresh);
+    window.addEventListener(RESYNC_EVENT, refresh);
+    return () => {
+      window.removeEventListener("birrcare:sse_event", onEvent);
+      window.removeEventListener(UPDATE_STATUS_EVENT, refresh);
+      window.removeEventListener(RESYNC_EVENT, refresh);
+    };
+  }, [superAdmin]);
 
   // Issue #17: a shared tablet signs each person out after 20 minutes without use.
   const [sharedError, setSharedError] = useState(false);
@@ -59,11 +87,21 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
     }
   };
 
-  const actions: { key: string; icon: LucideIcon; label: string; short: string; tone: string; onClick: () => void; hint?: string }[] = [
+  const actions: { key: string; icon: LucideIcon; label: string; short: string; tone: string; onClick: () => void; hint?: string; dot?: boolean }[] = [
     ...(isSuperAdmin(role)
       ? [
           { key: "users", icon: ShieldAlert, label: t.userManagement, short: ar ? "المستخدمون" : "Users", tone: "bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60", onClick: () => setIsUserModalOpen(true) },
           { key: "shifts", icon: Clock, label: t.manageShifts, short: ar ? "الورديات" : "Shifts", tone: "bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60", onClick: () => setIsShiftModalOpen(true) },
+          {
+            key: "updates",
+            icon: Download,
+            label: ar ? "التحديثات" : "Updates",
+            short: ar ? "التحديثات" : "Updates",
+            tone: "bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 dark:hover:bg-sky-900/60",
+            onClick: () => setIsUpdatesOpen(true),
+            hint: updateReady ? (ar ? "تحديث جديد" : "New update") : undefined,
+            dot: updateReady,
+          },
         ]
       : []),
     ...(canManageMedications(role)
@@ -250,6 +288,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                 >
                   <a.icon className="h-4 w-4 shrink-0" />
                   <span className="whitespace-nowrap">{a.short}</span>
+                  {a.dot && <span data-testid={`action-dot-${a.key}`} className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
                 </button>
               ))}
             </div>
@@ -288,6 +327,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               <Menu className="h-5 w-5 shrink-0" />
               <span>{ar ? "القائمة" : "Menu"}</span>
               {needs2FA && <span className="absolute top-2 end-2 h-2 w-2 rounded-full bg-amber-500" />}
+              {updateDot && <span data-testid="menu-update-dot" className="absolute bottom-2 end-2 h-2 w-2 rounded-full bg-sky-500" />}
             </button>
           </div>
         </div>
@@ -335,6 +375,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
       <ThemePicker isOpen={isThemeOpen} onClose={() => setIsThemeOpen(false)} />
       <DevicePairingModal isOpen={isDeviceModalOpen} onClose={() => setIsDeviceModalOpen(false)} />
+      {superAdmin && <UpdatesModal isOpen={isUpdatesOpen} onClose={() => setIsUpdatesOpen(false)} />}
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (
@@ -366,6 +407,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                   <a.icon className="h-5 w-5 shrink-0" />
                   <span className="flex-1">{a.label}</span>
                   {a.hint && <span className="text-xs font-semibold opacity-80">{a.hint}</span>}
+                  {a.dot && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-sky-500" />}
                 </button>
               ))}
             </div>

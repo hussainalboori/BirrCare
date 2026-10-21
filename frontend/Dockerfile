@@ -34,4 +34,8 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
+# Last, so a new commit only rebuilds this layer (issue #43).
+ARG GIT_SHA=dev
+ENV GIT_SHA=${GIT_SHA}
+
 CMD ["npm", "start"]

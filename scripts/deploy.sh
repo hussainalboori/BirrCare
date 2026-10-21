@@ -46,7 +46,11 @@ if [ -f "data/birrcare.db" ]; then
 fi
 
 # 2. Build or Pull latest Docker containers
-echo "--> Rebuilding and starting Docker services..."
+# The running commit goes into both images, so /api/v1/health reports it and
+# the app can confirm an update took effect (issue #43).
+GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo dev)}"
+export GIT_SHA
+echo "--> Rebuilding and starting Docker services (version ${GIT_SHA:0:7})..."
 docker compose build --pull
 docker compose up -d --remove-orphans
 

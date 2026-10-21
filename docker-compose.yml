@@ -3,6 +3,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Set by scripts/deploy.sh; shown by /api/v1/health (issue #43).
+        - GIT_SHA=${GIT_SHA:-dev}
     container_name: birrcare_backend
     restart: unless-stopped
     ports:
@@ -36,6 +39,7 @@ services:
       args:
         # Fallback for the emergency call button when the backend can't be reached.
         - NEXT_PUBLIC_DEFAULT_EMERGENCY=${EMERGENCY_NUMBER:-112}
+        - GIT_SHA=${GIT_SHA:-dev}
     container_name: birrcare_frontend
     restart: unless-stopped
     ports:

@@ -384,7 +384,7 @@ Step-by-step production guide: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. It 
 In short:
 
 - **`scripts/deploy.sh`** snapshots `data/birrcare.db` into `data/backups/` (keeps 10), rebuilds and restarts both containers, and waits for the health checks.
-- **`scripts/auto-deploy.sh`** with the systemd user units in `scripts/systemd/` checks `main` every 5 minutes and deploys a new commit only after its CI run passed. It is pull-based, so nothing on GitHub can run code on the host.
+- **`scripts/auto-deploy.sh`** with the systemd user units in `scripts/systemd/` checks `main` every 5 minutes. A new commit whose CI run passed is offered to the Super Admin in **Menu → Updates**, who installs or skips it; it installs by itself only if **Automatic updates** is on. It is pull-based, so nothing on GitHub can run code on the host. See [docs/DEPLOYMENT.md §8](docs/DEPLOYMENT.md#8-updates-offered-in-the-app-installed-when-you-say-so).
 - Expose only `127.0.0.1:3000` through a Cloudflare Tunnel, protected by a Cloudflare Access policy.
 
 ## License

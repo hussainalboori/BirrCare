@@ -13,6 +13,7 @@ import { EmergencyCardKeeper } from "@/components/EmergencyCardKeeper";
 import { AlertCenter, EmergencySetupBanner, TimezoneMismatchBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 import { ThemeKeeper } from "@/components/ThemePicker";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { THEME_COLORS, THEME_COOKIE, THEME_SCRIPT, parseThemeMode, themeClasses } from "@/lib/theme";
 
 export const metadata: Metadata = {
@@ -66,6 +67,7 @@ export default async function RootLayout({
           <CaregiverProvider>
             <EmergencySetupBanner />
             <TimezoneMismatchBanner />
+            <UpdateBanner />
             <AlertCenter />
             <SseToast />
             <OutboxBar />

@@ -1,35 +1,166 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Birrcare (رعاية بر) — Pull-based auto-deploy
+# Birrcare (رعاية بر) — Pull-based updater
 #
-# Runs on the BirrCare host from a systemd timer (scripts/systemd/). Every tick it
-# fetches origin/main and, if there is a new commit whose CI run on GitHub passed,
-# checks it out and runs scripts/deploy.sh.
+# Runs on the BirrCare host from systemd (scripts/systemd/): a timer every few
+# minutes, and a path unit the moment the app asks for an install. Every run it
+# fetches origin/main, checks that the commit's CI run on GitHub passed, and
+# tells the app what is on offer. It deploys only when:
+#   - the Super Admin pressed Install in the app (data/update/request.json) and
+#     the requested commit is exactly the CI-passed origin/main, or
+#   - automatic updates are switched on (data/update/policy.json {"mode":"auto"}).
+# Without a policy file updates are manual (issue #43).
 #
 # Why pull, not push: the repo is public, and a self-hosted GitHub runner on a
 # public repo executes workflow code from fork pull requests once approved. With
 # this poller nothing on GitHub can run code on the host; the host only ever runs
-# what is on main, and only after CI succeeded.
+# what is on main, and only after CI succeeded. The app never deploys either: it
+# can at most ask for "the latest CI-passed main".
+#
+# Files shared with the app (data volume, data/update/):
+#   available.json  host → app   {current_sha, target_sha, ci, checked_at, commits, changes_database}
+#   policy.json     app  → host  {mode: "manual"|"auto", skipped_sha}
+#   request.json    app  → host  {action: "install", target_sha, requested_by, requested_at}
+#   result.json     host → app   {sha, status: "success"|"failed"|"rejected", started_at, finished_at, log_tail}
 #
 # Requirements on the host: git, curl, jq, docker compose.
 #
 # Env:
 #   DEPLOY_BRANCH  branch to track (default: main)
 #   DRY_RUN=1      report what would happen without deploying
+#   UPDATE_DIR     shared directory (default: <repo>/data/update)
+#   DEPLOY_CMD     deploy command (default: ./scripts/deploy.sh; tests stub it)
 #
-# State (last deployed / last rejected commit) lives outside the repo in
+# State (last deployed / rejected / CI-passed commit) lives outside the repo in
 # ${XDG_STATE_HOME:-~/.local/state}/birrcare so `git reset --hard` never touches it.
 
-# Everything runs inside main(): bash reads a script lazily, and `git reset --hard`
-# below may rewrite this very file mid-run. A function body is parsed up front.
+# Everything runs inside functions: bash reads a script lazily, and `git reset
+# --hard` below may rewrite this very file mid-run. Function bodies are parsed up front.
+
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# write_json FILE: stdin → FILE through a temp file and a rename, so the app
+# never reads half a file.
+write_json() {
+  local file="$1" tmp
+  tmp="$(dirname "$file")/.$(basename "$file").tmp.$$"
+  cat >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+# write_available CURRENT OFFER CI
+write_available() {
+  local current="$1" offer="$2" ci="$3" commits="[]" changes_db=false
+  if [ -n "$offer" ]; then
+    local range="$offer" files
+    if [ -n "$current" ] && git cat-file -e "${current}^{commit}" 2>/dev/null; then
+      range="${current}..${offer}"
+      files="$(git diff --name-only "$current" "$offer" -- backend/internal/db/)"
+      [ -z "$files" ] || changes_db=true
+    else
+      # Unknown starting point: show recent commits and assume the database may change.
+      range="-n 20 ${offer}"
+      changes_db=true
+    fi
+    # shellcheck disable=SC2086 # range may hold "-n 20 sha"
+    commits="$(git log --format='%h%x09%s%x09%cI' $range |
+      jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {sha: .[0], subject: .[1], date: .[2]})')"
+  fi
+  jq -n \
+    --arg current "$current" --arg target "$offer" --arg ci "$ci" --arg checked "$(now_utc)" \
+    --argjson commits "$commits" --argjson changes_db "$changes_db" \
+    '{current_sha: $current, target_sha: $target, ci: $ci, checked_at: $checked,
+      commits: $commits, changes_database: $changes_db}' |
+    write_json "$UPDATE_DIR/available.json"
+}
+
+# write_result SHA STATUS STARTED FINISHED LOG_TAIL
+write_result() {
+  jq -n --arg sha "$1" --arg status "$2" --arg started "$3" --arg finished "$4" --arg log "$5" \
+    '{sha: $sha, status: $status, started_at: $started, finished_at: $finished, log_tail: $log}' |
+    write_json "$UPDATE_DIR/result.json"
+}
+
+# ci_state SHA → success | failure | pending (and remembers the answer)
+ci_state() {
+  local sha="$1" repo runs status conclusion
+  if [ "$sha" = "$(cat "$CI_OK_FILE" 2>/dev/null || true)" ]; then
+    echo success
+    return
+  fi
+  if [ "$sha" = "$(cat "$REJECTED_FILE" 2>/dev/null || true)" ]; then
+    echo failure
+    return
+  fi
+  # Only commits whose CI/CD workflow run on the push to main succeeded.
+  repo="$(git remote get-url origin | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+  runs="$(curl -fsSL --max-time 20 \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${repo}/actions/runs?head_sha=${sha}&event=push&per_page=10")"
+  read -r status conclusion < <(jq -r '
+    [.workflow_runs[] | select(.path == ".github/workflows/ci-cd.yml")]
+    | sort_by(.created_at) | last
+    | if . == null then "missing none" else "\(.status) \(.conclusion // "none")" end
+  ' <<<"$runs")
+  case "$status/$conclusion" in
+    completed/success)
+      [ -n "${DRY_RUN:-}" ] || echo "$sha" >"$CI_OK_FILE"
+      echo success
+      ;;
+    completed/*)
+      echo "auto-deploy: CI for ${sha:0:7} finished with '${conclusion}'; not offering it" >&2
+      [ -n "${DRY_RUN:-}" ] || echo "$sha" >"$REJECTED_FILE"
+      echo failure
+      ;;
+    *)
+      echo "auto-deploy: CI for ${sha:0:7} is '${status}'; will check again next run" >&2
+      echo pending
+      ;;
+  esac
+}
+
+# deploy SHA: check out SHA, run deploy.sh, record the result.
+deploy() {
+  local sha="$1" started log rc=0 status
+  started="$(now_utc)"
+  if [ -n "${DRY_RUN:-}" ]; then
+    echo "auto-deploy: DRY_RUN - would deploy ${sha:0:7} (currently deployed: ${DEPLOYED:0:7})"
+    return 0
+  fi
+  echo "auto-deploy: deploying ${sha:0:7} (previous: ${DEPLOYED:0:7})"
+  log="${STATE_DIR}/last-deploy.log"
+  # Git-ignored files (data/, .env) are left untouched by reset --hard.
+  git reset --hard --quiet "$sha"
+  GIT_SHA="$sha" $DEPLOY_CMD >"$log" 2>&1 || rc=$?
+  cat "$log"
+  if [ "$rc" -eq 0 ]; then
+    status=success
+    echo "$sha" >"$DEPLOYED_FILE"
+    DEPLOYED="$sha"
+  else
+    # Don't rebuild a broken commit every run; the next push to main retries.
+    status=failed
+    echo "$sha" >"$REJECTED_FILE"
+    echo "auto-deploy: deploy.sh failed for ${sha:0:7}" >&2
+  fi
+  write_result "$sha" "$status" "$started" "$(now_utc)" "$(tail -n 40 "$log")"
+  rm -f "$UPDATE_DIR/request.processing"
+  write_available "$DEPLOYED" "" "$([ "$status" = success ] && echo deployed || echo failure)"
+  [ "$status" = success ]
+}
+
 main() {
-  local project_root branch state_dir deployed_file rejected_file
+  local project_root branch
   project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   branch="${DEPLOY_BRANCH:-main}"
-  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/birrcare"
-  deployed_file="${state_dir}/deployed-sha"
-  rejected_file="${state_dir}/rejected-sha"
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/birrcare"
+  DEPLOYED_FILE="${STATE_DIR}/deployed-sha"
+  REJECTED_FILE="${STATE_DIR}/rejected-sha"
+  CI_OK_FILE="${STATE_DIR}/ci-ok-sha"
+  UPDATE_DIR="${UPDATE_DIR:-${project_root}/data/update}"
+  DEPLOY_CMD="${DEPLOY_CMD:-./scripts/deploy.sh}"
 
   for cmd in git curl jq docker; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -38,59 +169,63 @@ main() {
     fi
   done
 
-  mkdir -p "$state_dir"
+  mkdir -p "$STATE_DIR" "$UPDATE_DIR"
   cd "$project_root"
 
-  git fetch --quiet --prune origin "$branch"
-  local target deployed rejected
-  target="$(git rev-parse "origin/${branch}")"
-  deployed="$(cat "$deployed_file" 2>/dev/null || true)"
-  rejected="$(cat "$rejected_file" 2>/dev/null || true)"
-
-  if [ "$target" = "$deployed" ] || [ "$target" = "$rejected" ]; then
-    exit 0 # nothing new
+  # One run at a time: the timer and the path unit can fire together.
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"${STATE_DIR}/auto-deploy.lock"
+    flock -n 9 || { echo "auto-deploy: another run is in progress"; exit 0; }
   fi
 
-  # Only deploy commits whose CI/CD workflow run on the push to main succeeded.
-  local repo runs status conclusion
-  repo="$(git remote get-url origin | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
-  runs="$(curl -fsSL --max-time 20 \
-    -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/${repo}/actions/runs?head_sha=${target}&event=push&per_page=10")"
-  read -r status conclusion < <(jq -r '
-    [.workflow_runs[] | select(.path == ".github/workflows/ci-cd.yml")]
-    | sort_by(.created_at) | last
-    | if . == null then "missing none" else "\(.status) \(.conclusion // "none")" end
-  ' <<<"$runs")
+  git fetch --quiet --prune origin "$branch"
+  local target mode skipped ci offer
+  target="$(git rev-parse "origin/${branch}")"
+  DEPLOYED="$(cat "$DEPLOYED_FILE" 2>/dev/null || true)"
 
-  case "$status/$conclusion" in
-    completed/success) ;;
-    completed/*)
-      echo "auto-deploy: CI for ${target:0:7} finished with '${conclusion}'; not deploying it"
-      [ -n "${DRY_RUN:-}" ] || echo "$target" >"$rejected_file"
-      exit 0
-      ;;
-    *)
-      echo "auto-deploy: CI for ${target:0:7} is '${status}'; will check again next tick"
-      exit 0
-      ;;
-  esac
+  # No policy file means manual: nothing installs unless the Super Admin asks.
+  mode=manual
+  skipped=""
+  if [ -f "$UPDATE_DIR/policy.json" ]; then
+    mode="$(jq -r '.mode // "manual"' "$UPDATE_DIR/policy.json" 2>/dev/null || echo manual)"
+    skipped="$(jq -r '.skipped_sha // ""' "$UPDATE_DIR/policy.json" 2>/dev/null || true)"
+    [ "$mode" = auto ] || mode=manual
+  fi
 
-  if [ -n "${DRY_RUN:-}" ]; then
-    echo "auto-deploy: DRY_RUN - would deploy ${target:0:7} (currently deployed: ${deployed:0:7})"
+  if [ "$target" = "$DEPLOYED" ]; then
+    ci=deployed
+  else
+    ci="$(ci_state "$target")"
+  fi
+
+  offer=""
+  if [ "$ci" = success ] && [ "$target" != "$skipped" ]; then
+    offer="$target"
+  fi
+  write_available "$DEPLOYED" "$offer" "$ci"
+
+  # An install the Super Admin asked for. Rename first so it runs once.
+  if [ -f "$UPDATE_DIR/request.json" ]; then
+    local req_target
+    if [ -n "${DRY_RUN:-}" ]; then
+      echo "auto-deploy: DRY_RUN - install requested for $(jq -r '.target_sha // ""' "$UPDATE_DIR/request.json" | cut -c1-7); offered: ${offer:0:7}"
+      exit 0
+    fi
+    mv -f "$UPDATE_DIR/request.json" "$UPDATE_DIR/request.processing"
+    req_target="$(jq -r '.target_sha // ""' "$UPDATE_DIR/request.processing" 2>/dev/null || true)"
+    if [ "$ci" = success ] && [ "$req_target" = "$target" ]; then
+      deploy "$target" || exit 1
+    else
+      echo "auto-deploy: refusing install request for '${req_target:0:7}': only the CI-passed origin/${branch} (${target:0:7}) can be installed"
+      write_result "$req_target" rejected "" "$(now_utc)" \
+        "Only the latest version that passed its checks (${target:0:7}) can be installed. CI: ${ci}."
+      rm -f "$UPDATE_DIR/request.processing"
+    fi
     exit 0
   fi
 
-  echo "auto-deploy: deploying ${target:0:7} (previous: ${deployed:0:7})"
-  # Git-ignored files (data/, .env) are left untouched by reset --hard.
-  git reset --hard --quiet "$target"
-  if ./scripts/deploy.sh; then
-    echo "$target" >"$deployed_file"
-  else
-    # Don't rebuild a broken commit every tick; the next push to main retries.
-    echo "$target" >"$rejected_file"
-    echo "auto-deploy: deploy.sh failed for ${target:0:7}" >&2
-    exit 1
+  if [ "$mode" = auto ] && [ -n "$offer" ]; then
+    deploy "$target" || exit 1
   fi
 }
 

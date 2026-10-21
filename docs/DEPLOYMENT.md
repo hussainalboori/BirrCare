@@ -185,21 +185,33 @@ curl -sI https://care.example.com/ | grep -iE "content-security-policy|x-frame-o
 
 You should see a CSP with `frame-ancestors 'none'`, `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`.
 
-## 8. Automatic updates (recommended)
+## 8. Updates: offered in the app, installed when you say so
 
-`scripts/auto-deploy.sh` checks `main` every 5 minutes. When there is a new commit **whose CI run on GitHub passed**, it checks out that commit and runs `deploy.sh`, which takes a backup first. A commit whose CI failed, or whose deploy failed, is skipped until the next push.
+`scripts/auto-deploy.sh` checks `main` every 5 minutes. When there is a new commit **whose CI run on GitHub passed**, it tells the app, and the Super Admin sees a dot on **Menu → Updates**. That screen shows:
 
-It is pull-based on purpose. Nothing on GitHub can run code on your host; the host only runs what is on `main`, and only after CI succeeded.
+- the version running now;
+- the list of changes;
+- an amber notice when the update changes the database.
+
+Press **Install now** when the house is calm, or **Skip this version**. Everyone with the app open sees "Birrcare is updating" for about a minute. Taps made during the restart wait on the phone and are sent when it is back. `deploy.sh` takes a database backup before every install.
+
+**Install now** refuses while a crisis, low blood pressure or F.A.S.T. alert from the last 30 minutes hasn't been acknowledged, unless you confirm.
+
+Nothing installs by itself unless you switch on **Automatic updates** on the same screen. With it on, every CI-passed commit installs within 5 minutes, which is how it worked before.
+
+It is pull-based on purpose. Nothing on GitHub can run code on your host; the host only runs what is on `main`, and only after CI succeeded. The app never deploys either: it writes a request into `data/update/`, and the host checks it. It installs only if the request names exactly the latest CI-passed `main`.
 
 Install the systemd **user** units:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp ~/birrcare/scripts/systemd/birrcare-deploy.{service,timer} ~/.config/systemd/user/
+cp ~/birrcare/scripts/systemd/birrcare-deploy.{service,timer,path} ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now birrcare-deploy.timer
+systemctl --user enable --now birrcare-deploy.timer birrcare-deploy.path
 sudo loginctl enable-linger "$USER"   # keep user timers running when you're logged out and after reboot
 ```
+
+The **timer** checks for updates. The **path** unit starts the install within seconds of tapping Install, instead of at the next 5-minute check. The units expect the checkout at `~/birrcare`.
 
 Check it:
 
@@ -207,14 +219,29 @@ Check it:
 DRY_RUN=1 ~/birrcare/scripts/auto-deploy.sh      # what it would do now
 systemctl --user list-timers birrcare-deploy.timer
 journalctl --user -u birrcare-deploy.service -n 50
+cat ~/birrcare/data/update/available.json        # what the app is being offered
 ```
+
+**Upgrading from automatic deploys:** the first run of the new script finds no `data/update/policy.json`, so updates become manual. To keep installing automatically, either:
+
+- switch on **Automatic updates** in the app; or
+- run `echo '{"mode":"auto"}' > ~/birrcare/data/update/policy.json`.
+
+Copy the new `birrcare-deploy.path` unit as shown above. Without it, an install starts at the next timer tick, up to 5 minutes later.
 
 Notes:
 
-- **Remember which commit is live:** the updater keeps it in `~/.local/state/birrcare/deployed-sha`. To force a redeploy of the same commit, delete that file.
+- **Remember which commit is live:** the updater keeps it in `~/.local/state/birrcare/deployed-sha`, and `GET /api/v1/health` reports the running `version`. To force a redeploy of the same commit, delete that file.
+- **Files in `data/update/`:** the app and the host talk through these files:
+  - `available.json`: what is offered;
+  - `policy.json`: manual or automatic, and the skipped version;
+  - `request.json`: an install request;
+  - `result.json`: how the last install went.
+
+  If the screen says "The update checker isn't running on the server", the host hasn't written `available.json` for 30 minutes. Re-run the `systemctl` command above.
 - **Local edits are lost:** `auto-deploy.sh` runs `git reset --hard` on the checkout. `.env` and `data/` are git-ignored, so they are not touched. Don't edit tracked files on the host; change them in the repository instead.
-- **GitHub API limit:** it reads CI results through GitHub's unauthenticated API, which allows 60 requests an hour. A 5-minute timer uses 12.
-- **Downtime:** each deploy restarts both containers, so the app is unavailable for a few seconds. Open phones reconnect and refresh on their own.
+- **GitHub API limit:** it reads CI results through GitHub's unauthenticated API, which allows 60 requests an hour. It asks once per new commit and remembers the answer.
+- **Downtime:** each install restarts both containers, so the app is unavailable for about a minute. Open phones reconnect and refresh on their own.
 
 ### Manual updates instead
 
@@ -264,15 +291,17 @@ Updates can change the database layout. Migrations only move forward: a table is
 
 ```bash
 cd ~/birrcare
-systemctl --user stop birrcare-deploy.timer           # stop the updater re-deploying main
+systemctl --user stop birrcare-deploy.timer birrcare-deploy.path   # pause the updater
 git log --oneline -5                                  # pick the last good commit
 git reset --hard <good-sha>
 ls -t data/backups/ | head                            # the snapshot from just before the bad deploy
 # restore that snapshot (section 10), then:
 ./scripts/deploy.sh
+echo <good-sha> > ~/.local/state/birrcare/deployed-sha             # tell the updater what is live
+systemctl --user start birrcare-deploy.timer birrcare-deploy.path
 ```
 
-Re-enable the timer (`systemctl --user start birrcare-deploy.timer`) once the problem is fixed on `main`. Otherwise it will deploy the bad commit again.
+With manual updates (the default) the app will offer the bad commit again, because it is still the latest `main`. Press **Skip this version** in Menu → Updates; a fixed commit on `main` is offered as soon as its CI passes. If you switched on **Automatic updates**, switch it off first, or keep the timer stopped until `main` is fixed. Otherwise the updater installs the bad commit again.
 
 ## 12. Day-to-day operations
 
@@ -343,5 +372,5 @@ Check that the tunnel points at port 3000, which proxies the live stream, and no
 - [ ] `EMERGENCY_NUMBER` and `DOCTOR_PHONE` set and tested from a phone
 - [ ] Emergency card filled in, QR printed and on the fridge or front door, Access **Bypass** for `/emergency/*` only, tested from a logged-out phone
 - [ ] Lock-screen alerts turned on and tested on every family phone (iPhone: from the Home Screen app)
-- [ ] Auto-deploy timer enabled with linger, or a manual update routine agreed
+- [ ] Updater timer and path units enabled with linger (Menu → Updates shows no "checker isn't running" notice)
 - [ ] Daily backup plus an off-host copy, and one test restore done

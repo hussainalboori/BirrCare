@@ -31,6 +31,8 @@ type Options struct {
 	Push           *push.Notifier // nil = no Web Push
 	// EmergencyLimiter rate-limits the public emergency card (nil = 10/min per IP).
 	EmergencyLimiter *handlers.IPRateLimiter
+	// UpdateDir holds the files shared with the host updater (issue #43).
+	UpdateDir string
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -72,6 +74,7 @@ func limitBody(n int64) func(http.Handler) http.Handler {
 func NewRouter(o Options) http.Handler {
 	authHandler := &handlers.AuthHandler{DB: o.DB, Broker: o.Broker, Limiter: o.Limiter}
 	usersHandler := &handlers.UsersHandler{DB: o.DB, Broker: o.Broker}
+	updatesHandler := &handlers.UpdatesHandler{DB: o.DB, Broker: o.Broker, Dir: o.UpdateDir}
 	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
@@ -114,6 +117,8 @@ func NewRouter(o Options) http.Handler {
 			"status":   "healthy",
 			"service":  "birrcare-backend",
 			"timezone": handlers.ClinicalLocation().String(),
+			// The running commit, so the app can confirm an update took effect (issue #43).
+			"version": handlers.Version(),
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}
@@ -174,6 +179,12 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/users/{id}/reset-pin", usersHandler.ResetUserPIN)
 				api.Delete("/users/{id}", usersHandler.ToggleUserActive)
 				api.Get("/audit/verify", auditHandler.Verify)
+
+				// Updates: offered, installed only when the Super Admin asks (issue #43)
+				api.Get("/admin/update/status", updatesHandler.GetStatus)
+				api.Post("/admin/update/install", updatesHandler.Install)
+				api.Post("/admin/update/skip", updatesHandler.Skip)
+				api.Put("/admin/update/policy", updatesHandler.SetPolicy)
 
 				// Medications & Scheduling
 				api.Get("/medications", medHandler.ListMedications)
