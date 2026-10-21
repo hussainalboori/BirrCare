@@ -86,6 +86,10 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [stockTouched, setStockTouched] = useState(false);
   const [unitsPerDose, setUnitsPerDose] = useState("1");
   const [thresholdDays, setThresholdDays] = useState("4");
+  // PRN (issue #25)
+  const [isPRN, setIsPRN] = useState(false);
+  const [prnMax24h, setPrnMax24h] = useState("4");
+  const [prnMinHours, setPrnMinHours] = useState("4");
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
     morning: "08:00",
     afternoon: "14:00",
@@ -131,6 +135,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setStockTouched(false);
     setUnitsPerDose("1");
     setThresholdDays("4");
+    setIsPRN(false);
+    setPrnMax24h("4");
+    setPrnMinHours("4");
     setSlotTimes({
       morning: "08:00",
       afternoon: "14:00",
@@ -155,6 +162,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setStockTouched(false);
     setUnitsPerDose(String(med.units_per_dose || 1));
     setThresholdDays(String(med.refill_threshold_days || 4));
+    setIsPRN(!!med.is_prn);
+    setPrnMax24h(med.prn_max_per_24h != null ? String(med.prn_max_per_24h) : "4");
+    setPrnMinHours(med.prn_min_hours != null ? String(med.prn_min_hours) : "4");
     setSelectedSlots(med.frequency_slots || ["morning"]);
     setDaysOfWeek(med.days_of_week && med.days_of_week.length > 0 ? med.days_of_week : ALL_DAY_IDS);
     const times: Record<string, string> = {};
@@ -199,10 +209,25 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
   const handleSaveMedication = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameAr.trim() || !dosage.trim() || selectedSlots.length === 0) return;
+    if (!nameAr.trim() || !dosage.trim() || (!isPRN && selectedSlots.length === 0)) return;
 
     setIsSubmitting(true);
     try {
+      const prnPayload = isPRN
+        ? {
+            is_prn: true,
+            prn_max_per_24h: prnMax24h.trim() !== "" ? Number(prnMax24h) : 4,
+            prn_min_hours: prnMinHours.trim() !== "" ? Number(prnMinHours) : 4,
+            frequency_slots: [],
+          }
+        : {
+            is_prn: false,
+            frequency_slots: selectedSlots,
+            days_of_week: daysOfWeek,
+            slot_times: slotTimes,
+            min_hours_between: minHours.trim() === "" ? null : Number(minHours),
+          };
+
       if (editingMed) {
         // Edit medication
         await fetchApi(`/medications/${editingMed.id}`, {
@@ -213,12 +238,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             dosage: dosage.trim(),
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
-            frequency_slots: selectedSlots,
-            days_of_week: daysOfWeek,
-            slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
-            min_hours_between: minHours.trim() === "" ? null : Number(minHours),
             is_critical: isCritical,
+            ...prnPayload,
             ...stockPayload(),
           }),
         });
@@ -232,12 +254,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             dosage: dosage.trim(),
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
-            frequency_slots: selectedSlots,
-            days_of_week: daysOfWeek,
-            slot_times: slotTimes,
             image_url: imageUrl.trim() || undefined,
-            min_hours_between: minHours.trim() === "" ? null : Number(minHours),
             is_critical: isCritical,
+            ...prnPayload,
             ...stockPayload(),
           }),
         });
@@ -397,88 +416,152 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </div>
               </div>
 
-              {/* FREQUENCY SLOTS & EXACT TIMES */}
-              <div className="mb-4">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
+              {/* PRN (AS-NEEDED) TOGGLE */}
+              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+                <label className="flex min-h-12 items-center gap-3 text-sm font-semibold text-blue-950 dark:text-blue-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isPRN}
+                    onChange={(e) => setIsPRN(e.target.checked)}
+                    className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>
+                    {locale === "ar"
+                      ? "دواء عند الحاجة (PRN) — مثل خافض الحرارة ومسكّن الصداع"
+                      : "As-needed medicine (PRN) — e.g. fever reducers, headache pain relief"}
+                  </span>
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {ALL_SLOTS.map((slot) => {
-                    const isChecked = selectedSlots.includes(slot.id);
-                    const currentSlotTime = slotTimes[slot.id] || slot.defaultTime;
-                    return (
-                      <div
-                        key={slot.id}
-                        className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
-                          isChecked
-                            ? "border-amber-500/80 bg-amber-50/80 text-amber-950 dark:bg-amber-950/40 dark:text-amber-200"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleToggleSlot(slot.id)}
-                          className="flex items-center gap-2 flex-1 text-start"
-                        >
+
+                {isPRN && (
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-blue-200/60 dark:border-blue-900/60">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1">
+                        {locale === "ar" ? "الحد الأقصى للجرعات خلال 24 ساعة *" : "Max doses per 24 hours *"}
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="24"
+                        value={prnMax24h}
+                        onChange={(e) => setPrnMax24h(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        placeholder="4"
+                        required
+                      />
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {locale === "ar" ? "مثال: 4 جرعات في 24 ساعة" : "Example: 4 doses in 24h"}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1">
+                        {locale === "ar" ? "أقل فاصل زمني بين الجرعات (ساعات) *" : "Min interval between doses (hours) *"}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="72"
+                        step="0.5"
+                        value={prnMinHours}
+                        onChange={(e) => setPrnMinHours(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base font-bold text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        placeholder="4"
+                        required
+                      />
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {locale === "ar" ? "مثال: لا يُعطى قبل مرور 4 ساعات" : "Example: cannot be repeated before 4h"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {!isPRN && (
+                <>
+                  {/* FREQUENCY SLOTS & EXACT TIMES */}
+                  <div className="mb-4">
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                      {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {ALL_SLOTS.map((slot) => {
+                        const isChecked = selectedSlots.includes(slot.id);
+                        const currentSlotTime = slotTimes[slot.id] || slot.defaultTime;
+                        return (
                           <div
-                            className={`flex h-4 w-4 items-center justify-center rounded-md border ${
+                            key={slot.id}
+                            className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
                               isChecked
-                                ? "bg-amber-600 border-amber-600 text-white"
-                                : "border-slate-300 dark:border-slate-600"
+                                ? "border-amber-500/80 bg-amber-50/80 text-amber-950 dark:bg-amber-950/40 dark:text-amber-200"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400"
                             }`}
                           >
-                            {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                          <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                          <span className="font-bold">{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
-                        </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSlot(slot.id)}
+                              className="flex items-center gap-2 flex-1 text-start"
+                            >
+                              <div
+                                className={`flex h-4 w-4 items-center justify-center rounded-md border ${
+                                  isChecked
+                                    ? "bg-amber-600 border-amber-600 text-white"
+                                    : "border-slate-300 dark:border-slate-600"
+                                }`}
+                              >
+                                {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                              </div>
+                              <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                              <span className="font-bold">{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
+                            </button>
 
-                        {/* Clock Time input */}
-                        {isChecked && (
-                          <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
-                            <span className="text-[10px] text-slate-400 font-mono">⏰</span>
-                            <input
-                              type="time"
-                              value={currentSlotTime}
-                              onChange={(e) =>
-                                setSlotTimes((prev) => ({
-                                  ...prev,
-                                  [slot.id]: e.target.value,
-                                }))
-                              }
-                              className="bg-transparent text-base font-mono font-bold text-slate-900 focus:outline-none dark:text-white"
-                            />
+                            {/* Clock Time input */}
+                            {isChecked && (
+                              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
+                                <span className="text-[10px] text-slate-400 font-mono">⏰</span>
+                                <input
+                                  type="time"
+                                  value={currentSlotTime}
+                                  onChange={(e) =>
+                                    setSlotTimes((prev) => ({
+                                      ...prev,
+                                      [slot.id]: e.target.value,
+                                    }))
+                                  }
+                                  className="bg-transparent text-base font-mono font-bold text-slate-900 focus:outline-none dark:text-white"
+                                />
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-              {/* MINIMUM INTERVAL (cross-midnight double-dose lock) */}
-              <div className="mb-4">
-                <label htmlFor="min-hours" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  {locale === "ar" ? "أقل عدد ساعات بين جرعتين (حسب الطبيب)" : "Minimum hours between two doses (doctor's value)"}
-                </label>
-                <input
-                  id="min-hours"
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  max={72}
-                  step={0.5}
-                  value={minHours}
-                  onChange={(e) => setMinHours(e.target.value)}
-                  placeholder={String(autoIntervalHours(selectedSlots, slotTimes))}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  {locale === "ar"
-                    ? `اتركه فارغاً للحساب التلقائي (${autoIntervalHours(selectedSlots, slotTimes)} ساعة لهذا الجدول). 0 يلغي القفل.`
-                    : `Leave empty for automatic (${autoIntervalHours(selectedSlots, slotTimes)} h for this schedule). 0 turns the lock off.`}
-                </p>
-              </div>
+                  {/* MINIMUM INTERVAL (cross-midnight double-dose lock) */}
+                  <div className="mb-4">
+                    <label htmlFor="min-hours" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      {locale === "ar" ? "أقل عدد ساعات بين جرعتين (حسب الطبيب)" : "Minimum hours between two doses (doctor's value)"}
+                    </label>
+                    <input
+                      id="min-hours"
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={72}
+                      step={0.5}
+                      value={minHours}
+                      onChange={(e) => setMinHours(e.target.value)}
+                      placeholder={String(autoIntervalHours(selectedSlots, slotTimes))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {locale === "ar"
+                        ? `اتركه فارغاً للحساب التلقائي (${autoIntervalHours(selectedSlots, slotTimes)} ساعة لهذا الجدول). 0 يلغي القفل.`
+                        : `Leave empty for automatic (${autoIntervalHours(selectedSlots, slotTimes)} h for this schedule). 0 turns the lock off.`}
+                    </p>
+                  </div>
+                </>
+              )}
 
               {/* CRITICAL MEDICATION (doctor report) */}
               <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
@@ -703,13 +786,18 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="text-sm font-bold text-slate-900 dark:text-white">
                             {name}
                           </span>
                           <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
                             {med.dosage}
                           </span>
+                          {med.is_prn && (
+                            <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
+                              {locale === "ar" ? "عند الحاجة (PRN)" : "PRN"}
+                            </span>
+                          )}
                         </div>
 
                         {inst && (

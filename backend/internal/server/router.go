@@ -168,6 +168,11 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
 
+				// PRN (As-Needed) Medications (Issue #25)
+				api.Get("/medications/prn", medHandler.GetPRNMedications)
+				api.Post("/medications/prn/log", medHandler.LogPRNDose)
+				api.Post("/medications/prn/log/{id}/void", medHandler.VoidPRNDose)
+
 				// Alerts that must reach every sibling (issue #12)
 				api.Get("/alerts/unacked", alertsHandler.Unacked)
 				api.Post("/alerts/{id}/ack", alertsHandler.Ack)

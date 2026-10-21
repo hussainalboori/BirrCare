@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS medications (
     days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]',
     slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}',
     image_url TEXT,
+    is_prn INTEGER NOT NULL DEFAULT 0,
+    prn_min_hours REAL,
+    prn_max_per_24h INTEGER,
     is_active INTEGER DEFAULT 1,
     created_by TEXT REFERENCES caregivers(id),
     created_at TEXT DEFAULT (datetime('now'))
@@ -80,6 +83,22 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE (log_id, type)
 );
+
+-- 3b. PRN (As-Needed) Medication Intake Logs (Issue #25)
+CREATE TABLE IF NOT EXISTS prn_logs (
+    id TEXT PRIMARY KEY,
+    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    given_at TEXT DEFAULT (datetime('now')),
+    reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+    notes TEXT,
+    voided_at TEXT,
+    voided_by TEXT REFERENCES caregivers(id),
+    void_reason TEXT,
+    dosage_snapshot TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 
 -- Alerts that must reach every sibling (issue #12): a BP crisis, a dose given
 -- inside its minimum interval, vomiting after a dose. Written in the same
@@ -783,6 +802,39 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating handover_notes table: %w", err)
 		}
+	}
+
+	// 7. PRN (As-Needed) medications and prn_logs table (issue #25)
+	for _, c := range []struct{ col, def string }{
+		{"is_prn", "INTEGER NOT NULL DEFAULT 0"},
+		{"prn_min_hours", "REAL"},
+		{"prn_max_per_24h", "INTEGER"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS prn_logs (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			given_at TEXT DEFAULT (datetime('now')),
+			reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+			notes TEXT,
+			voided_at TEXT,
+			voided_by TEXT REFERENCES caregivers(id),
+			void_reason TEXT,
+			dosage_snapshot TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs table: %w", err)
 	}
 
 	if err := seedSuperAdmin(database); err != nil {

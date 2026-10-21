@@ -150,13 +150,18 @@ export default function VitalsPage() {
     }
   }, [isModalOpen, selectedKind]);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("quick") === "bp" && currentCaregiver) {
+    const q = new URLSearchParams(window.location.search).get("quick");
+    if (q === "fast") {
+      router.push("/fast");
+      return;
+    }
+    if (q === "bp" && currentCaregiver) {
       window.history.replaceState(null, "", "/vitals");
       openQuickBP();
     }
     window.addEventListener("birrcare:quick-bp", openQuickBP);
     return () => window.removeEventListener("birrcare:quick-bp", openQuickBP);
-  }, [openQuickBP, currentCaregiver]);
+  }, [openQuickBP, currentCaregiver, router]);
 
   const handleOpenModal = () => {
     if (!currentCaregiver) {

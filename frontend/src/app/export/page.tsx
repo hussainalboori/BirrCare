@@ -174,6 +174,69 @@ export default function DoctorExportPage() {
               </div>
             )}
 
+            {/* PRN (As-needed) Medications usage per day with reasons (Issue #25) */}
+            {(summary.prn_logs ?? []).length > 0 && (
+              <div className="mb-5 print:mb-3 break-inside-avoid">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "أدوية عند اللزوم (PRN) المستخدمة" : "As-Needed (PRN) Medications Given"}
+                  </h3>
+                  <span className="text-[10px] text-slate-500">
+                    <Ltr>{summary.prn_logs!.length}</Ltr> {locale === "ar" ? "جرعة إجمالاً" : "total doses"}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-start text-xs print:text-[9pt]">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "التاريخ والوقت" : "Date & Time"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "الدواء والجرعة" : "Medication & Dose"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "السبب" : "Reason"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "ملاحظات" : "Notes"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "المُسجل" : "Caregiver"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {summary.prn_logs!.map((log) => {
+                        const reasonLabels: Record<string, { ar: string; en: string; badge: string }> = {
+                          headache: { ar: "صداع", en: "Headache", badge: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300" },
+                          pain: { ar: "ألم", en: "Pain", badge: "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300" },
+                          fever: { ar: "حرارة", en: "Fever", badge: "bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300" },
+                          cough: { ar: "سعال", en: "Cough", badge: "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300" },
+                          other: { ar: "أخرى", en: "Other", badge: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300" },
+                        };
+                        const r = reasonLabels[log.reason_tag] ?? { ar: log.reason_tag, en: log.reason_tag, badge: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300" };
+                        return (
+                          <tr key={log.id}>
+                            <td className="py-1.5 pe-2 align-top font-mono text-slate-600 dark:text-slate-400">
+                              <Ltr>{formatDateTime(log.given_at, locale)}</Ltr>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top font-semibold text-slate-900 dark:text-white">
+                              <bdi>{locale === "ar" ? log.name_ar : log.name_en}</bdi>
+                              <span className="ms-1 font-normal text-slate-500">
+                                <Auto>({log.dosage})</Auto>
+                              </span>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top">
+                              <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${r.badge}`}>
+                                {locale === "ar" ? r.ar : r.en}
+                              </span>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top text-slate-600 dark:text-slate-400">
+                              {log.notes ? <bdi>{log.notes}</bdi> : "--"}
+                            </td>
+                            <td className="py-1.5 align-top text-slate-600 dark:text-slate-400">
+                              {log.caregiver_name}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Blood pressure per household day, with a small trend line */}
             {(summary.daily_bp ?? []).length > 0 && (() => {
               const rows = summary.daily_bp!;
