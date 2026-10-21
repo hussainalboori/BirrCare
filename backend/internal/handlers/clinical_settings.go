@@ -69,13 +69,27 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "bp_low_systolic must be 70-120 and bp_low_diastolic 40-80")
 		return
 	}
-	if _, err := h.DB.ExecContext(r.Context(), `INSERT INTO app_settings (key, value) VALUES ('bp_low_systolic', ?), ('bp_low_diastolic', ?)
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES ('bp_low_systolic', ?), ('bp_low_diastolic', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, strconv.Itoa(t.LowSystolic), strconv.Itoa(t.LowDiastolic)); err != nil {
 		internalError(w, "failed to save thresholds", err)
 		return
 	}
+	if err := audit.Record(tx, me.ID, "CLINICAL_SETTINGS", "app_settings", "bp_low", fmt.Sprintf("Low BP thresholds set to %d/%d", t.LowSystolic, t.LowDiastolic)); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit thresholds", err)
+		return
+	}
 	SetBPLowThresholds(t)
-	audit.Log(h.DB, me.ID, "CLINICAL_SETTINGS", "app_settings", "bp_low", fmt.Sprintf("Low BP thresholds set to %d/%d", t.LowSystolic, t.LowDiastolic))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
 }

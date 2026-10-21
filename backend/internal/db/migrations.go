@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"birrcare/backend/internal/audit"
 )
 
 const SchemaSQL = `
@@ -158,7 +160,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity_type TEXT NOT NULL,
     entity_id TEXT,
     details TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    prev_hash TEXT,
+    row_hash TEXT
 );
 
 -- 7. Server-side settings (e.g. persisted session signing secret)
@@ -750,6 +754,93 @@ func Migrate(database *sql.DB) error {
 		BEGIN SELECT RAISE(ABORT, 'this reading was already corrected'); END;
 	`); err != nil {
 		return fmt.Errorf("failed creating vitals immutability triggers: %w", err)
+	}
+
+	// Issue #23: Immutability triggers on clinical columns and append-only audit trail
+	for _, c := range []struct{ col, def string }{
+		{"prev_hash", "TEXT"},
+		{"row_hash", "TEXT"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE audit_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding audit_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+
+	// Backfill hashes for any legacy audit rows that lack a hash chain.
+	var unhashedCount int
+	_ = database.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE row_hash IS NULL").Scan(&unhashedCount)
+	if unhashedCount > 0 {
+		rows, err := database.Query("SELECT rowid, id, COALESCE(caregiver_id, ''), action, entity_type, COALESCE(entity_id, ''), COALESCE(details, ''), COALESCE(created_at, datetime('now')) FROM audit_logs WHERE row_hash IS NULL ORDER BY rowid ASC")
+		if err != nil {
+			return fmt.Errorf("failed querying unhashed audit logs: %w", err)
+		}
+		defer rows.Close()
+
+		var prevHash string
+		_ = database.QueryRow("SELECT row_hash FROM audit_logs WHERE row_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1").Scan(&prevHash)
+
+		type legacyRow struct {
+			rowid       int64
+			id          string
+			caregiverID string
+			action      string
+			entityType  string
+			entityID    string
+			details     string
+			createdAt   string
+		}
+		var legacy []legacyRow
+		for rows.Next() {
+			var lr legacyRow
+			if err := rows.Scan(&lr.rowid, &lr.id, &lr.caregiverID, &lr.action, &lr.entityType, &lr.entityID, &lr.details, &lr.createdAt); err != nil {
+				return fmt.Errorf("failed scanning unhashed audit row: %w", err)
+			}
+			legacy = append(legacy, lr)
+		}
+		rows.Close()
+
+		for _, lr := range legacy {
+			rowHash := audit.ComputeHash(prevHash, lr.id, lr.caregiverID, lr.action, lr.entityID, lr.details, lr.createdAt)
+			if _, err := database.Exec("UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE rowid = ?", prevHash, rowHash, lr.rowid); err != nil {
+				return fmt.Errorf("failed backfilling audit hash: %w", err)
+			}
+			prevHash = rowHash
+		}
+	}
+
+	// Triggers for append-only audit trail and immutable clinical logs:
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS audit_no_update
+		BEFORE UPDATE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS audit_no_delete
+		BEFORE DELETE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, slot, scheduled_date, status, notes, dosage_snapshot
+		ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication log entries are immutable: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON medication_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this dose was already voided'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_no_delete
+		BEFORE DELETE ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication logs cannot be deleted: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS vitals_no_delete
+		BEFORE DELETE ON vitals_logs
+		BEGIN SELECT RAISE(ABORT, 'vitals logs cannot be deleted: post a correction instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating immutability triggers: %w", err)
 	}
 
 	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.

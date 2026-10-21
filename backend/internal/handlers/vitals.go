@@ -264,11 +264,6 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to record alert", err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
-		internalError(w, "failed to log vitals", err)
-		return
-	}
-
 	auditDetails := fmt.Sprintf("Type: %s", vitalType)
 	if req.Systolic != nil && req.Diastolic != nil {
 		auditDetails += fmt.Sprintf(", BP %d/%d (Status: %s)", *req.Systolic, *req.Diastolic, bpStatus)
@@ -287,7 +282,15 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	if req.FastResult != nil {
 		auditDetails += fmt.Sprintf(", F.A.S.T. face=%t arm=%t speech=%t", req.FastResult.Face, req.FastResult.Arm, req.FastResult.Speech)
 	}
-	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
+	if err := audit.Record(tx, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails); err != nil {
+		tx.Rollback()
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to log vitals", err)
+		return
+	}
 
 	// Broadcast SSE event (a crisis carries its alert id, also as the SSE "id:").
 	vitalPayload := map[string]interface{}{
@@ -358,7 +361,14 @@ func (h *VitalsHandler) SetLastNormal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	res, err := h.DB.ExecContext(r.Context(), `UPDATE vitals_logs SET last_normal_at = ? WHERE id = ? AND vital_type = 'fast'`, t.UTC().Format(sqliteTimeLayout), id)
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE vitals_logs SET last_normal_at = ? WHERE id = ? AND vital_type = 'fast'`, t.UTC().Format(sqliteTimeLayout), id)
 	if err != nil {
 		internalError(w, "failed to save time", err)
 		return
@@ -367,7 +377,14 @@ func (h *VitalsHandler) SetLastNormal(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "F.A.S.T. check not found")
 		return
 	}
-	audit.Log(h.DB, caregiver.ID, "FAST_LAST_NORMAL", "vitals_log", id, "Last seen normal at "+t.UTC().Format(time.RFC3339))
+	if err := audit.Record(tx, caregiver.ID, "FAST_LAST_NORMAL", "vitals_log", id, "Last seen normal at "+t.UTC().Format(time.RFC3339)); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit time", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"saved"}`))
 }

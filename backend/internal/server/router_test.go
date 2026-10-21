@@ -751,3 +751,73 @@ func TestEmergencyCard(t *testing.T) {
 		t.Fatalf("a different IP was blocked: %d", code)
 	}
 }
+
+func TestAuditVerifyRoute(t *testing.T) {
+	srv, database, _ := setup(t, auth.Config{}, 0)
+	defer srv.Close()
+
+	sessionOf := func(r *http.Response) *http.Cookie {
+		for _, c := range r.Cookies() {
+			if c.Name == auth.SessionCookieName && c.Value != "" {
+				return c
+			}
+		}
+		return nil
+	}
+
+	superadmin := sessionOf(do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_superadmin", "pin": "1234"}, nil))
+	fatima := sessionOf(do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_fatima", "pin": "1234"}, nil))
+
+	// 1. Unauthenticated -> 401
+	if r := do(t, "GET", srv.URL+"/api/v1/audit/verify", nil, nil); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated: want 401, got %d", r.StatusCode)
+	}
+
+	// 2. Caregiver -> 403
+	if r := do(t, "GET", srv.URL+"/api/v1/audit/verify", nil, nil, fatima); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("caregiver: want 403, got %d", r.StatusCode)
+	}
+
+	// 3. Super Admin -> 200 OK
+	r := do(t, "GET", srv.URL+"/api/v1/audit/verify", nil, nil, superadmin)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("super admin /api/v1/audit/verify: want 200, got %d", r.StatusCode)
+	}
+	var out map[string]interface{}
+	json.NewDecoder(r.Body).Decode(&out)
+	if out["valid"] != true {
+		t.Fatalf("expected valid=true, got %+v", out)
+	}
+
+	// 4. Root /audit/verify route also works
+	rRoot := do(t, "GET", srv.URL+"/audit/verify", nil, nil, superadmin)
+	if rRoot.StatusCode != http.StatusOK {
+		t.Fatalf("super admin /audit/verify: want 200, got %d", rRoot.StatusCode)
+	}
+
+	// 5. Tamper a row and verify report
+	var rowID string
+	if err := database.QueryRow("SELECT id FROM audit_logs ORDER BY rowid DESC LIMIT 1").Scan(&rowID); err != nil {
+		t.Fatalf("failed finding audit row: %v", err)
+	}
+	if _, err := database.Exec("DROP TRIGGER audit_no_update"); err != nil {
+		t.Fatalf("failed dropping trigger: %v", err)
+	}
+	if _, err := database.Exec("UPDATE audit_logs SET details = 'tampered' WHERE id = ?", rowID); err != nil {
+		t.Fatalf("failed tampering row: %v", err)
+	}
+
+	rTampered := do(t, "GET", srv.URL+"/api/v1/audit/verify", nil, nil, superadmin)
+	if rTampered.StatusCode != http.StatusOK {
+		t.Fatalf("want 200 with report, got %d", rTampered.StatusCode)
+	}
+	var tamperedOut map[string]interface{}
+	json.NewDecoder(rTampered.Body).Decode(&tamperedOut)
+	if tamperedOut["valid"] == true {
+		t.Fatalf("want valid=false, got true")
+	}
+	if tamperedOut["broken_id"] != rowID {
+		t.Fatalf("want broken_id %q, got %q", rowID, tamperedOut["broken_id"])
+	}
+}
+
