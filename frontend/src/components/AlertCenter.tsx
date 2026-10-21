@@ -8,7 +8,7 @@ import { fetchApi } from "@/lib/api";
 import { formatTime } from "@/lib/datetime";
 import { playAlert } from "@/lib/alertSound";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
-import { setBPLowThresholds } from "@/lib/clinical";
+import { setBPLowThresholds, setOxygenFeverThresholds } from "@/lib/clinical";
 import Link from "next/link";
 import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
@@ -28,7 +28,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -76,8 +76,12 @@ export function AlertCenter() {
   // The doctor's low-BP thresholds, so the app classifies readings like the server.
   useEffect(() => {
     if (!me) return;
-    fetchApi<{ bp_low_systolic: number; bp_low_diastolic: number }>("/settings/clinical")
-      .then((t) => t && setBPLowThresholds(t.bp_low_systolic, t.bp_low_diastolic))
+    fetchApi<{ bp_low_systolic: number; bp_low_diastolic: number; spo2_warn?: number; spo2_critical?: number; fever_c?: number }>("/settings/clinical")
+      .then((t) => {
+        if (!t) return;
+        setBPLowThresholds(t.bp_low_systolic, t.bp_low_diastolic);
+        if (t.spo2_warn && t.spo2_critical && t.fever_c) setOxygenFeverThresholds(t.spo2_warn, t.spo2_critical, t.fever_c);
+      })
       .catch(() => {});
   }, [me]);
 
@@ -164,6 +168,13 @@ export function AlertCenter() {
       advice = String(p.reason || "");
       break;
     }
+    case "spo2_low":
+      // Issue #22: oxygen at or below the doctor's critical level.
+      title = <>{ar ? "الأكسجين منخفض جداً" : "Oxygen very low"}: <Ltr>SpO₂ {String(p.spo2)}%</Ltr></>;
+      advice = ar
+        ? "اجلسها مستقيمة وتأكد أن الجهاز على إصبع دافئ. إن تأكد الرقم: اتصل بالإسعاف."
+        : "Sit her upright and check the clip is on a warm finger. If it is confirmed: call emergency.";
+      break;
     case "low_stock": {
       // Issue #20: a medicine is about to run out.
       title = (

@@ -23,6 +23,9 @@ interface VitalPayload {
   systolic?: number;
   diastolic?: number;
   bp_status?: string;
+  spo2?: number;
+  spo2_status?: string;
+  temperature_c?: number;
 }
 interface InsulinPayload {
   name_ar?: string;
@@ -47,7 +50,8 @@ function isAmber(event: SSEEvent): boolean {
 }
 
 function isCrisis(event: SSEEvent): boolean {
-  return event.type === "VITAL_LOGGED" && (event.payload as VitalPayload | undefined)?.bp_status === "CRISIS";
+  const p = event.payload as VitalPayload | undefined;
+  return event.type === "VITAL_LOGGED" && (p?.bp_status === "CRISIS" || p?.spo2_status === "CRITICAL");
 }
 
 export function SseToast() {
@@ -142,8 +146,14 @@ export function SseToast() {
     case "VITAL_LOGGED": {
       const p = (event.payload || {}) as VitalPayload;
       Icon = crisis ? AlertTriangle : Activity;
-      actionText = crisis ? (locale === "ar" ? "سجّل أزمة ضغط دم — طوارئ" : "logged a blood pressure CRISIS") : t.toastVitalsRecorded;
+      actionText = !crisis
+        ? t.toastVitalsRecorded
+        : p.spo2_status === "CRITICAL"
+          ? locale === "ar" ? "سجّل أكسجين منخفضاً جداً — طوارئ" : "logged VERY LOW oxygen"
+          : locale === "ar" ? "سجّل أزمة ضغط دم — طوارئ" : "logged a blood pressure CRISIS";
       if (p.systolic && p.diastolic) detail = <Ltr>{p.systolic}/{p.diastolic} mmHg</Ltr>;
+      else if (p.spo2 != null) detail = <Ltr>SpO₂ {p.spo2}%</Ltr>;
+      else if (p.temperature_c != null) detail = <Ltr>{p.temperature_c.toFixed(1)} °C</Ltr>;
       break;
     }
     case "INSULIN_LOGGED": {

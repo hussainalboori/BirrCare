@@ -238,3 +238,68 @@ export function autoIntervalHours(slots: string[], times: Record<string, string>
   });
   return Math.round(((gap * 0.75) / 60) * 100) / 100;
 }
+
+// ── Oxygen and temperature (issue #22) ──────────────────────────────────────
+// Must match CalculateSpO2Status / CalculateTempStatus in the Go backend; both are
+// tested against clinical/vitals-bands.json. The doctor can move the thresholds
+// (/settings/clinical); AlertCenter loads them.
+
+export type SpO2Status = "NORMAL" | "LOW" | "CRITICAL";
+export type TempStatus = "NORMAL" | "FEVER" | "LOW";
+
+let oxyFever = { spo2Warn: 92, spo2Critical: 88, feverC: 38.0 };
+export function setOxygenFeverThresholds(spo2Warn: number, spo2Critical: number, feverC: number) {
+  if (spo2Critical > 0 && spo2Warn > spo2Critical && feverC > 0) oxyFever = { spo2Warn, spo2Critical, feverC };
+}
+export function getOxygenFeverThresholds() {
+  return oxyFever;
+}
+
+export function classifySpO2(spo2: number): SpO2Status {
+  if (spo2 <= oxyFever.spo2Critical) return "CRITICAL";
+  if (spo2 <= oxyFever.spo2Warn) return "LOW";
+  return "NORMAL";
+}
+
+export function classifyTemperature(c: number): TempStatus {
+  if (c >= oxyFever.feverC) return "FEVER";
+  if (c < 35.0) return "LOW";
+  return "NORMAL";
+}
+
+/** Badge colours and words. Crisis red only for a critical SpO2. */
+export const SPO2_META: Record<SpO2Status, { ar: string; en: string; adviceAr?: string; adviceEn?: string; badgeClass: string }> = {
+  NORMAL: { ar: "طبيعي", en: "Normal", badgeClass: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  LOW: {
+    ar: "منخفض",
+    en: "Low",
+    adviceAr: "أعد القياس بعد دقائق بإصبع دافئ، واتصل بالطبيب إن بقي منخفضاً.",
+    adviceEn: "Re-check in a few minutes on a warm finger; call the doctor if it stays low.",
+    badgeClass: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
+  },
+  CRITICAL: {
+    ar: "منخفض جداً — اتصل بالإسعاف",
+    en: "Very low — call emergency",
+    adviceAr: "اجلسها مستقيمة، تأكد أن الجهاز على إصبع دافئ، واتصل بالإسعاف إن تأكد الرقم.",
+    adviceEn: "Sit her upright, check the clip is on a warm finger, and call emergency if it is confirmed.",
+    badgeClass: "bg-rose-600 text-white animate-pulse",
+  },
+};
+
+export const TEMP_META: Record<TempStatus, { ar: string; en: string; adviceAr?: string; adviceEn?: string; badgeClass: string }> = {
+  NORMAL: { ar: "طبيعية", en: "Normal", badgeClass: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  FEVER: {
+    ar: "حمّى",
+    en: "Fever",
+    adviceAr: "اتصل بالطبيب، خاصة مع سعال أو صعوبة بلع أو أكسجين منخفض.",
+    adviceEn: "Call the doctor, especially with a cough, trouble swallowing or low oxygen.",
+    badgeClass: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
+  },
+  LOW: {
+    ar: "منخفضة",
+    en: "Low",
+    adviceAr: "دفّئها وأعد القياس، واتصل بالطبيب إن بقيت منخفضة.",
+    adviceEn: "Warm her up and re-check; call the doctor if it stays low.",
+    badgeClass: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
+  },
+};

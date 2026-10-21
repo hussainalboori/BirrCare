@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -736,12 +736,59 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	// Issue #22: oxygen saturation and temperature, and their alert.
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'spo2_low'") {
+		log.Println("Migrating alerts: low oxygen kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v6;
+			CREATE TABLE alerts_v6 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v6 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v6 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for low oxygen: %w", err)
+		}
+	}
+	for _, c := range []struct{ col, def string }{
+		{"spo2", "INTEGER CHECK (spo2 IS NULL OR spo2 BETWEEN 50 AND 100)"},
+		{"temperature_c", "REAL CHECK (temperature_c IS NULL OR temperature_c BETWEEN 30 AND 43)"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vitals_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE vitals_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding vitals_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+	// The immutability trigger below must cover the new values too.
+	var trigSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='vitals_values_immutable'").Scan(&trigSQL)
+	if trigSQL != "" && !strings.Contains(trigSQL, "temperature_c") {
+		if _, err := database.Exec("DROP TRIGGER vitals_values_immutable"); err != nil {
+			return fmt.Errorf("failed replacing vitals immutability trigger: %w", err)
+		}
+	}
+
 	// Issue #15: a reading's values can never be changed in place, only corrected by a
 	// new row, and a reading can be superseded once. (Created after any rebuild above,
 	// which would have dropped them.)
 	if _, err := database.Exec(`
 		CREATE TRIGGER IF NOT EXISTS vitals_values_immutable
-		BEFORE UPDATE OF caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, supersedes_id
+		BEFORE UPDATE OF caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, supersedes_id, spo2, temperature_c
 		ON vitals_logs
 		BEGIN SELECT RAISE(ABORT, 'vitals readings are immutable: post a correction instead'); END;
 		CREATE TRIGGER IF NOT EXISTS vitals_superseded_once

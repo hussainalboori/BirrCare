@@ -25,6 +25,8 @@ function original(v: VitalsLog): string {
   if (c.original_systolic != null) parts.push(`${c.original_systolic}/${c.original_diastolic}`);
   if (c.original_pulse != null) parts.push(`${c.original_pulse} bpm`);
   if (c.original_blood_sugar != null) parts.push(`${c.original_blood_sugar} mmol/L`);
+  if (c.original_spo2 != null) parts.push(`SpO₂ ${c.original_spo2}%`);
+  if (c.original_temperature_c != null) parts.push(`${c.original_temperature_c.toFixed(1)} °C`);
   return parts.join(" · ");
 }
 
@@ -61,6 +63,8 @@ export function CorrectVital({ vital, onDone }: { vital: VitalsLog; onDone: () =
   const [dia, setDia] = useState(vital.diastolic != null ? String(vital.diastolic) : "");
   const [pulse, setPulse] = useState(vital.pulse != null ? String(vital.pulse) : "");
   const [sugar, setSugar] = useState(vital.blood_sugar != null ? String(vital.blood_sugar) : "");
+  const [spo2, setSpo2] = useState(vital.spo2 != null ? String(vital.spo2) : "");
+  const [tempC, setTempC] = useState(vital.temperature_c != null ? String(vital.temperature_c) : "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -73,6 +77,8 @@ export function CorrectVital({ vital, onDone }: { vital: VitalsLog; onDone: () =
 
   const hasBP = vital.systolic != null;
   const hasSugar = vital.blood_sugar != null;
+  const hasSpO2 = vital.spo2 != null;
+  const hasTemp = vital.temperature_c != null;
 
   const save = async () => {
     setBusy(true);
@@ -85,6 +91,8 @@ export function CorrectVital({ vital, onDone }: { vital: VitalsLog; onDone: () =
           ...(hasBP ? { systolic: Number(sys), diastolic: Number(dia) } : {}),
           ...(pulse.trim() ? { pulse: Number(pulse) } : {}),
           ...(hasSugar && sugar.trim() ? { blood_sugar: Number(sugar) } : {}),
+          ...(hasSpO2 && spo2.trim() ? { spo2: Number(spo2) } : {}),
+          ...(hasTemp && tempC.trim() ? { temperature_c: Number(tempC) } : {}),
           ...(vital.alertness_level ? { alertness_level: vital.alertness_level } : {}),
           reason,
         }),
@@ -142,6 +150,8 @@ export function CorrectVital({ vital, onDone }: { vital: VitalsLog; onDone: () =
         {hasBP && field(ar ? "الانبساطي" : "Diastolic", dia, setDia)}
         {(hasBP || vital.pulse != null) && field(ar ? "النبض" : "Pulse", pulse, setPulse)}
         {hasSugar && field(ar ? "السكر" : "Sugar", sugar, setSugar, true)}
+        {hasSpO2 && field(ar ? "الأكسجين ٪" : "SpO₂ %", spo2, setSpo2)}
+        {hasTemp && field(ar ? "الحرارة °م" : "Temp °C", tempC, setTempC, true)}
       </div>
       <div className="flex flex-wrap gap-2">
         {REASONS.map((r) => {

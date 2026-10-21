@@ -43,6 +43,38 @@ func CalculateBPStatus(systolic, diastolic int) string {
 	return "NORMAL"
 }
 
+// CalculateSpO2Status (issue #22): CRITICAL at or below the critical threshold
+// (alert), LOW at or below the warning one (re-check, call the doctor). Must match
+// classifySpO2 in frontend/src/lib/clinical.ts (clinical/vitals-bands.json).
+func CalculateSpO2Status(spo2 *int) string {
+	if spo2 == nil {
+		return ""
+	}
+	t := currentOxygenFever()
+	switch {
+	case *spo2 <= t.SpO2Critical:
+		return "CRITICAL"
+	case *spo2 <= t.SpO2Warn:
+		return "LOW"
+	}
+	return "NORMAL"
+}
+
+// CalculateTempStatus: FEVER at or above the fever threshold, LOW below 35.0 C
+// (hypothermia), else NORMAL. Must match classifyTemperature in clinical.ts.
+func CalculateTempStatus(c *float64) string {
+	if c == nil {
+		return ""
+	}
+	switch {
+	case *c >= currentOxygenFever().FeverC:
+		return "FEVER"
+	case *c < 35.0:
+		return "LOW"
+	}
+	return "NORMAL"
+}
+
 func CalculateSugarStatus(sugar *float64) string {
 	if sugar == nil {
 		return ""
@@ -71,7 +103,8 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		SELECT v.id, v.caregiver_id, v.recorded_at, v.systolic, v.diastolic, v.pulse, v.blood_sugar, v.alertness_level, v.vital_type, v.notes,
 		       c.name, c.avatar_color, v.suspect_default_sugar, COALESCE(v.fast_result, ''), COALESCE(v.last_normal_at, ''),
 		       COALESCE(v.supersedes_id, ''), o.systolic, o.diastolic, o.pulse, o.blood_sugar, o.alertness_level, COALESCE(oc.name, ''),
-		       COALESCE(v.correction_reason, ''), COALESCE(v.corrected_at, '')
+		       COALESCE(v.correction_reason, ''), COALESCE(v.corrected_at, ''),
+		       v.spo2, v.temperature_c, o.spo2, o.temperature_c
 		FROM vitals_logs v
 		JOIN caregivers c ON v.caregiver_id = c.id
 		LEFT JOIN vitals_logs o ON o.id = v.supersedes_id
@@ -95,9 +128,12 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		var recordedAtStr string
 		var fastResult, lastNormal string
 		var corr correctionScan
+		var spo2 sql.NullInt64
+		var tempC sql.NullFloat64
 
 		if err := rows.Scan(&v.ID, &v.CaregiverID, &recordedAtStr, &sys, &dia, &pulse, &bloodSugar, &v.AlertnessLevel, &vitalType, &notes, &v.CaregiverName, &v.AvatarColor, &v.SuspectDefaultSugar, &fastResult, &lastNormal,
-			&corr.id, &corr.sys, &corr.dia, &corr.pulse, &corr.sugar, &corr.alertness, &corr.by, &corr.reason, &corr.at); err != nil {
+			&corr.id, &corr.sys, &corr.dia, &corr.pulse, &corr.sugar, &corr.alertness, &corr.by, &corr.reason, &corr.at,
+			&spo2, &tempC, &corr.spo2, &corr.temp); err != nil {
 			continue
 		}
 		if sys.Valid && dia.Valid {
@@ -124,6 +160,7 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 		}
 		v.LastNormalAt = sqliteToRFC3339(lastNormal)
 		v.Correction = corr.toModel()
+		setOxygenTemp(&v, spo2, tempC)
 		if notes.Valid {
 			v.Notes = notes.String
 		}
@@ -136,12 +173,15 @@ func (h *VitalsHandler) ListVitals(w http.ResponseWriter, r *http.Request) {
 }
 
 type LogVitalsRequest struct {
-	VitalType      string   `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full'
+	VitalType      string   `json:"vital_type,omitempty"` // 'bp', 'sugar', 'alertness', 'full', 'fast', 'spo2', 'temp'
 	Systolic       *int     `json:"systolic,omitempty"`
 	Diastolic      *int     `json:"diastolic,omitempty"`
 	Pulse          *int     `json:"pulse,omitempty"`
 	BloodSugar     *float64 `json:"blood_sugar,omitempty"`
 	AlertnessLevel string   `json:"alertness_level,omitempty"` // 'alert', 'confused', 'restless', 'drowsy'
+	// Issue #22: pulse oximeter (%) and temperature (C).
+	SpO2         *int     `json:"spo2,omitempty"`
+	TemperatureC *float64 `json:"temperature_c,omitempty"`
 	Notes          string   `json:"notes,omitempty"`
 	// F.A.S.T. stroke check (vital_type 'fast', issue #13). Any true answer is positive.
 	FastResult *FastResult `json:"fast_result,omitempty"`
@@ -156,6 +196,10 @@ type FastResult struct {
 }
 
 func (f FastResult) Positive() bool { return f.Face || f.Arm || f.Speech }
+
+func (req *LogVitalsRequest) hasMeasurement() bool {
+	return req.Systolic != nil || req.BloodSugar != nil || req.AlertnessLevel != "" || req.FastResult != nil || req.SpO2 != nil || req.TemperatureC != nil
+}
 
 func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
@@ -182,8 +226,8 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	if req.VitalType != "fast" {
 		req.FastResult = nil
 	}
-	if req.Systolic == nil && req.BloodSugar == nil && req.AlertnessLevel == "" && req.FastResult == nil {
-		http.Error(w, `{"error":"at least one vital measurement (blood pressure, blood sugar, or alertness) must be provided"}`, http.StatusBadRequest)
+	if !req.hasMeasurement() {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_FIELDS", "at least one vital measurement (blood pressure, blood sugar, oxygen, temperature or alertness) must be provided")
 		return
 	}
 
@@ -208,6 +252,10 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 			vitalType = "bp"
 		} else if req.BloodSugar != nil {
 			vitalType = "sugar"
+		} else if req.SpO2 != nil && req.TemperatureC == nil && req.AlertnessLevel == "" {
+			vitalType = "spo2"
+		} else if req.TemperatureC != nil && req.SpO2 == nil && req.AlertnessLevel == "" {
+			vitalType = "temp"
 		} else if req.AlertnessLevel != "" {
 			vitalType = "alertness"
 		} else {
@@ -231,6 +279,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		bpStatus = CalculateBPStatus(*req.Systolic, *req.Diastolic)
 	}
 	sugarStatus := CalculateSugarStatus(req.BloodSugar)
+	spo2Status, tempStatus := CalculateSpO2Status(req.SpO2), CalculateTempStatus(req.TemperatureC)
 	now := time.Now().UTC()
 
 	var fastJSON *string
@@ -248,9 +297,9 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	}
 	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
 	if _, err := tx.Exec(`
-		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, client_request_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes, fastJSON, nullIfEmpty(req.ClientRequestID)); err != nil {
+		INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes, fast_result, client_request_id, spo2, temperature_c)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, now.Format(sqliteTimeLayout), req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes, fastJSON, nullIfEmpty(req.ClientRequestID), req.SpO2, req.TemperatureC); err != nil {
 		tx.Rollback()
 		if isUniqueViolation(err) && h.replyIfDuplicateVital(w, req.ClientRequestID) {
 			return // the same tap arrived twice at once
@@ -287,6 +336,12 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	if req.FastResult != nil {
 		auditDetails += fmt.Sprintf(", F.A.S.T. face=%t arm=%t speech=%t", req.FastResult.Face, req.FastResult.Arm, req.FastResult.Speech)
 	}
+	if req.SpO2 != nil {
+		auditDetails += fmt.Sprintf(", SpO2 %d%% (%s)", *req.SpO2, spo2Status)
+	}
+	if req.TemperatureC != nil {
+		auditDetails += fmt.Sprintf(", Temp %.1f C (%s)", *req.TemperatureC, tempStatus)
+	}
 	audit.Log(h.DB, caregiver.ID, "VITAL_LOGGED", "vitals_log", id, auditDetails)
 
 	// Broadcast SSE event (a crisis carries its alert id, also as the SSE "id:").
@@ -303,6 +358,10 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"alertness_level": alertness,
 		"bp_status":       bpStatus,
 		"fast_result":     req.FastResult,
+		"spo2":            req.SpO2,
+		"spo2_status":     spo2Status,
+		"temperature_c":   req.TemperatureC,
+		"temp_status":     tempStatus,
 		"notes":           req.Notes,
 		"caregiver_name":  caregiver.Name,
 		"avatar_color":    caregiver.AvatarColor,
@@ -321,6 +380,8 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"vital_type":   vitalType,
 		"bp_status":    bpStatus,
 		"sugar_status": sugarStatus,
+		"spo2_status":  spo2Status,
+		"temp_status":  tempStatus,
 		"recorded_at":  now.Format(time.RFC3339),
 	})
 }
@@ -388,6 +449,12 @@ func validateMeasurements(req *LogVitalsRequest) (code, msg string) {
 	if req.BloodSugar != nil && (*req.BloodSugar < 1.0 || *req.BloodSugar > 45.0) {
 		return "INVALID_SUGAR", "blood sugar out of clinical safety range"
 	}
+	if req.SpO2 != nil && (*req.SpO2 < 50 || *req.SpO2 > 100) {
+		return "INVALID_SPO2", "oxygen saturation must be 50-100%"
+	}
+	if req.TemperatureC != nil && (*req.TemperatureC < 30 || *req.TemperatureC > 43) {
+		return "INVALID_TEMPERATURE", "temperature must be 30-43 C"
+	}
 	validAlertness := map[string]bool{"alert": true, "confused": true, "restless": true, "drowsy": true}
 	if req.AlertnessLevel != "" && !validAlertness[req.AlertnessLevel] {
 		// Never coerce an unrecognised cognitive state (e.g. a typo of "confused") into "alert".
@@ -411,6 +478,18 @@ func raiseVitalAlerts(tx *sql.Tx, vitalID, caregiverID, bpStatus string, req *Lo
 	switch bpStatus {
 	case "CRISIS":
 		toRaise = append(toRaise, pending{"bp_crisis", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
+	}
+	if CalculateSpO2Status(req.SpO2) == "CRITICAL" {
+		p := map[string]interface{}{"spo2": *req.SpO2}
+		if req.Pulse != nil {
+			p["pulse"] = *req.Pulse
+		}
+		if req.TemperatureC != nil {
+			p["temperature_c"] = *req.TemperatureC
+		}
+		toRaise = append(toRaise, pending{"spo2_low", p})
+	}
+	switch bpStatus {
 	case "LOW":
 		toRaise = append(toRaise, pending{"bp_low", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
 	}
@@ -458,4 +537,18 @@ func (h *VitalsHandler) replyIfDuplicateVital(w http.ResponseWriter, clientReque
 		"id": id, "vital_type": vitalType, "bp_status": bpStatus, "recorded_at": sqliteToRFC3339(recordedAt), "duplicate": true,
 	})
 	return true
+}
+
+// setOxygenTemp fills SpO2 and temperature with their classification (issue #22).
+func setOxygenTemp(v *models.VitalsLog, spo2 sql.NullInt64, tempC sql.NullFloat64) {
+	if spo2.Valid {
+		n := int(spo2.Int64)
+		v.SpO2 = &n
+		v.SpO2Status = CalculateSpO2Status(v.SpO2)
+	}
+	if tempC.Valid {
+		t := tempC.Float64
+		v.TemperatureC = &t
+		v.TempStatus = CalculateTempStatus(v.TemperatureC)
+	}
 }
