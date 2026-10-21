@@ -11,6 +11,7 @@ Main capabilities:
 - **Medication schedule with two double-dose locks.** Doses are scheduled per slot (`night`, `morning`, `afternoon`, `evening`, `bedtime`), clock time and day of week.
   - **Same card:** a partial unique index allows one active entry per `(medication_id, scheduled_date, slot)`. A second sibling gets `409` with who gave it and when.
   - **Same medicine across cards:** a minimum interval blocks, for example, last night's bedtime dose being repeated at 03:45.
+- **Low-stock warning.** Optionally count the pills in each box (admin, in the medicine form). Every given or partial dose takes its pills out in the same transaction; cancelling a dose puts them back. When the days left (pills ÷ pills per dose ÷ doses per day) drop below the warning threshold (default 4 days), everyone gets one alert, and Home shows an amber "Clopidogrel: about 3 days left" card with a big **Refilled** button and a number pad.
 - **Honest dose records.** A dose can be recorded as taken, partly taken, refused or skipped with a reason, and "vomited N min later" can be added afterwards. Partial and vomited doses show a "call the doctor or pharmacist" warning; the app never suggests a re-dose.
 - **Mis-tap recovery.** A 10-second Undo after every tap. Later, the person who recorded it can cancel within 10 minutes, or an admin any time with a reason. Cancelled entries are kept, struck through, and never count as given.
 - **Works through dropped Wi-Fi.** A tap that can't reach the server is saved on that phone and shown in amber as "saved on this phone — not sent yet", never as given. It is sent when the connection returns, with the tap time. A dose waiting more than 30 minutes is only sent after the caregiver confirms, because a sibling may have given it meanwhile. Resends never create duplicates.
@@ -192,10 +193,12 @@ Base path `/api/v1`. Derived from `backend/internal/server/router.go` and the ha
 | Method | Path | Description |
 |---|---|---|
 | GET | `/medications` | Medication catalogue. |
-| POST | `/medications` · PUT `/medications/{id}` · DELETE `/medications/{id}` | Manage medications (admin). Accepts `min_hours_between` (`null` = automatic, `0` = no interval lock, up to `72`) and `is_critical` (anticoagulant / antiplatelet: listed first in the doctor report). |
+| POST | `/medications` · PUT `/medications/{id}` · DELETE `/medications/{id}` | Manage medications (admin). Accepts `min_hours_between` (`null` = automatic, `0` = no interval lock, up to `72`) `is_critical` (anticoagulant / antiplatelet: listed first in the doctor report), and stock tracking: `stock_units` (turns it on with this count), `units_per_dose` (default 1), `refill_threshold_days` (default 4), `track_stock: false` (turns it off). |
 | PUT | `/medications/{id}/schedule` | Days of week and clock time per slot (admin). |
 | GET | `/medications/schedule?date=YYYY-MM-DD` | Doses for a day (default: today in `APP_TIMEZONE`), see [Your first API call](#your-first-api-call). |
-| POST | `/medications/log` | Record a dose, see below. |
+| POST | `/medications/log` | Record a dose, see below. A `taken` or `partial` dose of a medicine with stock tracking also takes `units_per_dose` out of the box; cancelling it puts them back. |
+| GET | `/medications/stock` | Medicines with stock tracking: `stock_units`, `units_per_dose`, `doses_per_day`, `days_left`, `refill_threshold_days`, `low`, `blood_thinner`, lowest first. |
+| POST | `/medications/{id}/stock` | `{action: "refill", units}` adds a new box; `{action: "count", units}` sets the count. Any caregiver (not viewers). `409 NOT_TRACKED` if tracking is off. Dropping below the threshold raises one `low_stock` alert; refilling above it re-arms the alert. Every change is a `stock_events` row. |
 | POST | `/medications/log/{id}/void` | `{reason}`: cancel an entry. The person who recorded it may within 10 minutes (reason optional); otherwise admin only, with a reason. `403 VOID_NOT_ALLOWED`, `400 REASON_REQUIRED`, `409 ALREADY_VOIDED`. Nothing is deleted. |
 | POST | `/medications/log/{id}/event` | `{type: "vomited", minutes_after}`: follow-up on a `taken`/`partial` dose. `400 NOT_GIVEN` / `LOG_VOIDED`, `409 EVENT_ALREADY_LOGGED`. |
 

@@ -163,6 +163,8 @@ func NewRouter(o Options) http.Handler {
 				api.Delete("/medications/{id}", medHandler.DeleteMedication)
 				api.Get("/medications/schedule", medHandler.GetSchedule)
 				api.Post("/medications/log", medHandler.LogDose)
+				api.Get("/medications/stock", medHandler.ListStock)
+				api.Post("/medications/{id}/stock", medHandler.UpdateStock)
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
 

@@ -102,7 +102,8 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0)
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
+		       stock_units, units_per_dose, refill_threshold_days
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -115,13 +116,15 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var m models.Medication
 		var instAr, instEn, createdBy, imgURL, daysJSON, timesJSON sql.NullString
-		var minHours sql.NullFloat64
+		var minHours, stock sql.NullFloat64
 		var slotsJSON string
 		var createdAtStr string
 
-		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical); err != nil {
+		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays); err != nil {
 			continue
 		}
+		m.StockUnits = nullableFloat(stock)
 		m.MinHoursBetween = nullableFloat(minHours)
 		if instAr.Valid {
 			m.InstructionsAr = instAr.String
@@ -171,6 +174,8 @@ type CreateMedicationRequest struct {
 	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report.
 	IsCritical bool `json:"is_critical,omitempty"`
+	// Optional stock tracking (issue #20).
+	StockSettings
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -211,6 +216,10 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	slotTimes := normalizeSlotTimes(req.SlotTimes, req.FrequencySlots)
 
 	id := "med_" + uuid.New().String()[:8]
+	if msg := req.StockSettings.validate(); msg != "" {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_STOCK", msg)
+		return
+	}
 	slotsJSON, _ := json.Marshal(req.FrequencySlots)
 	daysJSON, _ := json.Marshal(days)
 	timesJSON, _ := json.Marshal(slotTimes)
@@ -226,6 +235,12 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	}
 
 	audit.Log(h.DB, caregiver.ID, "CREATE_MEDICATION", "medication", id, fmt.Sprintf("Added prescription: %s (%s)", req.NameAr, req.Dosage))
+	stockCh, err := h.saveStockSettings(id, caregiver, req.StockSettings)
+	if err != nil {
+		internalError(w, "failed to save stock settings", err)
+		return
+	}
+	h.broadcastStock(stockCh, caregiver)
 
 	h.Broker.Broadcast("MEDICATIONS_UPDATED", models.ActorInfo{
 		ID:          caregiver.ID,
@@ -259,6 +274,7 @@ type UpdateMedicationRequest struct {
 	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
 	IsCritical      *bool           `json:"is_critical,omitempty"`
+	StockSettings
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +302,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 
 	if len(req.FrequencySlots) > 0 && !validSlots(req.FrequencySlots) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_SLOTS", "frequency_slots must be a list of morning, afternoon, evening, bedtime, night")
+		return
+	}
+	if msg := req.StockSettings.validate(); msg != "" {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_STOCK", msg)
 		return
 	}
 
@@ -355,6 +375,13 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		}
 		_, _ = h.DB.Exec("UPDATE medications SET is_active = ? WHERE id = ?", activeInt, medID)
 	}
+
+	stockCh, err := h.saveStockSettings(medID, caregiver, req.StockSettings)
+	if err != nil {
+		internalError(w, "failed to save stock settings", err)
+		return
+	}
+	h.broadcastStock(stockCh, caregiver)
 
 	audit.Log(h.DB, caregiver.ID, "UPDATE_MEDICATION", "medication", medID, fmt.Sprintf("Updated prescription %s", medID))
 
@@ -932,6 +959,13 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to write audit trail", err)
 		return
 	}
+	// Issue #20: the dose comes out of the box in the same transaction.
+	stockCh, err := takeDoseFromStock(tx, req.MedicationID, logID, caregiver.ID, req.Status, now)
+	if err != nil {
+		tx.Rollback()
+		internalError(w, "failed to update stock", err)
+		return
+	}
 	var alertID string
 	if overridden != nil {
 		if alertID, err = recordAlert(tx, "dose_override", logID, caregiver.ID, map[string]interface{}{
@@ -978,6 +1012,7 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.Broker.Broadcast("MED_LOGGED", actorOf(caregiver), medPayload)
 	}
+	h.broadcastStock(stockCh, caregiver)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1130,6 +1165,13 @@ func (h *MedicationHandler) VoidDose(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusConflict, "ALREADY_VOIDED", "this entry was already cancelled")
 		return
 	}
+	// Issue #20: put back what the cancelled dose took out of the box.
+	stockCh, err := returnDoseToStock(tx, medID, logID, caregiver.ID, now)
+	if err != nil {
+		tx.Rollback()
+		internalError(w, "failed to update stock", err)
+		return
+	}
 	if err := audit.Record(tx, caregiver.ID, "MED_VOIDED", "medication_log", logID,
 		fmt.Sprintf("Cancelled %s entry for med %s (slot %s, date %s, recorded by %s). Reason: %s", status, medID, slot, date, loggedBy, req.Reason)); err != nil {
 		tx.Rollback()
@@ -1155,6 +1197,7 @@ func (h *MedicationHandler) VoidDose(w http.ResponseWriter, r *http.Request) {
 		"status":         status,
 		"reason":         req.Reason,
 	})
+	h.broadcastStock(stockCh, caregiver)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

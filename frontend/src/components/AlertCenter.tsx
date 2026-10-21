@@ -13,6 +13,7 @@ import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { tagLabel } from "@/lib/handoverTags";
+import { daysLeftText } from "@/lib/stockText";
 import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft } from "lucide-react";
 
 // Duty handovers (issue #18) are addressed to one sibling and aren't emergencies.
@@ -26,7 +27,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -119,7 +120,7 @@ export function AlertCenter() {
 
   const p = current.payload;
   const duty = DUTY_KINDS.has(current.kind);
-  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction" && current.kind !== "emergency_card";
+  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction" && current.kind !== "emergency_card" && current.kind !== "low_stock";
   const crisis = current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
@@ -159,6 +160,18 @@ export function AlertCenter() {
         </>
       );
       advice = String(p.reason || "");
+      break;
+    }
+    case "low_stock": {
+      // Issue #20: a medicine is about to run out.
+      title = (
+        <>
+          <bdi>{medName}</bdi>: {daysLeftText(Number(p.days_left), ar)}
+        </>
+      );
+      advice = p.blood_thinner
+        ? ar ? "مميّع للدم: لا يجوز أن ينقطع. اشترِ علبة جديدة اليوم." : "Blood thinner: must not run out. Buy a new box today."
+        : ar ? "اشترِ علبة جديدة قبل أن تنفد." : "Buy a new box before it runs out.";
       break;
     }
     case "emergency_card":

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { PushOptIn } from "@/components/PushOptIn";
 import { SiblingBar } from "@/components/SiblingBar";
 import { LastHandover } from "@/components/LastHandover";
+import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { useLanguage } from "@/context/LanguageContext";
@@ -112,6 +113,7 @@ export default function MedicationsPage() {
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
         <SiblingBar className="mb-4" />
         <LastHandover />
+        <LowStockCards />
         <PushOptIn />
         {/* Issue #13: one tap to the F.A.S.T. stroke check */}
         <Link

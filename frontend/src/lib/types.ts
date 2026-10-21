@@ -81,9 +81,28 @@ export interface Medication {
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */
   is_critical?: boolean;
+  /** Pills/units in the box (issue #20); null = stock not tracked. */
+  stock_units?: number | null;
+  units_per_dose?: number;
+  refill_threshold_days?: number;
   is_active: boolean;
   created_by?: string;
   created_at: string;
+}
+
+/** GET /medications/stock (issue #20). */
+export interface StockStatus {
+  medication_id: string;
+  name_ar: string;
+  name_en: string;
+  dosage: string;
+  stock_units: number;
+  units_per_dose: number;
+  doses_per_day: number;
+  days_left: number | null;
+  refill_threshold_days: number;
+  low: boolean;
+  blood_thinner: boolean;
 }
 
 export interface MedicationLog {

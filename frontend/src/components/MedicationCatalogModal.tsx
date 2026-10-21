@@ -80,6 +80,12 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [minHours, setMinHours] = useState("");
   // Anticoagulant / antiplatelet: listed first in the doctor report.
   const [isCritical, setIsCritical] = useState(false);
+  // Stock (issue #20): count the pills in the box and warn before it runs out.
+  const [trackStock, setTrackStock] = useState(false);
+  const [stockCount, setStockCount] = useState("");
+  const [stockTouched, setStockTouched] = useState(false);
+  const [unitsPerDose, setUnitsPerDose] = useState("1");
+  const [thresholdDays, setThresholdDays] = useState("4");
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
     morning: "08:00",
     afternoon: "14:00",
@@ -120,6 +126,11 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setDaysOfWeek(ALL_DAY_IDS);
     setMinHours("");
     setIsCritical(false);
+    setTrackStock(false);
+    setStockCount("");
+    setStockTouched(false);
+    setUnitsPerDose("1");
+    setThresholdDays("4");
     setSlotTimes({
       morning: "08:00",
       afternoon: "14:00",
@@ -139,6 +150,11 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setImageUrl(med.image_url || "/meds/pill-default.svg");
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setIsCritical(!!med.is_critical);
+    setTrackStock(med.stock_units != null);
+    setStockCount(med.stock_units != null ? String(med.stock_units) : "");
+    setStockTouched(false);
+    setUnitsPerDose(String(med.units_per_dose || 1));
+    setThresholdDays(String(med.refill_threshold_days || 4));
     setSelectedSlots(med.frequency_slots || ["morning"]);
     setDaysOfWeek(med.days_of_week && med.days_of_week.length > 0 ? med.days_of_week : ALL_DAY_IDS);
     const times: Record<string, string> = {};
@@ -169,6 +185,18 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     }
   };
 
+  // Only send the count when it was typed (or tracking is new): otherwise saving
+  // an edit would undo doses given while this form was open.
+  const stockPayload = () => {
+    if (!trackStock) return editingMed?.stock_units != null ? { track_stock: false } : {};
+    const p: Record<string, number> = {
+      units_per_dose: Number(unitsPerDose) > 0 ? Number(unitsPerDose) : 1,
+      refill_threshold_days: Number(thresholdDays) >= 1 ? Math.round(Number(thresholdDays)) : 4,
+    };
+    if (stockTouched || editingMed?.stock_units == null) p.stock_units = Number(stockCount) >= 0 ? Number(stockCount) : 0;
+    return p;
+  };
+
   const handleSaveMedication = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nameAr.trim() || !dosage.trim() || selectedSlots.length === 0) return;
@@ -191,6 +219,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             image_url: imageUrl.trim() || undefined,
             min_hours_between: minHours.trim() === "" ? null : Number(minHours),
             is_critical: isCritical,
+            ...stockPayload(),
           }),
         });
       } else {
@@ -209,6 +238,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             image_url: imageUrl.trim() || undefined,
             min_hours_between: minHours.trim() === "" ? null : Number(minHours),
             is_critical: isCritical,
+            ...stockPayload(),
           }),
         });
       }
@@ -455,6 +485,41 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 <input type="checkbox" checked={isCritical} onChange={(e) => setIsCritical(e.target.checked)} className="h-5 w-5" />
                 {locale === "ar" ? "دواء حرج (مميّع للدم أو مضاد للصفائح): يظهر أولاً في تقرير الطبيب ومعلَّماً في بطاقة الطوارئ" : "Critical medicine (blood thinner / antiplatelet): listed first in the doctor report and flagged on the emergency card"}
               </label>
+
+              {/* STOCK (issue #20) */}
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                <label className="flex min-h-12 items-center gap-3 text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  <input type="checkbox" checked={trackStock} onChange={(e) => setTrackStock(e.target.checked)} className="h-5 w-5" />
+                  {locale === "ar" ? "عُدّ الحبوب في العلبة ونبّهنا قبل أن تنفد" : "Count the pills in the box and warn us before it runs out"}
+                </label>
+                {trackStock && (
+                  <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold text-slate-700 dark:text-slate-200">{locale === "ar" ? "عدد الحبوب في العلبة الآن" : "Pills in the box now"}</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        step="0.5"
+                        value={stockCount}
+                        onChange={(e) => {
+                          setStockCount(e.target.value);
+                          setStockTouched(true);
+                        }}
+                        className="min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base dark:border-slate-700 dark:bg-slate-800"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold text-slate-700 dark:text-slate-200">{locale === "ar" ? "حبوب في كل جرعة" : "Pills per dose"}</span>
+                      <input type="number" inputMode="decimal" min={0.25} step="0.25" value={unitsPerDose} onChange={(e) => setUnitsPerDose(e.target.value)} className="min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base dark:border-slate-700 dark:bg-slate-800" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold text-slate-700 dark:text-slate-200">{locale === "ar" ? "نبّهنا قبل النفاد بـ (أيام)" : "Warn this many days before"}</span>
+                      <input type="number" inputMode="numeric" min={1} max={60} value={thresholdDays} onChange={(e) => setThresholdDays(e.target.value)} className="min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base dark:border-slate-700 dark:bg-slate-800" />
+                    </label>
+                  </div>
+                )}
+              </div>
 
               {/* DAYS OF WEEK SELECTION */}
               <div className="mb-4">

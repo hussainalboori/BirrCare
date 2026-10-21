@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -604,6 +604,67 @@ func Migrate(database *sql.DB) error {
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts for the emergency card: %w", err)
 		}
+	}
+
+	// Issue #20: low-stock alerts.
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'low_stock'") {
+		log.Println("Migrating alerts: low stock kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v5;
+			CREATE TABLE alerts_v5 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v5 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v5 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for low stock: %w", err)
+		}
+	}
+
+	// Issue #20: medicine stock. stock_units NULL = not tracked. The alert fires
+	// once when the days left drop below the threshold (low_stock_alerted_at),
+	// and re-arms when a refill brings it back above.
+	for _, c := range []struct{ col, def string }{
+		{"stock_units", "REAL"},
+		{"units_per_dose", "REAL NOT NULL DEFAULT 1"},
+		{"refill_threshold_days", "INTEGER NOT NULL DEFAULT 4"},
+		{"low_stock_alerted_at", "TEXT"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS stock_events (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			delta REAL NOT NULL,
+			stock_after REAL NOT NULL,
+			reason TEXT NOT NULL CHECK (reason IN ('refill', 'dose', 'partial', 'correction', 'count')),
+			log_id TEXT,
+			caregiver_id TEXT REFERENCES caregivers(id),
+			created_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_stock_events_med ON stock_events(medication_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_stock_events_log ON stock_events(log_id) WHERE log_id IS NOT NULL;
+	`); err != nil {
+		return fmt.Errorf("failed creating stock_events: %w", err)
 	}
 
 	// Issue #19: the one patient's profile for the paramedics' emergency card.
