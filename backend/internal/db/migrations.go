@@ -86,11 +86,13 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    -- NULL: for every caregiver; otherwise only this one sees it (issue #18)
+    target_caregiver_id TEXT REFERENCES caregivers(id)
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
 
@@ -549,6 +551,59 @@ func Migrate(database *sql.DB) error {
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts: %w", err)
 		}
+	}
+
+	// Issue #18: duty handover alerts, addressed to one caregiver.
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'duty_handover'") {
+		log.Println("Migrating alerts: duty handover kinds and per-caregiver alerts...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v3;
+			CREATE TABLE alerts_v3 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v3 (id, kind, ref_id, created_by, payload, created_at) SELECT id, kind, ref_id, created_by, payload, created_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v3 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for duty handover: %w", err)
+		}
+	}
+
+	// Issue #18: quick-tap tags on handover notes, and "pass duty" records.
+	var tagsCol int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('handover_notes') WHERE name = 'tags'").Scan(&tagsCol)
+	if tagsCol == 0 {
+		if _, err := database.Exec("ALTER TABLE handover_notes ADD COLUMN tags TEXT"); err != nil {
+			return fmt.Errorf("failed adding handover_notes.tags: %w", err)
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS duty_handovers (
+			id TEXT PRIMARY KEY,
+			note_id TEXT NOT NULL REFERENCES handover_notes(id),
+			assignment_id TEXT NOT NULL,
+			shift_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			from_caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			to_caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			created_at TEXT NOT NULL,
+			accepted_at TEXT,
+			reminded_at TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_duty_handovers_pending ON duty_handovers(created_at) WHERE accepted_at IS NULL AND reminded_at IS NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_duty_handovers_note ON duty_handovers(note_id);
+	`); err != nil {
+		return fmt.Errorf("failed creating duty_handovers: %w", err)
 	}
 
 	// Issue #16: idempotent retries from the offline outbox. A repeated

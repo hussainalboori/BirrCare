@@ -24,10 +24,15 @@ const alertWindow = 24 * time.Hour
 
 // recordAlert inserts an alert inside the caller's transaction.
 func recordAlert(tx *sql.Tx, kind, refID, createdBy string, payload map[string]interface{}) (string, error) {
+	return recordAlertFor(tx, kind, refID, createdBy, "", payload)
+}
+
+// recordAlertFor addresses the alert to one caregiver (target), or to everyone if "".
+func recordAlertFor(tx *sql.Tx, kind, refID, createdBy, target string, payload map[string]interface{}) (string, error) {
 	id := uuid.New().String()
 	data, _ := json.Marshal(payload)
-	_, err := tx.Exec(`INSERT INTO alerts (id, kind, ref_id, created_by, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, kind, refID, createdBy, string(data), time.Now().UTC().Format(sqliteTimeLayout))
+	_, err := tx.Exec(`INSERT INTO alerts (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, kind, refID, createdBy, string(data), time.Now().UTC().Format(sqliteTimeLayout), nullIfEmpty(target))
 	return id, err
 }
 
@@ -55,8 +60,9 @@ func (h *AlertsHandler) Unacked(w http.ResponseWriter, r *http.Request) {
 		SELECT a.id, a.kind, COALESCE(a.ref_id, ''), COALESCE(a.created_by, ''), COALESCE(c.name, ''), a.payload, a.created_at
 		FROM alerts a LEFT JOIN caregivers c ON c.id = a.created_by
 		WHERE a.created_at >= ? AND COALESCE(a.created_by, '') <> ?
+		  AND (a.target_caregiver_id IS NULL OR a.target_caregiver_id = ?)
 		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id AND k.caregiver_id = ?)
-		ORDER BY a.created_at ASC`, since, me.ID, me.ID)
+		ORDER BY a.created_at ASC`, since, me.ID, me.ID, me.ID)
 	if err != nil {
 		internalError(w, "failed to load alerts", err)
 		return

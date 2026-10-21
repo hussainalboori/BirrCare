@@ -253,11 +253,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 3. Recent Handover notes
-	noteRows, err := h.DB.Query(`
-		SELECT n.id, n.caregiver_id, n.created_at, n.shift_type, n.summary, n.urgent_flag,
-		       c.name, c.avatar_color
-		FROM handover_notes n
-		JOIN caregivers c ON n.caregiver_id = c.id
+	noteRows, err := h.DB.Query(handoverNoteSelect+`
 		WHERE n.created_at >= ?
 		ORDER BY n.created_at DESC
 		LIMIT 15
@@ -271,16 +267,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	if noteRows != nil {
 		defer noteRows.Close()
 		for noteRows.Next() {
-			var n models.HandoverNote
-			var shiftType sql.NullString
-			var createdAtStr string
-			var urgentInt int
-			if err := noteRows.Scan(&n.ID, &n.CaregiverID, &createdAtStr, &shiftType, &n.Summary, &urgentInt, &n.CaregiverName, &n.AvatarColor); err == nil {
-				if shiftType.Valid {
-					n.ShiftType = shiftType.String
-				}
-				n.UrgentFlag = urgentInt == 1
-				n.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
+			if n, err := scanHandoverNote(noteRows); err == nil {
 				recentNotes = append(recentNotes, n)
 			}
 		}

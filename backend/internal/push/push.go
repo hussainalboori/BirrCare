@@ -105,6 +105,18 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"
 		}
 	}
+	if kind == "duty_handover" {
+		body = "Duty was passed to you — open Birrcare to accept"
+		if ar {
+			body = "انتقلت إليك المناوبة — افتح رعاية بر للقبول"
+		}
+	}
+	if kind == "duty_unaccepted" {
+		body = "Your duty handover is not accepted yet — open Birrcare"
+		if ar {
+			body = "لم تُقبل المناوبة التي سلّمتها بعد — افتح رعاية بر"
+		}
+	}
 	if kind == "test" {
 		body = "Test alert — alerts work on this phone"
 		if ar {
@@ -144,6 +156,20 @@ func (n *Notifier) Notify(ctx context.Context, alertID, kind, excludeCaregiverID
 		return nil
 	}
 	return n.send(ctx, alertID, kind, `c.is_active = 1 AND s.caregiver_id <> ?`, excludeCaregiverID)
+}
+
+// NotifyCaregiverAsync pushes an alert to one caregiver's phones only.
+func (n *Notifier) NotifyCaregiverAsync(alertID, kind, caregiverID string) {
+	if n == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := n.send(ctx, alertID, kind, `c.is_active = 1 AND s.caregiver_id = ?`, caregiverID); err != nil {
+			log.Printf("[PUSH] alert %s: %v", alertID, err)
+		}
+	}()
 }
 
 // TestAsync sends a harmless test notification to the caregiver's own phones after

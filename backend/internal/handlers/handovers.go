@@ -28,11 +28,7 @@ func (h *HandoverHandler) ListHandovers(w http.ResponseWriter, r *http.Request) 
 		limit = l
 	}
 
-	rows, err := h.DB.Query(`
-		SELECT n.id, n.caregiver_id, n.created_at, n.shift_type, n.summary, n.urgent_flag,
-		       c.name, c.avatar_color
-		FROM handover_notes n
-		JOIN caregivers c ON n.caregiver_id = c.id
+	rows, err := h.DB.Query(handoverNoteSelect+`
 		ORDER BY n.created_at DESC
 		LIMIT ?
 	`, limit)
@@ -44,19 +40,10 @@ func (h *HandoverHandler) ListHandovers(w http.ResponseWriter, r *http.Request) 
 
 	var list []models.HandoverNote
 	for rows.Next() {
-		var n models.HandoverNote
-		var shiftType sql.NullString
-		var createdAtStr string
-		var urgentInt int
-
-		if err := rows.Scan(&n.ID, &n.CaregiverID, &createdAtStr, &shiftType, &n.Summary, &urgentInt, &n.CaregiverName, &n.AvatarColor); err != nil {
+		n, err := scanHandoverNote(rows)
+		if err != nil {
 			continue
 		}
-		if shiftType.Valid {
-			n.ShiftType = shiftType.String
-		}
-		n.UrgentFlag = urgentInt == 1
-		n.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
 		list = append(list, n)
 	}
 
@@ -68,6 +55,8 @@ type CreateHandoverRequest struct {
 	ShiftType  string `json:"shift_type"` // 'morning', 'evening', 'night' or a shift id (e.g. "shift_4h_1")
 	Summary    string `json:"summary"`
 	UrgentFlag bool   `json:"urgent_flag"`
+	// Quick-tap tags (issue #18); with tags, the summary may be empty.
+	Tags []string `json:"tags,omitempty"`
 	// Set by the offline outbox (issue #16): resending it returns the first note.
 	ClientRequestID string `json:"client_request_id,omitempty"`
 }
@@ -84,10 +73,22 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req CreateHandoverRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Summary == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid handover note payload"}`, http.StatusBadRequest)
 		return
 	}
+	req.Summary = strings.TrimSpace(req.Summary)
+	tags, tagUrgent, err := validateTags(req.Tags)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "UNKNOWN_TAG", err.Error())
+		return
+	}
+	if req.Summary == "" && len(tags) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "EMPTY_NOTE", "tap at least one tag or write a note")
+		return
+	}
+	// Swallowing difficulty and pain are always urgent.
+	req.UrgentFlag = req.UrgentFlag || tagUrgent
 
 	req.ShiftType = strings.TrimSpace(req.ShiftType)
 	if req.ShiftType == "" {
@@ -116,10 +117,10 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now().UTC()
 
-	_, err := h.DB.Exec(`
-		INSERT INTO handover_notes (id, caregiver_id, created_at, shift_type, summary, urgent_flag, client_request_id)
-		VALUES (?, ?, datetime('now'), ?, ?, ?, ?)
-	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal, nullIfEmpty(req.ClientRequestID))
+	_, err = h.DB.Exec(`
+		INSERT INTO handover_notes (id, caregiver_id, created_at, shift_type, summary, urgent_flag, client_request_id, tags)
+		VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)
+	`, id, caregiver.ID, req.ShiftType, req.Summary, urgentVal, nullIfEmpty(req.ClientRequestID), tagsJSON(tags))
 
 	if err != nil {
 		if isUniqueViolation(err) && h.replyIfDuplicateNote(w, req.ClientRequestID) {
@@ -130,7 +131,7 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 	}
 
 	audit.Log(h.DB, caregiver.ID, "NOTE_ADDED", "handover_note", id,
-		fmt.Sprintf("Handover (%s, urgent=%t): %s", req.ShiftType, req.UrgentFlag, req.Summary))
+		fmt.Sprintf("Handover (%s, urgent=%t, tags=%v): %s", req.ShiftType, req.UrgentFlag, tags, req.Summary))
 
 	// Broadcast SSE event
 	h.Broker.Broadcast("NOTE_ADDED", models.ActorInfo{
@@ -143,6 +144,7 @@ func (h *HandoverHandler) CreateHandover(w http.ResponseWriter, r *http.Request)
 		"shift_type":     req.ShiftType,
 		"summary":        req.Summary,
 		"urgent_flag":    req.UrgentFlag,
+		"tags":           tags,
 		"caregiver_name": caregiver.Name,
 		"avatar_color":   caregiver.AvatarColor,
 	})

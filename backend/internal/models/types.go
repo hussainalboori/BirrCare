@@ -181,6 +181,13 @@ type HandoverNote struct {
 	ShiftType     string    `json:"shift_type"` // 'morning', 'evening', 'night' or a shift id (e.g. "shift_4h_1")
 	Summary       string    `json:"summary"`
 	UrgentFlag    bool      `json:"urgent_flag"`
+	// Tags are fixed quick-tap observations (issue #18), e.g. "ate_half".
+	Tags []string `json:"tags,omitempty"`
+	// Set when this note passed duty to another caregiver.
+	DutyHandoverID string `json:"duty_handover_id,omitempty"`
+	PassedToID     string `json:"passed_to_id,omitempty"`
+	PassedToName   string `json:"passed_to_name,omitempty"`
+	AcceptedAt     string `json:"accepted_at,omitempty"` // RFC3339
 }
 
 // AuditLog tracks every state mutation for forensic accountability.

@@ -16,7 +16,7 @@ Main capabilities:
 - **Works through dropped Wi-Fi.** A tap that can't reach the server is saved on that phone and shown in amber as "saved on this phone — not sent yet", never as given. It is sent when the connection returns, with the tap time. A dose waiting more than 30 minutes is only sent after the caregiver confirms, because a sibling may have given it meanwhile. Resends never create duplicates.
 - **Stroke vitals.** Blood pressure, pulse, blood sugar (mmol/L) and alertness (`alert`, `confused`, `restless`, `drowsy`), with a colour-coded BP badge and a crisis screen with one-tap call buttons. Nothing is pre-filled: an unmeasured sugar or unassessed alertness is stored as empty, never as a default.
 - **Insulin.** An admin enters the doctor's correction scale or fixed dose; the app looks it up but never calculates a dose, refuses correction insulin below 3.9 mmol/L, and locks a second injection inside the plan's minimum interval.
-- **Shift handovers and duty roster.** Handover notes (with an urgent flag), shift presets (24h, 4h, 8h, 12h or custom) and daily assignments.
+- **Shift handovers and duty roster.** A handover is a few taps on big chips (Ate half, Needs rest, Pain, Swallowing difficulty, …) with an optional typed or spoken note; pain and swallowing difficulty mark it urgent. The person on duty can **pass duty** to a sibling in the same step: the roster moves at once, the sibling gets an alert with an "Accept duty" button, and if nobody accepts within 15 minutes the sender is alerted. Home shows the last handover at the top. Shift presets (24h, 4h, 8h, 12h or custom) and daily assignments.
 - **Doctor summary.** A printable report of the last 7–90 days: BP/pulse/sugar averages, crisis episodes, adherence, alertness distribution, insulin vs. scale, and recent notes.
 - **Arabic and English**, with right-to-left / left-to-right layout chosen per device.
 - **Always clear who is logging.** A row of big sibling avatars with names sits on Home, Vitals and Quick BP; tapping another name opens the PIN keypad already set to them (one tap + 4 digits). Every save button names the person: "Give as Hussain", "Save as Hussain".
@@ -262,7 +262,7 @@ Push payloads are deliberately generic for the lock screen, e.g. "Blood pressure
 | Method | Path | Description |
 |---|---|---|
 | GET | `/handovers?limit=` | Latest notes (default 20, max 100). |
-| POST | `/handovers` | `{shift_type, summary, urgent_flag, client_request_id?}`; `shift_type` is a shift id or label (default `morning`). A resend with the same `client_request_id` returns `200` with the first note. |
+| POST | `/handovers` | `{shift_type, summary, urgent_flag, tags?, client_request_id?}`; `shift_type` is a shift id or label (default `morning`). `tags` are keys from the fixed list (`ate_well`, `ate_half`, `low_appetite`, `swallowing_difficulty`, `needs_rest`, `good_mood`, `agitated`, `pain`, `slept_well`, `poor_sleep`, `bowel_movement`, `repositioned`); with tags the summary may be empty. `400 UNKNOWN_TAG`, `400 EMPTY_NOTE`. `pain` and `swallowing_difficulty` set `urgent_flag`. A resend with the same `client_request_id` returns `200` with the first note. |
 | GET | `/export/summary?days=` | Doctor summary for the last N household-local days, today included (default 7, max 90). Adherence is measured against **expected** doses from each schedule (slots × days of week, from the day the medication was added; today's doses only once due). `per_medication` has expected / taken / partial / vomited / refused / skipped / **not_recorded**, rate, missed dates and earlier dosages, with critical medications first. Unrecorded doses are never counted as taken. Also `daily_bp` per local day, the alertness distribution (with `not_assessed`) and `unverified_sugar_count`. Cancelled doses don't count. Any query failure returns `500`, never an empty report. |
 | GET | `/shifts` | Shift definitions (everyone). |
 | POST | `/shifts` · PUT `/shifts/{id}` · DELETE `/shifts/{id}` | Manage shifts (Super Admin; delete is a soft delete). |
@@ -270,6 +270,8 @@ Push payloads are deliberately generic for the lock screen, e.g. "Blood pressure
 | GET | `/shifts/assignments?date=` | Who is assigned on a day. |
 | POST | `/shifts/assignments` · DELETE `/shifts/assignments/{id}` | Assign / unassign (Super Admin). |
 | GET | `/shifts/current-duty` | Who is on duty right now. |
+| POST | `/shifts/handover` | `{to_caregiver_id, tags?, summary?, urgent_flag?}`: pass duty. Only the caregiver on duty now (`403 NOT_ON_DUTY`). In one transaction: the handover note, the current assignment moved to the recipient, the duty record, an alert for the recipient only, and the audit row. Pushes to the recipient's phones. |
+| POST | `/shifts/handover/{id}/accept` | The recipient accepts the duty (`403` for anyone else; idempotent). Not accepted within 15 minutes: the sender gets a `duty_unaccepted` alert and push, once. |
 
 ### Live updates (SSE)
 

@@ -76,7 +76,7 @@ func NewRouter(o Options) http.Handler {
 	handlers.LoadClinicalSettings(o.DB)
 	handoverHandler := &handlers.HandoverHandler{DB: o.DB, Broker: o.Broker}
 	exportHandler := &handlers.ExportHandler{DB: o.DB}
-	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker}
+	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
 
@@ -202,6 +202,8 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/shifts/assignments", shiftsHandler.AssignShift)
 				api.Delete("/shifts/assignments/{id}", shiftsHandler.DeleteAssignment)
 				api.Get("/shifts/current-duty", shiftsHandler.GetCurrentDuty)
+				api.Post("/shifts/handover", shiftsHandler.PassDuty)
+				api.Post("/shifts/handover/{id}/accept", shiftsHandler.AcceptDuty)
 			})
 		})
 	})

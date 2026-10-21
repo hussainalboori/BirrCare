@@ -12,6 +12,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
+	"birrcare/backend/internal/handlers"
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/server"
 	"birrcare/backend/internal/sse"
@@ -61,6 +62,11 @@ func main() {
 	opts := server.OptionsFromEnv(database, broker)
 	opts.Push = notifier
 	r := server.NewRouter(opts)
+
+	// 7. Tell a sibling when the duty they passed has not been accepted (issue #18)
+	reminderCtx, stopReminders := context.WithCancel(context.Background())
+	defer stopReminders()
+	handlers.StartDutyReminders(reminderCtx, database, notifier, broker)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),

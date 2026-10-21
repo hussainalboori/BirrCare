@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { installAudioUnlock, playAlert } from "@/lib/alertSound";
 import { DOSE_COPY } from "@/lib/doseWarnings";
+import { tagLabel } from "@/lib/handoverTags";
 import { Ltr } from "./Ltr";
 import { Pill, Activity, ClipboardList, UserCheck, X, AlertTriangle, Syringe } from "lucide-react";
 
@@ -33,6 +34,8 @@ interface InsulinPayload {
 interface NotePayload {
   summary?: string;
   urgent_flag?: boolean;
+  tags?: string[];
+  passed_to_name?: string;
 }
 
 // Amber, with a stronger vibration, so nobody misses it: an admin gave a dose inside the
@@ -165,7 +168,9 @@ export function SseToast() {
       const p = (event.payload || {}) as NotePayload;
       Icon = ClipboardList;
       actionText = t.toastHandoverAdded;
-      if (p.summary) detail = <bdi>{p.summary}</bdi>;
+      const text = [(p.tags || []).map((k) => tagLabel(k, locale === "ar")).join(" · "), p.summary || ""].filter(Boolean).join(" — ");
+      if (p.passed_to_name) actionText = locale === "ar" ? `سلّم المناوبة إلى ${p.passed_to_name}` : `passed duty to ${p.passed_to_name}`;
+      if (text) detail = <bdi>{text}</bdi>;
       break;
     }
     case "CAREGIVER_SWITCHED":

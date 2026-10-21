@@ -10,6 +10,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 type ShiftsHandler struct {
 	DB     *sql.DB
 	Broker *sse.Broker
+	Push   *push.Notifier
 }
 
 type CreateShiftRequest struct {
@@ -494,22 +496,27 @@ func isTimeInShift(currentTime, start, end string) bool {
 	return currentTime >= start || currentTime < end
 }
 
-func (h *ShiftsHandler) GetCurrentDuty(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
+// querier is *sql.DB or *sql.Tx.
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// findCurrentShift returns the active shift covering now and the date its
+// assignment is stored under (yesterday for the early part of an overnight shift).
+func findCurrentShift(q querier, now time.Time) (*models.Shift, string, error) {
 	currentTime := now.Format("15:04")
 	todayDate := now.Format("2006-01-02")
 	yesterdayDate := now.AddDate(0, 0, -1).Format("2006-01-02")
 
-	// 1. Fetch active shifts
-	rows, err := h.DB.Query(`
+	rows, err := q.Query(`
 		SELECT id, name_ar, name_en, start_time, end_time, duration_hours, color, display_order, is_active
 		FROM shifts
 		WHERE is_active = 1
 		ORDER BY display_order ASC, start_time ASC
 	`)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "DB_ERROR", "failed fetching shifts")
-		return
+		return nil, "", err
 	}
 	defer rows.Close()
 
@@ -521,6 +528,10 @@ func (h *ShiftsHandler) GetCurrentDuty(w http.ResponseWriter, r *http.Request) {
 			s.IsActive = (isAct == 1)
 			activeShifts = append(activeShifts, s)
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, "", err
 	}
 
 	var currentShift *models.Shift
@@ -540,6 +551,17 @@ func (h *ShiftsHandler) GetCurrentDuty(w http.ResponseWriter, r *http.Request) {
 	// If no match found (e.g. edge case or single shift), fallback to first shift
 	if currentShift == nil && len(activeShifts) > 0 {
 		currentShift = &activeShifts[0]
+	}
+	return currentShift, targetDate, nil
+}
+
+func (h *ShiftsHandler) GetCurrentDuty(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	currentTime := now.Format("15:04")
+	currentShift, targetDate, err := findCurrentShift(h.DB, now)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "DB_ERROR", "failed fetching shifts")
+		return
 	}
 
 	status := models.CurrentDutyStatus{

@@ -193,6 +193,13 @@ export interface HandoverNote {
   shift_type: ShiftType;
   summary: string;
   urgent_flag: boolean;
+  /** Quick-tap tags (issue #18), keys from lib/handoverTags. */
+  tags?: string[];
+  /** Set when this note passed duty to a sibling. */
+  duty_handover_id?: string;
+  passed_to_id?: string;
+  passed_to_name?: string;
+  accepted_at?: string;
 }
 
 export interface SSEEvent<T = any> {

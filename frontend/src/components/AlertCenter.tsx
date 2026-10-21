@@ -12,7 +12,11 @@ import Link from "next/link";
 import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
 import { Ltr } from "./Ltr";
-import { Phone, Siren, Check, AlertTriangle } from "lucide-react";
+import { tagLabel } from "@/lib/handoverTags";
+import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft } from "lucide-react";
+
+// Duty handovers (issue #18) are addressed to one sibling and aren't emergencies.
+const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 // Alerts every sibling must see (issues #11, #12): a BP crisis, a dose given inside
 // its minimum interval, vomiting after a dose. They come from the server
@@ -22,7 +26,7 @@ import { Phone, Siren, Check, AlertTriangle } from "lucide-react";
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -45,7 +49,7 @@ export function AlertCenter() {
     const fresh = list.filter((a) => !announced.current.has(a.id));
     if (fresh.length) {
       fresh.forEach((a) => announced.current.add(a.id));
-      playAlert("crisis");
+      playAlert(fresh.every((a) => DUTY_KINDS.has(a.kind)) ? "chime" : "crisis");
       if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.([400, 150, 400, 150, 400]);
     }
   }, [me]);
@@ -102,8 +106,20 @@ export function AlertCenter() {
     }
   };
 
+  // "Accept duty": the server clears this alert (and the sender's reminder).
+  const acceptDuty = async () => {
+    const id = current.id;
+    try {
+      await fetchApi(`/shifts/handover/${encodeURIComponent(String(current.payload.duty_handover_id))}/accept`, { method: "POST" });
+      setAlerts((list) => list.filter((a) => a.id !== id));
+    } catch {
+      // Stay on screen; tap again once the connection is back.
+    }
+  };
+
   const p = current.payload;
-  const red = current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction";
+  const duty = DUTY_KINDS.has(current.kind);
+  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction";
   const crisis = current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
@@ -145,6 +161,20 @@ export function AlertCenter() {
       advice = String(p.reason || "");
       break;
     }
+    case "duty_handover": {
+      const tags = Array.isArray(p.tags) ? (p.tags as string[]).map((k) => tagLabel(k, ar)).join(" · ") : "";
+      title = <>{ar ? "سُلّمت إليك المناوبة" : "Duty was passed to you"}</>;
+      advice = [tags, String(p.summary || "")].filter(Boolean).join(" — ");
+      break;
+    }
+    case "duty_unaccepted":
+      title = (
+        <>
+          <bdi>{String(p.to_name || "")}</bdi> {ar ? `لم يقبل المناوبة بعد ${p.minutes ?? 15} دقيقة` : `has not accepted the duty after ${p.minutes ?? 15} minutes`}
+        </>
+      );
+      advice = ar ? "اتصل به أو ابقَ في المناوبة." : "Call them, or stay on duty.";
+      break;
     case "vomited":
       title = <>{ar ? "استفرغت بعد جرعة" : "Vomited after a dose"}{medName && <>: <bdi>{medName}</bdi></>}</>;
       break;
@@ -161,7 +191,7 @@ export function AlertCenter() {
     <button
       type="button"
       onClick={acknowledge}
-      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold text-white ${red ? "bg-rose-900/50" : "bg-amber-950/30"}`}
+      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold text-white ${red ? "bg-rose-900/50" : duty ? "bg-blue-950/40" : "bg-amber-950/30"}`}
     >
       <Check className="h-5 w-5" />
       {ar ? "تم الاطلاع" : "Seen"}
@@ -176,12 +206,12 @@ export function AlertCenter() {
       data-testid={crisis ? "crisis-bar" : "alert-bar"}
       data-kind={current.kind}
       className={`fixed inset-x-0 top-0 z-[60] px-3 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] text-white shadow-2xl ${
-        red ? "bg-rose-700" : "bg-amber-800"
+        red ? "bg-rose-700" : duty ? "bg-blue-800" : "bg-amber-800"
       }`}
     >
       <div className="mx-auto max-w-3xl space-y-2">
         <p className="flex items-start gap-2 text-base font-black leading-snug">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          {duty ? <ArrowRightLeft className="mt-0.5 h-5 w-5 shrink-0" /> : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />}
           <span>
             {title}
             {more}
@@ -189,7 +219,8 @@ export function AlertCenter() {
             <span className="block text-sm font-semibold">
               {by && (
                 <>
-                  {ar ? "سجّله" : "Logged by"} {by}{" "}
+                  {current.kind === "duty_handover" ? (ar ? "من" : "From") : current.kind === "duty_unaccepted" ? "" : ar ? "سجّله" : "Logged by"}{" "}
+                  {current.kind !== "duty_unaccepted" && by}{" "}
                 </>
               )}
               {when}
@@ -224,7 +255,19 @@ export function AlertCenter() {
             {ar ? "افحص F.A.S.T. الآن" : "Do the F.A.S.T. check now"}
           </Link>
         )}
-        {(!red || contacts.doctor_phone) && seenButton}
+        {current.kind === "duty_handover" ? (
+          <button
+            type="button"
+            onClick={acceptDuty}
+            data-testid="accept-duty"
+            className="flex min-h-14 w-full items-center justify-center gap-2 rounded-xl bg-white text-lg font-black text-blue-900"
+          >
+            <ArrowRightLeft className="h-5 w-5" />
+            {ar ? "أقبل المناوبة" : "Accept duty"}
+          </button>
+        ) : (
+          (!red || contacts.doctor_phone) && seenButton
+        )}
       </div>
     </div>
   );
