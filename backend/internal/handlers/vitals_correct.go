@@ -33,8 +33,9 @@ type CorrectVitalsRequest struct {
 type correctionScan struct {
 	id, by, reason, at string
 	sys, dia, pulse    sql.NullInt64
-	sugar              sql.NullFloat64
+	sugar, temp        sql.NullFloat64
 	alertness          sql.NullString
+	spo2               sql.NullInt64
 }
 
 func (c correctionScan) toModel() *models.VitalCorrection {
@@ -58,6 +59,14 @@ func (c correctionScan) toModel() *models.VitalCorrection {
 		a := c.alertness.String
 		m.OriginalAlertness = &a
 	}
+	if c.spo2.Valid {
+		v := int(c.spo2.Int64)
+		m.OriginalSpO2 = &v
+	}
+	if c.temp.Valid {
+		v := c.temp.Float64
+		m.OriginalTemperatureC = &v
+	}
 	return m
 }
 
@@ -78,8 +87,8 @@ func (h *VitalsHandler) CorrectVitals(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "say why the reading is being corrected (e.g. typo)")
 		return
 	}
-	if req.Systolic == nil && req.BloodSugar == nil && req.AlertnessLevel == "" {
-		writeJSONError(w, http.StatusBadRequest, "MISSING_FIELDS", "the corrected reading needs blood pressure, sugar or alertness")
+	if !req.hasMeasurement() {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_FIELDS", "the corrected reading needs blood pressure, sugar, oxygen, temperature or alertness")
 		return
 	}
 	if code, msg := validateMeasurements(&req.LogVitalsRequest); code != "" {
@@ -141,9 +150,9 @@ func (h *VitalsHandler) CorrectVitals(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same measurement time as the original: it is the same reading, corrected.
 	if _, err := tx.Exec(`INSERT INTO vitals_logs (id, caregiver_id, recorded_at, systolic, diastolic, pulse, blood_sugar, alertness_level, vital_type, notes,
-		supersedes_id, correction_reason, corrected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		supersedes_id, correction_reason, corrected_at, spo2, temperature_c) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		newID, me.ID, recordedAt, req.Systolic, req.Diastolic, req.Pulse, req.BloodSugar, alertness, vitalType, req.Notes,
-		origID, req.Reason, now.Format(sqliteTimeLayout)); err != nil {
+		origID, req.Reason, now.Format(sqliteTimeLayout), req.SpO2, req.TemperatureC); err != nil {
 		fail("failed to save correction", err)
 		return
 	}

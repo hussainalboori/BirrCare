@@ -83,6 +83,7 @@ func NewRouter(o Options) http.Handler {
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
+	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
 	r := chi.NewRouter()
 
@@ -116,6 +117,7 @@ func NewRouter(o Options) http.Handler {
 		_ = json.NewEncoder(w).Encode(resp)
 	}
 	r.Get("/health", healthHandler)
+	r.With(auth.RequireAuth).Get("/audit/verify", auditHandler.Verify)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", healthHandler)
@@ -154,12 +156,13 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/auth/2fa/enable", authHandler.EnableTwoFactor)
 				api.Post("/auth/2fa/disable", authHandler.DisableTwoFactor)
 
-				// User Management (Super Admin only - enforced in handlers)
+				// User Management & Audit (Super Admin only - enforced in handlers)
 				api.Get("/users", usersHandler.ListUsers)
 				api.Post("/users", usersHandler.CreateUser)
 				api.Put("/users/{id}", usersHandler.UpdateUser)
 				api.Post("/users/{id}/reset-pin", usersHandler.ResetUserPIN)
 				api.Delete("/users/{id}", usersHandler.ToggleUserActive)
+				api.Get("/audit/verify", auditHandler.Verify)
 
 				// Medications & Scheduling
 				api.Get("/medications", medHandler.ListMedications)
@@ -173,6 +176,11 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/medications/{id}/stock", medHandler.UpdateStock)
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
+
+				// PRN (As-Needed) Medications (Issue #25)
+				api.Get("/medications/prn", medHandler.GetPRNMedications)
+				api.Post("/medications/prn/log", medHandler.LogPRNDose)
+				api.Post("/medications/prn/log/{id}/void", medHandler.VoidPRNDose)
 
 				// Alerts that must reach every sibling (issue #12)
 				api.Get("/alerts/unacked", alertsHandler.Unacked)

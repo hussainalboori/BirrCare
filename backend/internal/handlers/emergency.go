@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -21,7 +20,6 @@ import (
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // Issue #19: an emergency card for paramedics. GET /emergency/{token} needs no
@@ -72,6 +70,8 @@ type EmergencyCard struct {
 	Medications []EmergencyMed    `json:"medications"`
 	LastBP      []EmergencyBP     `json:"last_bp"`
 	LastSugar   *EmergencyValue   `json:"last_sugar,omitempty"`
+	LastSpO2    *EmergencyValue   `json:"last_spo2,omitempty"`
+	LastTemp    *EmergencyValue   `json:"last_temperature,omitempty"`
 	LastAlert   *EmergencyValue   `json:"last_alertness,omitempty"`
 	LastFAST    *EmergencyFAST    `json:"last_fast,omitempty"`
 	Contacts    Contacts          `json:"contacts"`
@@ -167,6 +167,16 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	if h.DB.QueryRow(`SELECT blood_sugar, recorded_at FROM vitals_logs WHERE superseded_by IS NULL AND blood_sugar IS NOT NULL
 		ORDER BY recorded_at DESC LIMIT 1`).Scan(&sugar, &at) == nil {
 		card.LastSugar = &EmergencyValue{Value: strconv.FormatFloat(sugar, 'f', -1, 64) + " mmol/L", RecordedAt: sqliteToRFC3339(at)}
+	}
+	var spo2 int
+	if h.DB.QueryRow(`SELECT spo2, recorded_at FROM vitals_logs WHERE superseded_by IS NULL AND spo2 IS NOT NULL
+		ORDER BY recorded_at DESC LIMIT 1`).Scan(&spo2, &at) == nil {
+		card.LastSpO2 = &EmergencyValue{Value: strconv.Itoa(spo2) + "%", RecordedAt: sqliteToRFC3339(at)}
+	}
+	var temp float64
+	if h.DB.QueryRow(`SELECT temperature_c, recorded_at FROM vitals_logs WHERE superseded_by IS NULL AND temperature_c IS NOT NULL
+		ORDER BY recorded_at DESC LIMIT 1`).Scan(&temp, &at) == nil {
+		card.LastTemp = &EmergencyValue{Value: strconv.FormatFloat(temp, 'f', 1, 64) + " °C", RecordedAt: sqliteToRFC3339(at)}
 	}
 	var level string
 	if h.DB.QueryRow(`SELECT alertness_level, recorded_at FROM vitals_logs WHERE superseded_by IS NULL AND alertness_level IS NOT NULL
@@ -265,11 +275,8 @@ func (h *EmergencyHandler) recordView(me *models.Caregiver) {
 	if name != "" {
 		detail = "Emergency card opened by " + name
 	}
-	// Anonymous (paramedic) views have no caregiver: NULL, not "".
-	if _, err := h.DB.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details, created_at)
-		VALUES (?, ?, 'EMERGENCY_CARD_VIEWED', 'patient_profile', '1', ?, datetime('now'))`, uuid.New().String(), nullIfEmpty(by), detail); err != nil {
-		log.Printf("[AUDIT] emergency card view: %v", err)
-	}
+	// Anonymous (paramedic) views have no caregiver: audit.Record stores NULL for "".
+	audit.Log(h.DB, by, "EMERGENCY_CARD_VIEWED", "patient_profile", "1", detail)
 
 	since := time.Now().UTC().Add(-alertEvery).Format(sqliteTimeLayout)
 	var recent int

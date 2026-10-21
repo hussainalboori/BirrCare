@@ -71,6 +71,10 @@ type Medication struct {
 	MinHoursBetween *float64 `json:"min_hours_between"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report (issue #14).
 	IsCritical bool `json:"is_critical"`
+	// PRN (as-needed) medication settings (issue #25).
+	IsPRN        bool     `json:"is_prn"`
+	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
+	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	// Stock (issue #20): nil = not tracked.
 	StockUnits          *float64  `json:"stock_units"`
 	UnitsPerDose        float64   `json:"units_per_dose"`
@@ -78,6 +82,62 @@ type Medication struct {
 	IsActive            bool      `json:"is_active"`
 	CreatedBy           string    `json:"created_by,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+}
+
+// PRNLog records an as-needed medication intake (Issue #25).
+type PRNLog struct {
+	ID             string `json:"id"`
+	MedicationID   string `json:"medication_id"`
+	CaregiverID    string `json:"caregiver_id"`
+	CaregiverName  string `json:"caregiver_name,omitempty"`
+	AvatarColor    string `json:"avatar_color,omitempty"`
+	GivenAt        string `json:"given_at"` // RFC3339
+	ReasonTag      string `json:"reason_tag"` // 'headache', 'pain', 'fever', 'other'
+	Notes          string `json:"notes,omitempty"`
+	VoidedAt       string `json:"voided_at,omitempty"` // RFC3339
+	VoidedByName   string `json:"voided_by_name,omitempty"`
+	VoidReason     string `json:"void_reason,omitempty"`
+	DosageSnapshot string `json:"dosage_snapshot,omitempty"`
+	// When the entry was made (given_at may be earlier): the 10-minute own undo.
+	RecordedAt string `json:"recorded_at,omitempty"` // RFC3339
+}
+
+// PRNLastGiven tracks the most recent intake of a PRN medication.
+type PRNLastGiven struct {
+	LogID         string  `json:"log_id"`
+	GivenAt       string  `json:"given_at"` // RFC3339
+	CaregiverID   string  `json:"caregiver_id"`
+	CaregiverName string  `json:"caregiver_name"`
+	AvatarColor   string  `json:"avatar_color,omitempty"`
+	ReasonTag     string  `json:"reason_tag"`
+	HoursSince    float64 `json:"hours_since"`
+}
+
+// PRNMedicationStatus conveys current 24h count, locks, and history for a PRN medicine.
+type PRNMedicationStatus struct {
+	Medication    Medication    `json:"medication"`
+	CountLast24h  int           `json:"count_last_24h"`
+	MaxPer24h     *int          `json:"max_per_24h,omitempty"`
+	MinHours      *float64      `json:"min_hours,omitempty"`
+	LastGiven     *PRNLastGiven `json:"last_given,omitempty"`
+	NextAllowedAt string        `json:"next_allowed_at,omitempty"` // RFC3339
+	CanGive       bool          `json:"can_give"`
+	LockReason    string        `json:"lock_reason,omitempty"` // 'limit_reached' or 'too_soon'
+	RecentLogs    []PRNLog      `json:"recent_logs,omitempty"`
+}
+
+// PRNExportLog summarizes PRN use in doctor export reports.
+type PRNExportLog struct {
+	ID            string `json:"id"`
+	MedicationID  string `json:"medication_id"`
+	NameAr        string `json:"name_ar"`
+	NameEn        string `json:"name_en"`
+	Dosage        string `json:"dosage"`
+	GivenAt       string `json:"given_at"` // RFC3339
+	Date          string `json:"date"`     // YYYY-MM-DD
+	ReasonTag     string `json:"reason_tag"`
+	Notes         string `json:"notes,omitempty"`
+	CaregiverName string `json:"caregiver_name"`
 }
 
 // LastDose is the most recent taken dose of a medication, on any date.
@@ -160,6 +220,11 @@ type VitalsLog struct {
 	Correction  *VitalCorrection `json:"correction,omitempty"`
 	BPStatus    string           `json:"bp_status,omitempty"`    // 'NORMAL', 'ELEVATED', 'STAGE_2', 'CRISIS'
 	SugarStatus string           `json:"sugar_status,omitempty"` // 'LOW', 'NORMAL', 'ELEVATED', 'VERY_HIGH'
+	// Issue #22: oxygen saturation (%) and temperature (C).
+	SpO2         *int     `json:"spo2,omitempty"`
+	TemperatureC *float64 `json:"temperature_c,omitempty"`
+	SpO2Status   string   `json:"spo2_status,omitempty"` // 'NORMAL', 'LOW', 'CRITICAL'
+	TempStatus   string   `json:"temp_status,omitempty"` // 'NORMAL', 'FEVER', 'LOW'
 }
 
 // VitalCorrection describes the reading a correction replaced.
@@ -170,6 +235,8 @@ type VitalCorrection struct {
 	OriginalPulse        *int     `json:"original_pulse,omitempty"`
 	OriginalBloodSugar   *float64 `json:"original_blood_sugar,omitempty"`
 	OriginalAlertness    *string  `json:"original_alertness_level,omitempty"`
+	OriginalSpO2         *int     `json:"original_spo2,omitempty"`
+	OriginalTemperatureC *float64 `json:"original_temperature_c,omitempty"`
 	OriginalLoggedByName string   `json:"original_logged_by_name"`
 	Reason               string   `json:"reason"`
 	CorrectedAt          string   `json:"corrected_at"` // RFC3339

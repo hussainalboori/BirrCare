@@ -81,6 +81,10 @@ export interface Medication {
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */
   is_critical?: boolean;
+  /** PRN (as-needed) medication (issue #25). */
+  is_prn?: boolean;
+  prn_min_hours?: number | null;
+  prn_max_per_24h?: number | null;
   /** Pills/units in the box (issue #20); null = stock not tracked. */
   stock_units?: number | null;
   units_per_dose?: number;
@@ -165,7 +169,7 @@ export interface DailyScheduleResponse {
   schedule: ScheduledDose[];
 }
 
-export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast";
+export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast" | "spo2" | "temp";
 
 export interface VitalsLog {
   id: string;
@@ -186,6 +190,11 @@ export interface VitalsLog {
   fast_result?: { face: boolean; arm: boolean; speech: boolean };
   /** When she was last seen normal (RFC3339), for the paramedics. */
   last_normal_at?: string;
+  /** Issue #22: oxygen saturation (%) and temperature (°C). */
+  spo2?: number;
+  temperature_c?: number;
+  spo2_status?: "NORMAL" | "LOW" | "CRITICAL";
+  temp_status?: "NORMAL" | "FEVER" | "LOW";
   /** Set on a corrected reading: what was first entered (issue #15). */
   correction?: {
     original_id: string;
@@ -194,6 +203,8 @@ export interface VitalsLog {
     original_pulse?: number;
     original_blood_sugar?: number;
     original_alertness_level?: string;
+    original_spo2?: number;
+    original_temperature_c?: number;
     original_logged_by_name: string;
     reason: string;
     corrected_at: string;
@@ -252,6 +263,11 @@ export interface DoctorSummary {
     avg_blood_sugar?: number;
     /** Readings flagged as possibly the old pre-filled 6.4; left out of the average. */
     unverified_sugar_count?: number;
+    min_spo2?: number;
+    low_spo2_count?: number;
+    critical_spo2_count?: number;
+    max_temperature_c?: number;
+    fever_count?: number;
   };
   adherence: {
     total_scheduled: number;
@@ -284,10 +300,13 @@ export interface DoctorSummary {
   }[];
   /** Blood pressure per household-local day. */
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
+  /** Lowest SpO2 and highest temperature per household-local day (issue #22). */
+  daily_oxygen_temp?: { date: string; min_spo2?: number; max_temperature_c?: number; readings: number }[];
   alertness_distribution: Partial<Record<AlertnessLevel | "not_assessed", number>>;
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
   insulin_logs?: InsulinLog[];
+  prn_logs?: PRNExportLog[];
 }
 
 /** One row of the doctor's correction scale: min inclusive, max exclusive, mmol/L. */
@@ -334,3 +353,58 @@ export interface InsulinPlanStatus {
   next_allowed_at?: string;
   recent: InsulinLog[];
 }
+
+export type PRNReasonTag = "headache" | "pain" | "fever" | "other";
+
+export interface PRNLog {
+  id: string;
+  medication_id: string;
+  caregiver_id: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  given_at: string;
+  reason_tag: PRNReasonTag;
+  notes?: string;
+  voided_at?: string;
+  voided_by_name?: string;
+  void_reason?: string;
+  dosage_snapshot?: string;
+  /** When the entry was made (given_at may be earlier): own undo for 10 minutes. */
+  recorded_at?: string;
+}
+
+export interface PRNLastGiven {
+  log_id: string;
+  given_at: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  reason_tag: PRNReasonTag;
+  hours_since: number;
+}
+
+export interface PRNMedicationStatus {
+  medication: Medication;
+  count_last_24h: number;
+  max_per_24h?: number | null;
+  min_hours?: number | null;
+  last_given?: PRNLastGiven | null;
+  next_allowed_at?: string;
+  can_give: boolean;
+  lock_reason?: "limit_reached" | "too_soon" | string;
+  recent_logs: PRNLog[];
+}
+
+export interface PRNExportLog {
+  id: string;
+  medication_id: string;
+  name_ar: string;
+  name_en: string;
+  dosage: string;
+  given_at: string;
+  date: string;
+  reason_tag: PRNReasonTag | string;
+  notes?: string;
+  caregiver_name: string;
+}
+

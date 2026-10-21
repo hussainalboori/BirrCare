@@ -20,6 +20,8 @@ export interface EmergencyCard {
   medications: { name_ar: string; name_en: string; dosage: string; slots: string[]; times?: string[]; blood_thinner: boolean }[];
   last_bp: { systolic: number; diastolic: number; pulse?: number; recorded_at: string }[];
   last_sugar?: { value: string; recorded_at: string };
+  last_spo2?: { value: string; recorded_at: string };
+  last_temperature?: { value: string; recorded_at: string };
   last_alertness?: { value: string; recorded_at: string };
   last_fast?: { face: boolean; arm: boolean; speech: boolean; recorded_at: string; last_normal_at?: string };
   contacts: { emergency_number?: string; doctor_name?: string; doctor_phone?: string };
@@ -163,6 +165,8 @@ ${meds}
 ${bp}
 <h2><span>Latest</span><span dir="rtl" lang="ar">آخر الملاحظات</span></h2>
 ${row("Blood sugar", c.last_sugar ? `<span class="num">${esc(c.last_sugar.value)}</span> — <bdi>${esc(when(c.last_sugar.recorded_at, tz, false))}</bdi>` : "", "السكر", c.last_sugar ? `<span class="num">${esc(c.last_sugar.value)}</span> — <bdi>${esc(when(c.last_sugar.recorded_at, tz, true))}</bdi>` : "")}
+${row("Oxygen (SpO₂)", c.last_spo2 ? `<span class="num">${esc(c.last_spo2.value)}</span> — <bdi>${esc(when(c.last_spo2.recorded_at, tz, false))}</bdi>` : "", "الأكسجين", c.last_spo2 ? `<span class="num">${esc(c.last_spo2.value)}</span> — <bdi>${esc(when(c.last_spo2.recorded_at, tz, true))}</bdi>` : "")}
+${row("Temperature", c.last_temperature ? `<span class="num">${esc(c.last_temperature.value)}</span> — <bdi>${esc(when(c.last_temperature.recorded_at, tz, false))}</bdi>` : "", "الحرارة", c.last_temperature ? `<span class="num">${esc(c.last_temperature.value)}</span> — <bdi>${esc(when(c.last_temperature.recorded_at, tz, true))}</bdi>` : "")}
 ${row("Alertness", al ? `${esc(al[0])} — <bdi>${esc(when(c.last_alertness!.recorded_at, tz, false))}</bdi>` : "", "مستوى الوعي", al ? `${esc(al[1])} — <bdi>${esc(when(c.last_alertness!.recorded_at, tz, true))}</bdi>` : "")}
 ${row("F.A.S.T. stroke check", fastEn, "فحص الجلطة F.A.S.T.", fastAr, f && fastSigns ? "alarm" : "")}
 ${row("Last seen normal", f?.last_normal_at ? `<bdi>${esc(when(f.last_normal_at, tz, false))}</bdi>` : "", "آخر مرة كانت طبيعية", f?.last_normal_at ? `<bdi>${esc(when(f.last_normal_at, tz, true))}</bdi>` : "", "alarm")}
