@@ -18,6 +18,8 @@ const card: EmergencyCard = {
   medications: [{ name_ar: "إليكويس", name_en: "Apixaban", dosage: "5 mg", slots: ["morning", "evening"], times: ["08:00", "20:00"], blood_thinner: true }],
   last_bp: [{ systolic: 182, diastolic: 104, pulse: 88, recorded_at: "2026-10-21T10:00:00Z" }],
   last_alertness: { value: "drowsy", recorded_at: "2026-10-21T10:00:00Z" },
+  last_spo2: { value: "87%", recorded_at: "2026-10-21T10:00:00Z" },
+  last_temperature: { value: "38.4 °C", recorded_at: "2026-10-21T10:00:00Z" },
   last_fast: { face: true, arm: false, speech: true, recorded_at: "2026-10-21T10:05:00Z", last_normal_at: "2026-10-21T08:30:00Z" },
   contacts: { emergency_number: "997", doctor_name: "Dr. Saleh", doctor_phone: "+966500000000" },
   family: [{ name: "Fatima", phone: "+966500000001" }],
@@ -44,6 +46,8 @@ describe("emergency card HTML", () => {
     expect(html).toContain("182/104");
     expect(html).toContain("POSITIVE: face droop, speech");
     expect(html).toContain("Hard to wake");
+    expect(html).toContain("87%");
+    expect(html).toContain("38.4 °C");
     expect(html).toContain("Last seen normal");
     expect(html).toContain("Age 76");
   });

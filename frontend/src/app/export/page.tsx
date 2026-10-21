@@ -6,7 +6,7 @@ import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { useLanguage } from "@/context/LanguageContext";
 import { DoctorSummary } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
-import { ALERTNESS_METAS } from "@/lib/clinical";
+import { ALERTNESS_METAS, classifySpO2, classifyTemperature } from "@/lib/clinical";
 import { formatDateTime } from "@/lib/datetime";
 import { Auto, Ltr } from "@/components/Ltr";
 import { FileSpreadsheet, Printer, Activity, Heart, ShieldCheck, AlertTriangle } from "lucide-react";
@@ -173,6 +173,56 @@ export default function DoctorExportPage() {
                 </div>
               </div>
             )}
+
+            {/* Oxygen and temperature per household day (issue #22) */}
+            {(summary.daily_oxygen_temp ?? []).length > 0 && (() => {
+              const rows = summary.daily_oxygen_temp!;
+              const st = summary.vitals_stats;
+              const lowO2 = (n?: number) => n != null && classifySpO2(n) !== "NORMAL";
+              const fever = (c?: number) => c != null && classifyTemperature(c) === "FEVER";
+              return (
+                <div className="mb-5 print:mb-3 break-inside-avoid" data-testid="oxygen-temp-report">
+                  <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "الأكسجين والحرارة يومياً" : "Oxygen and temperature by day"}
+                  </h3>
+                  <p className="mb-2 text-xs text-slate-600 dark:text-slate-300">
+                    {st.min_spo2 != null && (
+                      <>{locale === "ar" ? "أدنى أكسجين" : "Lowest SpO₂"}: <Ltr><b>{st.min_spo2}%</b></Ltr> · </>
+                    )}
+                    {locale === "ar" ? "قراءات منخفضة" : "Low readings"}: <Ltr>{st.low_spo2_count ?? 0}</Ltr>
+                    {" ("}{locale === "ar" ? "خطيرة" : "critical"}: <Ltr>{st.critical_spo2_count ?? 0}</Ltr>{")"}
+                    {st.max_temperature_c != null && (
+                      <> · {locale === "ar" ? "أعلى حرارة" : "Highest temp"}: <Ltr><b>{st.max_temperature_c.toFixed(1)} °C</b></Ltr></>
+                    )}
+                    {" · "}{locale === "ar" ? "مرات الحمّى" : "Fever readings"}: <Ltr>{st.fever_count ?? 0}</Ltr>
+                  </p>
+                  <table className="w-full text-start text-xs print:text-[8pt]">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "اليوم" : "Day"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "أدنى أكسجين" : "Lowest SpO₂"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "أعلى حرارة" : "Highest temp"}</th>
+                        <th className="py-1 text-start font-semibold">{locale === "ar" ? "القراءات" : "Readings"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {rows.map((r) => (
+                        <tr key={r.date}>
+                          <td className="py-1 pe-2"><Ltr>{r.date.slice(5)}</Ltr></td>
+                          <td className={`py-1 pe-2 ${lowO2(r.min_spo2) ? "font-bold text-rose-700 dark:text-rose-300" : ""}`}>
+                            {r.min_spo2 != null ? <Ltr>{r.min_spo2}%</Ltr> : "—"}
+                          </td>
+                          <td className={`py-1 pe-2 ${fever(r.max_temperature_c) ? "font-bold text-orange-700 dark:text-orange-300" : ""}`}>
+                            {r.max_temperature_c != null ? <Ltr>{r.max_temperature_c.toFixed(1)} °C</Ltr> : "—"}
+                          </td>
+                          <td className="py-1"><Ltr>{r.readings}</Ltr></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
 
             {/* Blood pressure per household day, with a small trend line */}
             {(summary.daily_bp ?? []).length > 0 && (() => {
