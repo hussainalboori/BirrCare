@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -107,7 +108,12 @@ func NewRouter(o Options) http.Handler {
 
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"healthy","service":"birrcare-backend"}`))
+		resp := map[string]string{
+			"status":   "healthy",
+			"service":  "birrcare-backend",
+			"timezone": handlers.ClinicalLocation().String(),
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 	r.Get("/health", healthHandler)
 
