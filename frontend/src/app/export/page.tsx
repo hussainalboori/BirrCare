@@ -366,14 +366,14 @@ export default function DoctorExportPage() {
                 {summary.bowel_summary && (
                   <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2 print:gap-1 text-xs">
                     <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
-                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "إجمالي مرات الإخراج" : "Total Movements"}</span>
+                      <span className="text-slate-500 block text-xs">{locale === "ar" ? "إجمالي مرات الإخراج" : "Total Movements"}</span>
                       <span className="text-base print:text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
                         <Ltr>{summary.bowel_summary.total_movements}</Ltr>
                       </span>
                     </div>
 
                     <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
-                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "قوام البراز (طبيعي / قاسي / لين)" : "Consistency (N / H / L)"}</span>
+                      <span className="text-slate-500 block text-xs">{locale === "ar" ? "قوام البراز (طبيعي / قاسي / لين)" : "Consistency (N / H / L)"}</span>
                       <span className="text-sm print:text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
                         <Ltr>{summary.bowel_summary.normal_count} / {summary.bowel_summary.hard_count} / {summary.bowel_summary.loose_count}</Ltr>
                       </span>
@@ -384,11 +384,11 @@ export default function DoctorExportPage() {
                         ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200"
                         : "bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800"
                     }`}>
-                      <span className="block text-[11px]">{locale === "ar" ? "أطول فترة انقطاع" : "Longest Gap"}</span>
+                      <span className="block text-xs">{locale === "ar" ? "أطول فترة انقطاع" : "Longest Gap"}</span>
                       <span className="text-base print:text-xs font-bold mt-0.5 block">
                         <Ltr>{summary.bowel_summary.longest_gap_days} {locale === "ar" ? (summary.bowel_summary.longest_gap_days <= 10 ? "أيام" : "يوماً") : "days"}</Ltr>
                         {summary.bowel_summary.longest_gap_days >= 3 && (
-                          <span className="ms-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                          <span className="ms-1 text-xs font-bold text-amber-600 dark:text-amber-400">
                             ({locale === "ar" ? "تنبيه إمساك" : "Constipation alert"})
                           </span>
                         )}
@@ -396,7 +396,7 @@ export default function DoctorExportPage() {
                     </div>
 
                     <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
-                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "آخر إخراج مسجل" : "Last Movement"}</span>
+                      <span className="text-slate-500 block text-xs">{locale === "ar" ? "آخر إخراج مسجل" : "Last Movement"}</span>
                       <span className="text-sm print:text-xs font-semibold text-slate-900 dark:text-white mt-0.5 block">
                         {summary.bowel_summary.days_since_last != null ? (
                           locale === "ar" ? `قبل ${summary.bowel_summary.days_since_last} يوم` : `${summary.bowel_summary.days_since_last}d ago`

@@ -8,6 +8,7 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { haptic } from "@/lib/theme";
 import { Droplets, AlertTriangle, CheckCircle2, Waves, Sparkles } from "lucide-react";
 import { Ltr } from "./Ltr";
+import { newRequestId } from "@/lib/outbox";
 
 const CUP_SIZES = [50, 100, 150, 200] as const;
 
@@ -74,7 +75,7 @@ export function FluidBowelCard() {
           kind: "fluid",
           value: String(ml),
           thickened: isThickened,
-          client_request_id: `fl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          client_request_id: newRequestId(),
         }),
       });
       await loadStatus();
@@ -96,7 +97,7 @@ export function FluidBowelCard() {
         body: JSON.stringify({
           kind: "bowel",
           value: consistency,
-          client_request_id: `bw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          client_request_id: newRequestId(),
         }),
       });
       await loadStatus();
@@ -334,7 +335,7 @@ export function FluidBowelCard() {
               <span className="text-base font-black text-sky-900 dark:text-sky-100">
                 <Ltr>+{size}</Ltr>
               </span>
-              <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+              <span className="text-xs font-semibold text-sky-700 dark:text-sky-300">
                 {ar ? "مل" : "ml"}
               </span>
             </button>
@@ -447,7 +448,7 @@ export function FluidBowelCard() {
               <span className="text-base font-bold text-slate-900 dark:text-white">
                 {ar ? opt.ar : opt.en}
               </span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+              <span className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {ar ? opt.descAr : opt.descEn}
               </span>
             </button>
