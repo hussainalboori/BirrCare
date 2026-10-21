@@ -406,11 +406,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
               </div>
 
               {/* Medication Name */}
-              <h4 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
+              <h4 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white break-words">
                 {medName}
               </h4>
               {altName && altName !== medName && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 truncate -mt-0.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400 break-words -mt-0.5">
                   {altName}
                 </p>
               )}
