@@ -8,6 +8,7 @@ import { CaregiverProvider } from "@/context/CaregiverContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
 import { OutboxBar } from "@/components/OutboxBar";
+import { SharedDeviceGuard } from "@/components/SharedDeviceGuard";
 import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 
@@ -51,6 +52,7 @@ export default async function RootLayout({
             <AlertCenter />
             <SseToast />
             <OutboxBar />
+            <SharedDeviceGuard />
             <PinPadModal />
             {children}
             <Navigation />

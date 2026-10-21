@@ -31,6 +31,11 @@ const (
 	// the cookie's Expires attribute (which the client controls).
 	SessionTTL = 30 * 24 * time.Hour
 
+	// SharedDeviceCookieName marks a browser as a shared device (the family
+	// tablet). PIN sessions issued there end after SharedIdleTimeout without use.
+	SharedDeviceCookieName = "birrcare_shared"
+	SharedIdleTimeout      = 20 * time.Minute
+
 	minSecretLen = 32
 )
 
@@ -97,6 +102,9 @@ func InitSessionSecret(database *sql.DB) error {
 	return nil
 }
 
+// Now is the clock for session issue, expiry and idle checks (tests move it).
+var Now = time.Now
+
 func sign(payload string) string {
 	mac := hmac.New(sha256.New, getSecret())
 	mac.Write([]byte(payload))
@@ -107,11 +115,20 @@ func sign(payload string) string {
 // login's token unique, so logging out one device never revokes another device's
 // cookie issued in the same second.
 func GenerateSessionToken(caregiverID string) string {
+	return GenerateSessionTokenMode(caregiverID, false)
+}
+
+// GenerateSessionTokenMode adds a signed ":s" flag for a shared-device session,
+// which the middleware ends after SharedIdleTimeout without use.
+func GenerateSessionTokenMode(caregiverID string, shared bool) string {
 	nonce := make([]byte, 8)
 	if _, err := rand.Read(nonce); err != nil {
 		panic("auth: cannot read crypto/rand: " + err.Error())
 	}
-	payload := fmt.Sprintf("%s:%d:%s", caregiverID, time.Now().Unix(), hex.EncodeToString(nonce))
+	payload := fmt.Sprintf("%s:%d:%s", caregiverID, Now().Unix(), hex.EncodeToString(nonce))
+	if shared {
+		payload += ":s"
+	}
 	return fmt.Sprintf("%s:%s", payload, sign(payload))
 }
 
@@ -124,29 +141,79 @@ func ParseSessionToken(token string) (string, error) {
 // ParseSessionTokenIssued is ParseSessionToken plus the token's issue time, so the
 // middleware can refuse sessions issued before the caregiver revoked them.
 func ParseSessionTokenIssued(token string) (string, int64, error) {
-	// id:ts:nonce:sig, or id:ts:sig for cookies issued before the nonce was added.
+	s, err := ParseSession(token)
+	return s.CaregiverID, s.Issued, err
+}
+
+// Session is a verified session token.
+type Session struct {
+	CaregiverID string
+	Issued      int64
+	Shared      bool
+}
+
+func ParseSession(token string) (Session, error) {
+	// id:ts:nonce[:s]:sig, or id:ts:sig for cookies issued before the nonce was added.
 	parts := strings.Split(token, ":")
-	if len(parts) != 3 && len(parts) != 4 {
-		return "", 0, errors.New("invalid session token format")
+	if len(parts) < 3 || len(parts) > 5 || (len(parts) == 5 && parts[3] != "s") {
+		return Session{}, errors.New("invalid session token format")
 	}
 	caregiverID, ts, providedSig := parts[0], parts[1], parts[len(parts)-1]
 
 	expectedSig := sign(strings.Join(parts[:len(parts)-1], ":"))
 	if !hmac.Equal([]byte(providedSig), []byte(expectedSig)) {
-		return "", 0, errors.New("invalid signature")
+		return Session{}, errors.New("invalid signature")
 	}
 
 	issued, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
-		return "", 0, errors.New("invalid session timestamp")
+		return Session{}, errors.New("invalid session timestamp")
 	}
-	age := time.Since(time.Unix(issued, 0))
+	age := Now().Sub(time.Unix(issued, 0))
 	if age > SessionTTL || age < -5*time.Minute {
-		return "", 0, errors.New("session expired")
+		return Session{}, errors.New("session expired")
 	}
 
-	return caregiverID, issued, nil
+	return Session{CaregiverID: caregiverID, Issued: issued, Shared: len(parts) == 5}, nil
 }
+
+// sharedSeen holds the last activity (unix seconds) of each shared-device
+// session, in memory so a request never costs a DB write. After a restart a
+// session counts from its issue time, which fails closed.
+var sharedSeen sync.Map // token hash -> *atomic.Int64
+
+// sharedIdle reports whether a shared-device session has gone unused too long.
+func sharedIdle(token string, issued int64) bool {
+	last := issued
+	if v, ok := sharedSeen.Load(tokenHash(token)); ok {
+		last = v.(*atomic.Int64).Load()
+	}
+	if Now().Unix()-last > int64(SharedIdleTimeout.Seconds()) {
+		sharedSeen.Delete(tokenHash(token))
+		return true
+	}
+	return false
+}
+
+// touchShared records activity. Only things a person does count (writes and
+// POST /auth/touch), not the background polling and live stream, otherwise an
+// open tablet would never time out.
+func touchShared(token string) {
+	v, _ := sharedSeen.LoadOrStore(tokenHash(token), new(atomic.Int64))
+	v.(*atomic.Int64).Store(Now().Unix())
+}
+
+// SessionShared reports whether the request carries a shared-device session.
+func SessionShared(r *http.Request) bool {
+	if c, err := r.Cookie(SessionCookieName); err == nil {
+		s, err := ParseSession(c.Value)
+		return err == nil && s.Shared
+	}
+	return false
+}
+
+// ForgetSession drops a session's idle tracking (logout, switch).
+func ForgetSession(token string) { sharedSeen.Delete(tokenHash(token)) }
 
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
@@ -160,7 +227,8 @@ func RevokeSession(database *sql.DB, token string) error {
 	if err != nil {
 		return nil
 	}
-	now := time.Now().Unix()
+	ForgetSession(token)
+	now := Now().Unix()
 	if _, err := database.Exec("DELETE FROM revoked_sessions WHERE expires_at < ?", now); err != nil {
 		return err
 	}
@@ -241,20 +309,30 @@ func MiddlewareWithConfig(database *sql.DB, cfg Config) func(http.Handler) http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var caregiver *models.Caregiver
+			// An idle shared-tablet session must not fall through to the Cloudflare
+			// login, which on a tablet is one sibling's email: that is the bug.
+			idled := false
 
 			// 1. Check Session Cookie
 			if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
-				if caregiverID, issued, err := ParseSessionTokenIssued(cookie.Value); err == nil && !sessionRevoked(database, cookie.Value) {
-					caregiver = getCaregiverByID(database, caregiverID)
+				if s, err := ParseSession(cookie.Value); err == nil && !sessionRevoked(database, cookie.Value) {
+					// Shared tablet: the last person walked away 20+ minutes ago.
+					if s.Shared && sharedIdle(cookie.Value, s.Issued) {
+						s.CaregiverID, idled = "", true
+					}
+					caregiver = getCaregiverByID(database, s.CaregiverID)
 					// Revoked: PIN, role or 2FA changed, or "sign out other devices", after this cookie was issued.
-					if caregiver != nil && issued < caregiver.SessionsValidAfter {
+					if caregiver != nil && s.Issued < caregiver.SessionsValidAfter {
 						caregiver = nil
+					}
+					if caregiver != nil && s.Shared && r.Method != http.MethodGet && r.Method != http.MethodHead {
+						touchShared(cookie.Value)
 					}
 				}
 			}
 
 			// 2. Cloudflare Access signed JWT
-			if caregiver == nil && cfg.CFAccess != nil {
+			if caregiver == nil && !idled && cfg.CFAccess != nil {
 				token := r.Header.Get("Cf-Access-Jwt-Assertion")
 				if token == "" {
 					if c, err := r.Cookie("CF_Authorization"); err == nil {
@@ -271,14 +349,14 @@ func MiddlewareWithConfig(database *sql.DB, cfg Config) func(http.Handler) http.
 			}
 
 			// 3. Raw header (legacy / explicitly trusted only)
-			if caregiver == nil && cfg.TrustEmailHeader {
+			if caregiver == nil && !idled && cfg.TrustEmailHeader {
 				if cfEmail := r.Header.Get("Cf-Access-Authenticated-User-Email"); cfEmail != "" {
 					caregiver = getCaregiverByEmail(database, cfEmail)
 				}
 			}
 
 			// 4. Dev / local fallback
-			if caregiver == nil && cfg.DevFallback {
+			if caregiver == nil && !idled && cfg.DevFallback {
 				caregiver = getDefaultCaregiver(database)
 			}
 
@@ -365,4 +443,3 @@ func CanTakeActions(c *models.Caregiver) bool {
 func CanManageShifts(c *models.Caregiver) bool {
 	return c != nil && c.Role == models.RoleSuperAdmin
 }
-

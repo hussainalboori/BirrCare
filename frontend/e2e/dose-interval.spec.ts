@@ -57,7 +57,7 @@ for (const locale of ["ar", "en"] as const) {
     await page.goto("/");
 
     await expect(page.getByText(locale === "ar" ? "وارفارين" : "Warfarin").first()).toBeVisible();
-    const markTaken = page.getByRole("button", { name: locale === "ar" ? "تسجيل أخذ الجرعة" : "Mark as Taken" });
+    const markTaken = page.getByRole("button", { name: locale === "ar" ? /^أعطِ باسم / : /^Give as / });
     await expect(markTaken).toHaveCount(0);
 
     await expect(

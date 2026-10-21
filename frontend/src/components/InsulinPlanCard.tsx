@@ -11,6 +11,7 @@ import { formatTime, formatShortDate, parseServerTime } from "@/lib/datetime";
 import { BloodSugarBadge } from "./BloodSugarBadge";
 import { CrisisActions } from "./CrisisActions";
 import { Ltr } from "./Ltr";
+import { firstName } from "@/lib/actor";
 import { Syringe, Lock, AlertTriangle, Check, Minus, Plus, Loader2, Ban } from "lucide-react";
 
 type Mode = "normal" | "adjust" | "hold";
@@ -314,12 +315,17 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
                   type="button"
                   disabled={submitting}
                   onClick={() => submit({ status: "given", units: expected })}
-                  className="flex min-h-16 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 text-xl font-black text-white shadow-lg shadow-blue-500/30 active:scale-95 disabled:opacity-60"
+                  className="flex min-h-16 w-full flex-wrap items-center justify-center gap-x-2 rounded-2xl bg-blue-600 px-3 py-2 text-xl font-black text-white shadow-lg shadow-blue-500/30 active:scale-95 disabled:opacity-60"
                 >
                   {submitting ? <Loader2 className="h-6 w-6 animate-spin" /> : <Syringe className="h-6 w-6" />}
                   {ar ? "أعطيتها " : "Gave "}
                   <Ltr>{fmtUnits(expected)}</Ltr>
                   {ar ? " وحدة" : " units"}
+                  {currentCaregiver && (
+                    <span className="text-sm font-bold opacity-90">
+                      {ar ? `— باسم ${firstName(currentCaregiver.name)}` : `— as ${firstName(currentCaregiver.name)}`}
+                    </span>
+                  )}
                 </button>
               )}
 

@@ -58,6 +58,9 @@ export interface Caregiver {
   created_at: string;
   /** Sign-in needs the PIN and an authenticator-app code. */
   totp_enabled?: boolean;
+  /** This browser is marked as a shared tablet: sign-in ends after `idle_minutes` without use. */
+  shared_device?: boolean;
+  idle_minutes?: number;
 }
 
 /** Public PIN switcher entry (GET /caregivers): no email, role or phone. */

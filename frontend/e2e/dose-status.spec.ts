@@ -45,5 +45,5 @@ test("partial dose warns and offers to call the doctor; vomiting is a follow-up 
   await page.getByRole("button", { name: "10 min", exact: true }).click();
   await expect(page.getByText(/Given, then vomited 10 min later\. Call the doctor or pharmacist/)).toBeVisible();
   // No re-dose is offered: both cards stay locked.
-  await expect(page.getByRole("button", { name: "Mark as Taken" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Give as / })).toHaveCount(0);
 });

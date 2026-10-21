@@ -19,6 +19,8 @@ Main capabilities:
 - **Shift handovers and duty roster.** Handover notes (with an urgent flag), shift presets (24h, 4h, 8h, 12h or custom) and daily assignments.
 - **Doctor summary.** A printable report of the last 7–90 days: BP/pulse/sugar averages, crisis episodes, adherence, alertness distribution, insulin vs. scale, and recent notes.
 - **Arabic and English**, with right-to-left / left-to-right layout chosen per device.
+- **Always clear who is logging.** A row of big sibling avatars with names sits on Home, Vitals and Quick BP; tapping another name opens the PIN keypad already set to them (one tap + 4 digits). Every save button names the person: "Give as Hussain", "Save as Hussain".
+- **Shared tablet mode.** Mark a device as shared from the Menu: sign-in there ends after 20 minutes without use, and after each save a 5-second "Still Hussain? / Switch" prompt appears. Personal phones keep the 30-day sign-in.
 - **PIN profiles with roles**, optional Cloudflare Access sign-in, and authenticator-app 2FA for the Super Admin.
 
 ## Architecture
@@ -120,6 +122,7 @@ Sessions can be revoked on the server:
 - **Logging out or switching profile** revokes that exact cookie.
 - **Changing or resetting a PIN, a role change, deactivation, or turning 2FA on or off** signs the caregiver out on every other device.
 - **"Sign out my other devices"** (`POST /auth/sign-out-others`) does the same on request.
+- **Shared devices** (`birrcare_shared` cookie, set with `POST /auth/device-mode`) get a session flagged in the signed token. It is refused after 20 minutes without a write or `POST /auth/touch`; background polling and the live stream don't count. Last use is kept in memory, so a backend restart signs shared devices out (it never extends them). An idle shared session never falls back to the Cloudflare Access login.
 
 | Role | Can do |
 |---|---|
@@ -166,7 +169,9 @@ Base path `/api/v1`. Derived from `backend/internal/server/router.go` and the ha
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/auth/me` | The signed-in caregiver. |
+| GET | `/auth/me` | The signed-in caregiver, plus `shared_device` and `idle_minutes` (20 on a shared device). |
+| POST | `/auth/device-mode` | `{shared}`: mark this browser as a shared device (20-minute idle sign-out) or a personal phone (30 days). Reissues the current session in that mode. |
+| POST | `/auth/touch` | On a shared device: "someone is still using it". The app sends it on taps and typing, at most once a minute. |
 | POST | `/auth/change-pin` | Change your own PIN (current PIN required); signs out your other devices. |
 | POST | `/auth/sign-out-others` | Keep this device signed in, sign out every other one. |
 | POST | `/auth/2fa/setup` · `/auth/2fa/enable` · `/auth/2fa/disable` | Authenticator-app 2FA (Super Admin). Enabling returns 8 one-time recovery codes. |

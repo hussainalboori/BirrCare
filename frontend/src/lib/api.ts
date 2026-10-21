@@ -4,6 +4,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 export const AUTH_REQUIRED_EVENT = "birrcare:auth_required";
 /** Fired after a successful PIN login so SSE can reconnect with the new session cookie. */
 export const AUTH_CHANGED_EVENT = "birrcare:auth_changed";
+/** Fired after a successful write (not sign-in) so a shared tablet can ask "Still Hussain?". */
+export const WROTE_EVENT = "birrcare:wrote";
 
 export interface ApiError extends Error {
   status: number;
@@ -44,5 +46,9 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
     throw error;
   }
 
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET" && typeof window !== "undefined" && !url.includes("/auth/")) {
+    window.dispatchEvent(new CustomEvent(WROTE_EVENT));
+  }
   return response.json();
 }

@@ -7,6 +7,8 @@ import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { BloodPressureBadge } from "@/components/BloodPressureBadge";
 import { BloodSugarBadge } from "@/components/BloodSugarBadge";
 import { CrisisActions } from "@/components/CrisisActions";
+import { SiblingBar } from "@/components/SiblingBar";
+import { saveAs } from "@/lib/actor";
 import { ClinicalThresholds } from "@/components/ClinicalThresholds";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { CorrectionNote, CorrectVital } from "@/components/VitalCorrection";
@@ -311,6 +313,7 @@ export default function VitalsPage() {
       <CaregiverHeader connectionStatus={connectionStatus} />
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
+        <SiblingBar className="mb-5" />
         {/* Header */}
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
@@ -566,6 +569,8 @@ export default function VitalsPage() {
                         </p>
                       </section>
                     )}
+                    {/* Who this reading is saved under; tap another name to switch without losing it */}
+                    <SiblingBar />
                     {/* Switcher button */}
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-xs font-semibold text-slate-500">
@@ -876,7 +881,7 @@ export default function VitalsPage() {
                         ) : (
                           <>
                             <CheckCircle2 className="h-4 w-4" />
-                            <span>{t.saveVitals}</span>
+                            <span>{saveAs(currentCaregiver?.name, locale === "ar", t.saveVitals)}</span>
                           </>
                         )}
                       </button>

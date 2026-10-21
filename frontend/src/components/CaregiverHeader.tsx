@@ -4,7 +4,8 @@ import React, { useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet } from "lucide-react";
+import { fetchApi } from "@/lib/api";
 import type { LucideIcon } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
@@ -20,7 +21,7 @@ interface CaregiverHeaderProps {
 }
 
 export function CaregiverHeader({ connectionStatus = "connected", onMedicationsUpdated }: CaregiverHeaderProps) {
-  const { currentCaregiver, openPinModal } = useCaregiver();
+  const { currentCaregiver, openPinModal, refreshCaregiver } = useCaregiver();
   const { locale, toggleLocale, t } = useLanguage();
 
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -35,6 +36,19 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const needs2FA = isSuperAdmin(role) && !!currentCaregiver && !currentCaregiver.totp_enabled;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const ar = locale === "ar";
+  const shared = !!currentCaregiver?.shared_device;
+
+  // Issue #17: a shared tablet signs each person out after 20 minutes without use.
+  const [sharedError, setSharedError] = useState(false);
+  const toggleShared = async () => {
+    setSharedError(false);
+    try {
+      await fetchApi("/auth/device-mode", { method: "POST", body: JSON.stringify({ shared: !shared }) });
+      await refreshCaregiver();
+    } catch {
+      setSharedError(true);
+    }
+  };
 
   const actions: { key: string; icon: LucideIcon; label: string; short: string; tone: string; onClick: () => void; hint?: string }[] = [
     ...(isSuperAdmin(role)
@@ -63,6 +77,21 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             ? "bg-slate-100 hover:bg-slate-200 text-emerald-700 dark:bg-slate-800 dark:text-emerald-400 dark:hover:bg-slate-700"
             : "bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
           onClick: () => setIsTwoFactorOpen(true),
+        }]
+      : []),
+    ...(currentCaregiver
+      ? [{
+          key: "shared",
+          icon: Tablet,
+          label: ar
+            ? "جهاز مشترك: يُطلب الرمز بعد ٢٠ دقيقة بدون استخدام"
+            : "Shared device: ask for the PIN after 20 min unused",
+          short: ar ? `جهاز مشترك: ${shared ? "مفعّل" : "لا"}` : `Shared device: ${shared ? "On" : "Off"}`,
+          hint: sharedError ? (ar ? "تعذر الحفظ" : "Not saved") : shared ? (ar ? "مفعّل" : "On") : ar ? "غير مفعّل" : "Off",
+          tone: shared
+            ? "bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300"
+            : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
+          onClick: toggleShared,
         }]
       : []),
     { key: "lang", icon: Globe, label: ar ? "English" : "العربية", short: ar ? "English" : "العربية", tone: "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800", onClick: toggleLocale },

@@ -12,6 +12,7 @@ import { DoctorCallButton } from "./CrisisActions";
 import { DOSE_COPY, VOMIT_MINUTES } from "@/lib/doseWarnings";
 import { enqueue, isNetworkError, removeFromOutbox } from "@/lib/outbox";
 import { useOutbox } from "./OutboxBar";
+import { giveAs } from "@/lib/actor";
 import { Check, Clock, AlertCircle, Loader2, Eye, ZoomIn, X, Pill, Lock, History, Undo2, Ban, SkipForward } from "lucide-react";
 
 const UNDO_SECONDS = 10;
@@ -531,7 +532,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 ) : (
                   <>
                     <Check className="h-4 w-4 stroke-[2.5]" />
-                    <span>{t.markTaken}</span>
+                    <span>{giveAs(currentCaregiver?.name, locale === "ar", t.markTaken)}</span>
                   </>
                 )}
               </button>

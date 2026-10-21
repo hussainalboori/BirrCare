@@ -61,7 +61,75 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(caregiver)
+	json.NewEncoder(w).Encode(struct {
+		*models.Caregiver
+		SharedDevice bool `json:"shared_device"`
+		// IdleMinutes is how long a shared-device session lasts without use.
+		IdleMinutes int `json:"idle_minutes,omitempty"`
+	}{caregiver, auth.SessionShared(r), idleMinutes(r)})
+}
+
+func idleMinutes(r *http.Request) int {
+	if auth.SessionShared(r) {
+		return int(auth.SharedIdleTimeout.Minutes())
+	}
+	return 0
+}
+
+// sharedDevice reports whether this browser is marked as a shared device.
+func sharedDevice(r *http.Request) bool {
+	c, err := r.Cookie(auth.SharedDeviceCookieName)
+	return err == nil && c.Value == "1"
+}
+
+// Touch marks the person at a shared tablet as still there (they tapped or
+// typed). The middleware records it; this just answers.
+func (h *AuthHandler) Touch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+type DeviceModeRequest struct {
+	Shared bool `json:"shared"`
+}
+
+// SetDeviceMode marks this browser as a shared device (sessions end after 20
+// minutes without use) or a personal phone (30 days), and reissues the current
+// session in that mode.
+func (h *AuthHandler) SetDeviceMode(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	var req DeviceModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
+		return
+	}
+	value, maxAge := "", -1
+	if req.Shared {
+		value, maxAge = "1", int(auth.DeviceCookieTTL.Seconds())
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.SharedDeviceCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secureCookies(),
+		SameSite: http.SameSiteStrictMode,
+	})
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie.Value != "" {
+		if err := auth.RevokeSession(h.DB, cookie.Value); err != nil {
+			internalError(w, "failed to reissue session", err)
+			return
+		}
+	}
+	h.issueSession(w, caregiver.ID, req.Shared)
+	detail := "Marked this device as a personal phone"
+	if req.Shared {
+		detail = "Marked this device as shared: sign-in ends after 20 minutes without use"
+	}
+	audit.Log(h.DB, caregiver.ID, "DEVICE_MODE", "caregiver", caregiver.ID, detail)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "shared_device": req.Shared})
 }
 
 type VerifyPinRequest struct {
@@ -192,10 +260,14 @@ func (h *AuthHandler) VerifyPIN(w http.ResponseWriter, r *http.Request) {
 	h.completeLogin(w, r, req.CaregiverID, "Switched profile via PIN keypad")
 }
 
-func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, caregiverID string) {
+func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, r *http.Request, caregiverID string) {
+	h.issueSession(w, caregiverID, sharedDevice(r))
+}
+
+func (h *AuthHandler) issueSession(w http.ResponseWriter, caregiverID string, shared bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
-		Value:    auth.GenerateSessionToken(caregiverID),
+		Value:    auth.GenerateSessionTokenMode(caregiverID, shared),
 		Path:     "/",
 		Expires:  time.Now().Add(auth.SessionTTL),
 		MaxAge:   int(auth.SessionTTL.Seconds()),
@@ -215,7 +287,7 @@ func (h *AuthHandler) revokeOtherSessions(w http.ResponseWriter, r *http.Request
 	if _, err := h.DB.Exec("DELETE FROM trusted_devices WHERE caregiver_id = ? AND device_hash <> ?", caregiverID, auth.DeviceHash(deviceID(r))); err != nil {
 		return err
 	}
-	h.setSessionCookie(w, caregiverID)
+	h.setSessionCookie(w, r, caregiverID)
 	return nil
 }
 
@@ -239,7 +311,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, care
 			return
 		}
 	}
-	h.setSessionCookie(w, caregiverID)
+	h.setSessionCookie(w, r, caregiverID)
 	audit.Log(h.DB, caregiverID, "CAREGIVER_SWITCH", "caregiver", caregiverID, auditDetail)
 
 	h.Broker.Broadcast("CAREGIVER_SWITCHED", models.ActorInfo{

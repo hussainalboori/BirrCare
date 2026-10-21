@@ -70,7 +70,7 @@ test("Undo on one device returns the card to unlogged on another via SSE", async
   const ctxB = await browser.newContext();
   const a = await openDevice(ctxA, state, baseURL!);
   const b = await openDevice(ctxB, state, baseURL!);
-  const markOn = (p: Page) => p.getByRole("button", { name: "Mark as Taken" });
+  const markOn = (p: Page) => p.getByRole("button", { name: /^Give as / });
 
   await expect(markOn(a)).toBeVisible();
   await expect(markOn(b)).toBeVisible();

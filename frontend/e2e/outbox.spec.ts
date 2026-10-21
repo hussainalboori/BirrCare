@@ -52,7 +52,7 @@ test("offline tap → amber 'not sent', no alert; back online → green here and
   const state: State = { online: false, log: null, posts: [], queues: new Map() };
   const a = await device(await browser.newContext(), state, baseURL!);
   const b = await device(await browser.newContext(), state, baseURL!);
-  const mark = (p: Page) => p.getByRole("button", { name: "Mark as Taken" });
+  const mark = (p: Page) => p.getByRole("button", { name: /^Give as / });
 
   await mark(a).click();
   await expect(a.getByTestId("dose-queued")).toContainText("Saved on this phone — not sent yet");
@@ -80,7 +80,7 @@ test("a dose waiting more than 30 minutes asks before it is sent", async ({ page
   });
   await context.addCookies([{ name: "birrcare_lang", value: "en", url: baseURL! }]);
   const p = await device(context, state, baseURL!);
-  await p.getByRole("button", { name: "Mark as Taken" }).click();
+  await p.getByRole("button", { name: /^Give as / }).click();
   await expect(p.getByTestId("dose-queued")).toBeVisible();
 
   await p.clock.fastForward("31:00");

@@ -290,3 +290,75 @@ func TestMiddlewareRefusesRevokedSessions(t *testing.T) {
 		t.Fatalf("token issued after PIN reset: want 200, got %d", got)
 	}
 }
+
+// Issue #17: on a shared tablet a session ends after 20 minutes without use;
+// a personal phone keeps its 30-day session. Background GETs (polling, the live
+// stream) don't count as use.
+func TestSharedSessionIdlesOut(t *testing.T) {
+	SetSessionSecret([]byte(strings.Repeat("k", 32)))
+	database, err := db.InitDB(t.TempDir() + "/birrcare.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO caregivers (id, name, role, pin_hash) VALUES ('cg_ali', 'Ali', 'caregiver', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Now()
+	Now = func() time.Time { return clock }
+	t.Cleanup(func() { Now = time.Now })
+
+	// Even with a Cloudflare login available, an idle shared session must not
+	// fall back to it (on a tablet that is one sibling's email).
+	handler := MiddlewareWithConfig(database, Config{DevFallback: true})(RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	status := func(method, token string) int {
+		req := httptest.NewRequest(method, "/api/v1/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	shared, personal := GenerateSessionTokenMode("cg_ali", true), GenerateSessionTokenMode("cg_ali", false)
+	if s, err := ParseSession(shared); err != nil || !s.Shared || s.CaregiverID != "cg_ali" {
+		t.Fatalf("shared token: %+v %v", s, err)
+	}
+	if s, _ := ParseSession(personal); s.Shared {
+		t.Fatal("personal token parsed as shared")
+	}
+	forged := strings.Split(personal, ":")
+	if _, err := ParseSession(strings.Join(append(forged[:3:3], "s", forged[3]), ":")); err == nil {
+		t.Fatal("a personal token was turned into a shared one without the key")
+	}
+
+	// Use at minute 15 (a write) restarts the 20 minutes.
+	clock = clock.Add(15 * time.Minute)
+	if got := status("POST", shared); got != http.StatusOK {
+		t.Fatalf("shared at 15 min: want 200, got %d", got)
+	}
+	// Only GETs (background polling) from then on.
+	clock = clock.Add(19 * time.Minute)
+	if got := status("GET", shared); got != http.StatusOK {
+		t.Fatalf("shared 19 min after last use: want 200, got %d", got)
+	}
+	clock = clock.Add(2 * time.Minute) // 21 min since the last write
+	if got := status("GET", shared); got != http.StatusUnauthorized {
+		t.Fatalf("shared token idle 21 min: want 401, got %d", got)
+	}
+	if got := status("POST", shared); got != http.StatusUnauthorized {
+		t.Fatal("an idle shared session came back to life")
+	}
+	if got := status("GET", personal); got != http.StatusOK {
+		t.Fatalf("personal token idle 36 min: want 200, got %d", got)
+	}
+
+	// A fresh shared login that is never used idles out from its issue time.
+	fresh := GenerateSessionTokenMode("cg_ali", true)
+	clock = clock.Add(21 * time.Minute)
+	if got := status("GET", fresh); got != http.StatusUnauthorized {
+		t.Fatalf("unused shared token after 21 min: want 401, got %d", got)
+	}
+}

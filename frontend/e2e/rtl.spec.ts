@@ -92,7 +92,7 @@ for (const [locale, dir] of [["ar", "rtl"], ["en", "ltr"]] as const) {
 
     test("tap targets on the meds page are at least 48px", async ({ page }) => {
       await page.goto("/");
-      const button = page.getByRole("button", { name: locale === "ar" ? "تسجيل أخذ الجرعة" : "Mark as Taken" });
+      const button = page.getByRole("button", { name: locale === "ar" ? /^أعطِ باسم / : /^Give as / });
       const box = await button.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(48);
     });

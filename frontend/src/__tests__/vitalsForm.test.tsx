@@ -8,7 +8,7 @@ const fetchApi = vi.fn(async (endpoint: string, _opts?: RequestInit): Promise<un
 vi.mock("@/lib/api", () => ({ fetchApi: (endpoint: string, opts?: RequestInit) => fetchApi(endpoint, opts) }));
 vi.mock("@/context/LanguageContext", () => ({ useLanguage: () => ({ locale: "en", t: translations.en, toggleLocale: () => {} }) }));
 vi.mock("@/context/CaregiverContext", () => ({
-  useCaregiver: () => ({ currentCaregiver: { id: "c1", name: "Hussain", role: "caregiver", avatar_color: "#059669" }, openPinModal: () => {} }),
+  useCaregiver: () => ({ currentCaregiver: { id: "c1", name: "Hussain", role: "caregiver", avatar_color: "#059669" }, allCaregivers: [], openPinModal: () => {} }),
 }));
 vi.mock("@/hooks/useLiveSync", () => ({ useLiveSync: () => ({ status: "connected" }) }));
 vi.mock("@/components/CaregiverHeader", () => ({ CaregiverHeader: () => null }));
@@ -47,7 +47,7 @@ describe("vitals form (issue #10)", () => {
     fireEvent.change(screen.getByLabelText(t.diastolic), { target: { value: "85" } });
     fireEvent.change(screen.getByLabelText(t.pulse), { target: { value: "72" } });
     expect((screen.getByLabelText(t.bloodSugar) as HTMLInputElement).value).toBe("");
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as Hussain" }));
 
     await waitFor(() => expect(postedBodies()).toHaveLength(1));
     const body = postedBodies()[0];
@@ -66,7 +66,7 @@ describe("vitals form (issue #10)", () => {
     expect(screen.getAllByRole("link").some((a) => a.getAttribute("href")?.startsWith("tel:"))).toBe(true);
     expect(postedBodies()).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as Hussain" }));
     await waitFor(() => expect(postedBodies()).toHaveLength(1));
     const body = postedBodies()[0];
     expect(body).toMatchObject({ vital_type: "bp", systolic: 185, diastolic: 115 });
@@ -80,7 +80,7 @@ describe("vitals form (issue #10)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Hard to wake/ }));
     expect(screen.getByRole("alert").textContent).toContain("Call the doctor now, emergency if this is new");
     expect(screen.getByRole("link", { name: /F\.A\.S\.T\./ }).getAttribute("href")).toBe("/fast");
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as Hussain" }));
     await waitFor(() => expect(postedBodies()).toHaveLength(1));
     expect(postedBodies()[0]).toMatchObject({ vital_type: "alertness", alertness_level: "drowsy" });
     await waitFor(() => expect(push).toHaveBeenCalledWith("/fast"));
@@ -90,7 +90,7 @@ describe("vitals form (issue #10)", () => {
     render(<VitalsPage />);
     await openKind(t.vitalSugarTitle);
     fireEvent.change(screen.getByLabelText(t.bloodSugar), { target: { value: "14.2" } });
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(escape(t.saveVitals)) }));
+    fireEvent.click(screen.getByRole("button", { name: "Save as Hussain" }));
     await waitFor(() => expect(postedBodies()).toHaveLength(1));
     expect(postedBodies()[0]).toMatchObject({ blood_sugar: 14.2 });
 

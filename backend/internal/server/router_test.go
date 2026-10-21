@@ -559,3 +559,69 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+// Issue #17: a browser marked as shared gets shared-device sessions from the PIN
+// keypad; /auth/me says so; switching back to a personal phone reissues it.
+func TestSharedDeviceMode(t *testing.T) {
+	srv, _, _ := setup(t, prodCfg, time.Minute)
+	cookie := func(r *http.Response, name string) *http.Cookie {
+		for _, c := range r.Cookies() {
+			if c.Name == name {
+				return c
+			}
+		}
+		return nil
+	}
+	sharedOf := func(c *http.Cookie) bool {
+		var me struct {
+			ID           string `json:"id"`
+			SharedDevice bool   `json:"shared_device"`
+			IdleMinutes  int    `json:"idle_minutes"`
+		}
+		r := do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, c)
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("me: %d", r.StatusCode)
+		}
+		json.NewDecoder(r.Body).Decode(&me)
+		if me.SharedDevice != (me.IdleMinutes == 20) {
+			t.Fatalf("idle_minutes %d with shared_device %v", me.IdleMinutes, me.SharedDevice)
+		}
+		return me.SharedDevice
+	}
+
+	login := do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_fatima", "pin": "1234"}, nil)
+	personal := cookie(login, auth.SessionCookieName)
+	if sharedOf(personal) {
+		t.Fatal("a phone is shared before anyone marked it")
+	}
+
+	r := do(t, "POST", srv.URL+"/api/v1/auth/device-mode", map[string]bool{"shared": true}, nil, personal)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("device-mode: %d", r.StatusCode)
+	}
+	mark, reissued := cookie(r, auth.SharedDeviceCookieName), cookie(r, auth.SessionCookieName)
+	if mark == nil || mark.Value != "1" || !mark.HttpOnly || reissued == nil || !sharedOf(reissued) {
+		t.Fatalf("device-mode did not mark the device and reissue a shared session: %+v %+v", mark, reissued)
+	}
+	if do(t, "GET", srv.URL+"/api/v1/auth/me", nil, nil, personal).StatusCode != http.StatusUnauthorized {
+		t.Fatal("the session from before the switch still works")
+	}
+
+	// The next person to sign in on this tablet gets a shared session too.
+	r = do(t, "POST", srv.URL+"/api/v1/auth/verify-pin", map[string]string{"caregiver_id": "cg_ali", "pin": "1234"}, nil, mark)
+	ali := cookie(r, auth.SessionCookieName)
+	if !sharedOf(ali) {
+		t.Fatal("PIN sign-in on a shared device issued a 30-day session")
+	}
+	if do(t, "POST", srv.URL+"/api/v1/auth/touch", nil, nil, ali).StatusCode != http.StatusOK {
+		t.Fatal("touch failed")
+	}
+
+	r = do(t, "POST", srv.URL+"/api/v1/auth/device-mode", map[string]bool{"shared": false}, nil, ali, mark)
+	if c := cookie(r, auth.SharedDeviceCookieName); c == nil || c.MaxAge >= 0 {
+		t.Fatal("the shared mark was not cleared")
+	}
+	if sharedOf(cookie(r, auth.SessionCookieName)) {
+		t.Fatal("still shared after switching to a personal phone")
+	}
+}

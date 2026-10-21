@@ -8,6 +8,7 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { HandoverNote, ShiftType, Shift } from "@/lib/types";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { saveAs } from "@/lib/actor";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
@@ -299,7 +300,7 @@ export default function HandoversPage() {
                 ) : (
                   <>
                     <Send className="h-3.5 w-3.5" />
-                    <span>{t.postNote}</span>
+                    <span>{saveAs(currentCaregiver?.name, locale === "ar", t.postNote)}</span>
                   </>
                 )}
               </button>
