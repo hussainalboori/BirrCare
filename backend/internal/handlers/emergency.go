@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -21,7 +20,6 @@ import (
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // Issue #19: an emergency card for paramedics. GET /emergency/{token} needs no
@@ -277,11 +275,8 @@ func (h *EmergencyHandler) recordView(me *models.Caregiver) {
 	if name != "" {
 		detail = "Emergency card opened by " + name
 	}
-	// Anonymous (paramedic) views have no caregiver: NULL, not "".
-	if _, err := h.DB.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details, created_at)
-		VALUES (?, ?, 'EMERGENCY_CARD_VIEWED', 'patient_profile', '1', ?, datetime('now'))`, uuid.New().String(), nullIfEmpty(by), detail); err != nil {
-		log.Printf("[AUDIT] emergency card view: %v", err)
-	}
+	// Anonymous (paramedic) views have no caregiver: audit.Record stores NULL for "".
+	audit.Log(h.DB, by, "EMERGENCY_CARD_VIEWED", "patient_profile", "1", detail)
 
 	since := time.Now().UTC().Add(-alertEvery).Format(sqliteTimeLayout)
 	var recent int

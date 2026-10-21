@@ -10,7 +10,7 @@ import { SseToast } from "@/components/SseToast";
 import { OutboxBar } from "@/components/OutboxBar";
 import { SharedDeviceGuard } from "@/components/SharedDeviceGuard";
 import { EmergencyCardKeeper } from "@/components/EmergencyCardKeeper";
-import { AlertCenter, EmergencySetupBanner } from "@/components/AlertCenter";
+import { AlertCenter, EmergencySetupBanner, TimezoneMismatchBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 import { ThemeKeeper } from "@/components/ThemePicker";
 import { THEME_COLORS, THEME_COOKIE, THEME_SCRIPT, parseThemeMode, themeClasses } from "@/lib/theme";
@@ -65,6 +65,7 @@ export default async function RootLayout({
         <LanguageProvider initialLocale={locale}>
           <CaregiverProvider>
             <EmergencySetupBanner />
+            <TimezoneMismatchBanner />
             <AlertCenter />
             <SseToast />
             <OutboxBar />

@@ -110,7 +110,7 @@ export default function DoctorExportPage() {
                   <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold">
                     Birrcare (رعاية بر)
                   </span>
-                  <p className="text-[10px] text-slate-400 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     <Auto>{formatDateTime(summary.generated_at, locale)}</Auto>
                   </p>
                 </div>
@@ -142,17 +142,17 @@ export default function DoctorExportPage() {
                         <tr key={m.medication_id} className={m.not_recorded ? "bg-rose-50 dark:bg-rose-950/30" : undefined}>
                           <td className="py-1.5 pe-2 align-top">
                             <span className="font-semibold">
-                              {m.is_critical && <span className="me-1 rounded bg-rose-700 px-1 text-[9px] font-bold text-white">{locale === "ar" ? "حرج" : "critical"}</span>}
+                              {m.is_critical && <span className="me-1 rounded bg-rose-700 px-1.5 py-0.5 text-xs font-bold text-white">{locale === "ar" ? "حرج" : "critical"}</span>}
                               <bdi>{locale === "ar" ? m.name_ar : m.name_en}</bdi> <Auto className="text-slate-500">{m.dosage}</Auto>
                             </span>
                             {(m.past_dosages ?? []).length > 0 && (
-                              <span className="block text-[10px] text-amber-700 dark:text-amber-400">
+                              <span className="block text-xs text-amber-700 dark:text-amber-400">
                                 {locale === "ar" ? "جرعة سابقة في الفترة: " : "Earlier dose in period: "}
                                 <Auto>{m.past_dosages!.join(", ")}</Auto>
                               </span>
                             )}
                             {m.missed_dates.length > 0 && (
-                              <span className="block text-[10px] text-rose-700 dark:text-rose-300">
+                              <span className="block text-xs text-rose-700 dark:text-rose-300">
                                 {locale === "ar" ? "أيام فيها جرعة غير مُعطاة: " : "Days with a dose not given: "}
                                 <Ltr>{m.missed_dates.map((d) => d.slice(5)).join(", ")}</Ltr>
                               </span>
@@ -223,6 +223,69 @@ export default function DoctorExportPage() {
                 </div>
               );
             })()}
+
+            {/* PRN (As-needed) Medications usage per day with reasons (Issue #25) */}
+            {(summary.prn_logs ?? []).length > 0 && (
+              <div className="mb-5 print:mb-3 break-inside-avoid">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "أدوية عند اللزوم (PRN) المستخدمة" : "As-Needed (PRN) Medications Given"}
+                  </h3>
+                  <span className="text-xs text-slate-500">
+                    <Ltr>{summary.prn_logs!.length}</Ltr> {locale === "ar" ? "جرعة إجمالاً" : "total doses"}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-start text-xs print:text-[9pt]">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "التاريخ والوقت" : "Date & Time"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "الدواء والجرعة" : "Medication & Dose"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "السبب" : "Reason"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "ملاحظات" : "Notes"}</th>
+                        <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "المُسجل" : "Caregiver"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {summary.prn_logs!.map((log) => {
+                        const reasonLabels: Record<string, { ar: string; en: string; badge: string }> = {
+                          headache: { ar: "صداع", en: "Headache", badge: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300" },
+                          pain: { ar: "ألم", en: "Pain", badge: "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300" },
+                          fever: { ar: "حرارة", en: "Fever", badge: "bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300" },
+                          cough: { ar: "سعال", en: "Cough", badge: "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300" },
+                          other: { ar: "أخرى", en: "Other", badge: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300" },
+                        };
+                        const r = reasonLabels[log.reason_tag] ?? { ar: log.reason_tag, en: log.reason_tag, badge: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300" };
+                        return (
+                          <tr key={log.id}>
+                            <td className="py-1.5 pe-2 align-top font-mono text-slate-600 dark:text-slate-400">
+                              <Ltr>{formatDateTime(log.given_at, locale)}</Ltr>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top font-semibold text-slate-900 dark:text-white">
+                              <bdi>{locale === "ar" ? log.name_ar : log.name_en}</bdi>
+                              <span className="ms-1 font-normal text-slate-500">
+                                <Auto>({log.dosage})</Auto>
+                              </span>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top">
+                              <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-bold ${r.badge}`}>
+                                {locale === "ar" ? r.ar : r.en}
+                              </span>
+                            </td>
+                            <td className="py-1.5 pe-2 align-top text-slate-600 dark:text-slate-400">
+                              {log.notes ? <bdi>{log.notes}</bdi> : "--"}
+                            </td>
+                            <td className="py-1.5 align-top text-slate-600 dark:text-slate-400">
+                              {log.caregiver_name}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Blood pressure per household day, with a small trend line */}
             {(summary.daily_bp ?? []).length > 0 && (() => {
@@ -392,14 +455,14 @@ export default function DoctorExportPage() {
             <div className="grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 gap-3 print:gap-2 mb-6 print:mb-3">
               {/* BP Average */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
-                <span className="text-[11px] font-semibold text-slate-500 block mb-1">
+                <span className="text-xs font-semibold text-slate-500 block mb-1">
                   {locale === "ar" ? "متوسط ضغط الدم" : "Avg Blood Pressure"}
                 </span>
                 <span className="text-lg print:text-base font-black text-slate-900 dark:text-white">
                   {/* Spaced slash inside RTL text reorders to "80 / 120" unless isolated */}
                   <Ltr>{Math.round(summary.vitals_stats.avg_systolic)} / {Math.round(summary.vitals_stats.avg_diastolic)}</Ltr>
                 </span>
-                <span className="text-[10px] text-slate-400 block mt-1">
+                <span className="text-xs text-slate-400 block mt-1">
                   {locale === "ar" ? "المدى: " : "Range: "}
                   <Ltr>{summary.vitals_stats.min_systolic}–{summary.vitals_stats.max_systolic}</Ltr>
                 </span>
@@ -407,7 +470,7 @@ export default function DoctorExportPage() {
 
               {/* Blood Sugar Average */}
               <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 print:p-2 dark:border-blue-950/60 dark:bg-blue-950/20">
-                <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300 block mb-1 flex items-center gap-1">
+                <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 block mb-1 flex items-center gap-1">
                   <Activity className="h-3.5 w-3.5 text-blue-500" />
                   {locale === "ar" ? "متوسط السكر" : "Avg Glucose"}
                 </span>
@@ -417,7 +480,7 @@ export default function DoctorExportPage() {
                     <span className="text-xs font-normal">mmol/L</span>
                   </Ltr>
                 </span>
-                <span className="text-[10px] text-slate-400 block mt-1">
+                <span className="text-xs text-slate-400 block mt-1">
                   {locale === "ar" ? "سكر الدم" : "Blood Sugar"}
                   {summary.vitals_stats.unverified_sugar_count ? (
                     <>
@@ -431,14 +494,14 @@ export default function DoctorExportPage() {
 
               {/* Medication Adherence */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
-                <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
+                <span className="text-xs font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
                   {t.adherenceRate}
                 </span>
                 <span className="text-lg print:text-base font-black text-emerald-600 dark:text-emerald-400">
                   <Ltr>{Math.round(summary.adherence.adherence_rate)}%</Ltr>
                 </span>
-                <span className="text-[10px] text-slate-400 block mt-1">
+                <span className="text-xs text-slate-400 block mt-1">
                   <Ltr>{summary.adherence.total_taken}/{summary.adherence.total_scheduled}</Ltr> {locale === "ar" ? "جرعة أُعطيت" : "doses given"}
                   {summary.adherence.total_not_recorded ? (
                     <span className="block font-bold text-rose-700 dark:text-rose-300">
@@ -450,7 +513,7 @@ export default function DoctorExportPage() {
 
               {/* Average Pulse */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
-                <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
+                <span className="text-xs font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <Heart className="h-3.5 w-3.5 text-rose-500" />
                   {locale === "ar" ? "متوسط النبض" : "Average Pulse"}
                 </span>
@@ -459,21 +522,21 @@ export default function DoctorExportPage() {
                     {Math.round(summary.vitals_stats.avg_pulse)} <span className="text-xs font-normal">bpm</span>
                   </Ltr>
                 </span>
-                <span className="text-[10px] text-slate-400 block mt-1">
+                <span className="text-xs text-slate-400 block mt-1">
                   {summary.vitals_stats.total_readings} {locale === "ar" ? "قراءة" : "readings"}
                 </span>
               </div>
 
               {/* Crisis Episodes */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
-                <span className="text-[11px] font-semibold text-slate-500 block mb-1 flex items-center gap-1">
+                <span className="text-xs font-semibold text-slate-500 block mb-1 flex items-center gap-1">
                   <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                   {locale === "ar" ? "أزمات الضغط" : "Crisis Readings"}
                 </span>
                 <span className={`text-lg print:text-base font-black ${summary.vitals_stats.crisis_count > 0 ? "text-rose-600" : "text-slate-900 dark:text-white"}`}>
                   {summary.vitals_stats.crisis_count}
                 </span>
-                <span className="text-[10px] text-slate-400 block mt-1">
+                <span className="text-xs text-slate-400 block mt-1">
                   {summary.vitals_stats.elevated_count} {locale === "ar" ? "مرتفعة" : "elevated"}
                 </span>
               </div>
@@ -533,7 +596,7 @@ export default function DoctorExportPage() {
                           {/* sugar/alertness-only rows have no BP: previously rendered "undefined/undefined mmHg" */}
                           {v.systolic != null && v.diastolic != null ? <Ltr>{v.systolic}/{v.diastolic} mmHg</Ltr> : "--"}
                           {v.correction?.original_systolic != null && (
-                            <span className="block text-[10px] font-normal text-amber-700">
+                            <span className="block text-xs font-normal text-amber-700">
                               {locale === "ar" ? "مُصحّحة، الأصلي: " : "corrected, original: "}
                               <Ltr className="line-through">{v.correction.original_systolic}/{v.correction.original_diastolic}</Ltr>
                               {v.correction.reason && <> — {v.correction.reason}</>}
@@ -543,7 +606,7 @@ export default function DoctorExportPage() {
                         <td className="py-2 pe-3 font-semibold text-blue-700 dark:text-blue-300">
                           {v.blood_sugar ? <Ltr>{Number(v.blood_sugar.toFixed(1))} mmol/L</Ltr> : "--"}
                           {v.blood_sugar && v.suspect_default_sugar ? (
-                            <span className="ms-1 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                            <span className="ms-1 rounded bg-amber-100 px-1 text-xs font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                               {locale === "ar" ? "غير مؤكد" : "unverified"}
                             </span>
                           ) : null}
@@ -552,7 +615,7 @@ export default function DoctorExportPage() {
                           {v.pulse != null ? <Ltr>{v.pulse} bpm</Ltr> : "--"}
                         </td>
                         <td className="py-2">
-                          <span className="px-2 py-0.5 rounded-sm bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold">
+                          <span className="px-2 py-0.5 rounded-sm bg-slate-100 dark:bg-slate-800 text-xs font-semibold">
                             {v.alertness_level
                               ? locale === "ar"
                                 ? ALERTNESS_METAS[v.alertness_level]?.labelAr

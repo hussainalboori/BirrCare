@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"birrcare/backend/internal/audit"
 )
 
 const SchemaSQL = `
@@ -43,6 +45,9 @@ CREATE TABLE IF NOT EXISTS medications (
     days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]',
     slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}',
     image_url TEXT,
+    is_prn INTEGER NOT NULL DEFAULT 0,
+    prn_min_hours REAL,
+    prn_max_per_24h INTEGER,
     is_active INTEGER DEFAULT 1,
     created_by TEXT REFERENCES caregivers(id),
     created_at TEXT DEFAULT (datetime('now'))
@@ -80,6 +85,22 @@ CREATE TABLE IF NOT EXISTS medication_log_events (
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE (log_id, type)
 );
+
+-- 3b. PRN (As-Needed) Medication Intake Logs (Issue #25)
+CREATE TABLE IF NOT EXISTS prn_logs (
+    id TEXT PRIMARY KEY,
+    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    given_at TEXT DEFAULT (datetime('now')),
+    reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+    notes TEXT,
+    voided_at TEXT,
+    voided_by TEXT REFERENCES caregivers(id),
+    void_reason TEXT,
+    dosage_snapshot TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 
 -- Alerts that must reach every sibling (issue #12): a BP crisis, a dose given
 -- inside its minimum interval, vomiting after a dose. Written in the same
@@ -158,7 +179,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity_type TEXT NOT NULL,
     entity_id TEXT,
     details TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    prev_hash TEXT,
+    row_hash TEXT
 );
 
 -- 7. Server-side settings (e.g. persisted session signing secret)
@@ -265,6 +288,15 @@ CREATE INDEX IF NOT EXISTS idx_shift_assignments_date ON shift_assignments(date)
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.
 func Migrate(database *sql.DB) error {
+	if os.Getenv("APP_ENV") == "production" {
+		tz := strings.TrimSpace(os.Getenv("APP_TIMEZONE"))
+		if tz == "" {
+			return fmt.Errorf("APP_TIMEZONE is required when APP_ENV=production (e.g. APP_TIMEZONE=Asia/Riyadh)")
+		}
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("invalid APP_TIMEZONE %q: %w", tz, err)
+		}
+	}
 	// Whether medication_logs is created by this run (fresh database): only then, or
 	// right after rebuilding it, may Migrate create the dose-lock index. If it later
 	// goes missing or is replaced, boot is refused rather than silently "repaired".
@@ -448,6 +480,7 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	var operatorResetID string
 	// Break-glass: an operator with server access can clear 2FA for a caregiver who
 	// lost both their phone and recovery codes (DISABLE_2FA_FOR=<caregiver id>).
 	if id := strings.TrimSpace(os.Getenv("DISABLE_2FA_FOR")); id != "" {
@@ -456,7 +489,8 @@ func Migrate(database *sql.DB) error {
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				log.Printf("[SECURITY] Two-factor authentication DISABLED for %s via DISABLE_2FA_FOR. Remove the variable and restart.", id)
-				_, _ = database.Exec(`INSERT INTO audit_logs (id, caregiver_id, action, entity_type, entity_id, details) VALUES (lower(hex(randomblob(16))), NULL, '2FA_RESET_BY_OPERATOR', 'caregiver', ?, 'DISABLE_2FA_FOR')`, id)
+				// Audited below, through audit.Record, once the hash-chain columns exist.
+				operatorResetID = id
 			}
 		}
 	}
@@ -869,6 +903,97 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating vitals immutability triggers: %w", err)
 	}
 
+	// Issue #23: Immutability triggers on clinical columns and append-only audit trail
+	for _, c := range []struct{ col, def string }{
+		{"prev_hash", "TEXT"},
+		{"row_hash", "TEXT"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE audit_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding audit_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+
+	// Backfill hashes for legacy audit rows, once: before the append-only trigger
+	// exists. After that an unhashed row can't be patched (the trigger refuses it,
+	// which would stop the backend from starting); /audit/verify reports it instead.
+	var appendOnly int
+	_ = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='audit_no_update'").Scan(&appendOnly)
+	if appendOnly == 0 {
+		type legacyRow struct {
+			rowid                                                             int64
+			id, caregiverID, action, entityType, entityID, details, createdAt string
+		}
+		// Read every row and close the cursor before the next query: the pool has a
+		// single connection, so querying with the cursor open would hang the boot.
+		rows, err := database.Query("SELECT rowid, id, COALESCE(caregiver_id, ''), action, entity_type, COALESCE(entity_id, ''), COALESCE(details, ''), COALESCE(created_at, datetime('now')) FROM audit_logs WHERE row_hash IS NULL ORDER BY rowid ASC")
+		if err != nil {
+			return fmt.Errorf("failed querying unhashed audit logs: %w", err)
+		}
+		var legacy []legacyRow
+		for rows.Next() {
+			var lr legacyRow
+			if err := rows.Scan(&lr.rowid, &lr.id, &lr.caregiverID, &lr.action, &lr.entityType, &lr.entityID, &lr.details, &lr.createdAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("failed scanning unhashed audit row: %w", err)
+			}
+			legacy = append(legacy, lr)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("failed reading unhashed audit logs: %w", err)
+		}
+
+		var prevHash string
+		_ = database.QueryRow("SELECT row_hash FROM audit_logs WHERE row_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1").Scan(&prevHash)
+		for _, lr := range legacy {
+			rowHash := audit.ComputeHash(prevHash, lr.id, lr.caregiverID, lr.action, lr.entityID, lr.details, lr.createdAt)
+			if _, err := database.Exec("UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE rowid = ?", prevHash, rowHash, lr.rowid); err != nil {
+				return fmt.Errorf("failed backfilling audit hash: %w", err)
+			}
+			prevHash = rowHash
+		}
+	}
+
+	// Triggers for append-only audit trail and immutable clinical logs:
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS audit_no_update
+		BEFORE UPDATE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS audit_no_delete
+		BEFORE DELETE ON audit_logs
+		BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, slot, scheduled_date, status, notes, dosage_snapshot
+		ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication log entries are immutable: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON medication_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this dose was already voided'); END;
+
+		CREATE TRIGGER IF NOT EXISTS med_logs_no_delete
+		BEFORE DELETE ON medication_logs
+		BEGIN SELECT RAISE(ABORT, 'medication logs cannot be deleted: void the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS vitals_no_delete
+		BEFORE DELETE ON vitals_logs
+		BEGIN SELECT RAISE(ABORT, 'vitals logs cannot be deleted: post a correction instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating immutability triggers: %w", err)
+	}
+	if operatorResetID != "" {
+		if err := audit.Record(database, "", "2FA_RESET_BY_OPERATOR", "caregiver", operatorResetID, "DISABLE_2FA_FOR"); err != nil {
+			return fmt.Errorf("failed auditing the operator 2FA reset: %w", err)
+		}
+	}
+
 	// 5. Safety net: the double-dose lock depends entirely on this UNIQUE constraint.
 	// Refuse to start if a future table rebuild ever drops it.
 	if err := verifyDoseUniqueConstraint(database); err != nil {
@@ -900,6 +1025,65 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating handover_notes table: %w", err)
 		}
+	}
+
+	// 7. PRN (As-Needed) medications and prn_logs table (issue #25)
+	for _, c := range []struct{ col, def string }{
+		{"is_prn", "INTEGER NOT NULL DEFAULT 0"},
+		{"prn_min_hours", "REAL"},
+		{"prn_max_per_24h", "INTEGER"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS prn_logs (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			given_at TEXT DEFAULT (datetime('now')),
+			reason_tag TEXT NOT NULL CHECK (reason_tag IN ('headache', 'pain', 'fever', 'other')),
+			notes TEXT,
+			voided_at TEXT,
+			voided_by TEXT REFERENCES caregivers(id),
+			void_reason TEXT,
+			dosage_snapshot TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_med_given ON prn_logs(medication_id, given_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs table: %w", err)
+	}
+	// When the entry was made (given_at may be backdated): the own-undo window.
+	var prnRecorded int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('prn_logs') WHERE name = 'recorded_at'").Scan(&prnRecorded)
+	if prnRecorded == 0 {
+		if _, err := database.Exec("ALTER TABLE prn_logs ADD COLUMN recorded_at TEXT"); err != nil {
+			return fmt.Errorf("failed adding prn_logs.recorded_at: %w", err)
+		}
+	}
+	// PRN history follows the same audit-trail rules as medication_logs (#23).
+	if _, err := database.Exec(`
+		CREATE TRIGGER IF NOT EXISTS prn_logs_values_immutable
+		BEFORE UPDATE OF medication_id, caregiver_id, given_at, reason_tag, notes, dosage_snapshot, recorded_at
+		ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries are immutable: cancel the dose instead'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON prn_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this PRN dose was already cancelled'); END;
+
+		CREATE TRIGGER IF NOT EXISTS prn_logs_no_delete
+		BEFORE DELETE ON prn_logs
+		BEGIN SELECT RAISE(ABORT, 'PRN entries cannot be deleted: cancel the dose instead'); END;
+	`); err != nil {
+		return fmt.Errorf("failed creating prn_logs triggers: %w", err)
 	}
 
 	if err := seedSuperAdmin(database); err != nil {

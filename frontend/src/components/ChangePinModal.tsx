@@ -192,7 +192,7 @@ export function ChangePinModal({ isOpen, onClose }: ChangePinModalProps) {
             message={
               <p
                 role={error ? "alert" : undefined}
-                className={`text-center mb-3 ${error ? "text-xs font-semibold text-rose-600 dark:text-rose-400 animate-shake" : "text-[11px] text-slate-400"}`}
+                className={`text-center mb-3 ${error ? "text-sm font-semibold text-rose-600 dark:text-rose-400 animate-shake" : "text-xs text-slate-400"}`}
               >
                 {error || (step === "new" ? (ar ? "تجنّب 1234 والأرقام المكررة" : "Avoid 1234 and repeated digits") : " ")}
               </p>

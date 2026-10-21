@@ -306,7 +306,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "الاسم الكامل *" : "Full Name *"}
                   </label>
                   <input
@@ -320,7 +320,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "البريد الإلكتروني (اختياري)" : "Email (Optional)"}
                   </label>
                   <input
@@ -335,7 +335,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
 
               {/* ROLE SELECTION */}
               <div className="mb-3">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   {locale === "ar" ? "الدور والصلاحية *" : "Access Role *"}
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -360,7 +360,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                           </span>
                           {isSelected && <Check className="h-3.5 w-3.5 text-purple-600" />}
                         </div>
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                        <span className="text-xs text-slate-500 dark:text-slate-400 leading-tight">
                           {locale === "ar" ? meta.descAr : meta.descEn}
                         </span>
                       </button>
@@ -372,7 +372,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
               {/* PIN INPUT (ONLY FOR NEW USER) */}
               {!editingUser && (
                 <div className="mb-3">
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     {locale === "ar" ? "رمز المرور المبدئي (4 أرقام) *" : "Default 4-Digit PIN *"}
                   </label>
                   <input
@@ -391,7 +391,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
 
               {/* AVATAR COLOR PICKER */}
               <div className="mb-4">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   {locale === "ar" ? "لون الصورة الرمزية" : "Avatar Color"}
                 </label>
                 <div className="flex items-center gap-2">
@@ -447,7 +447,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                     : `Reset 4-Digit PIN for ${users.find((u) => u.id === resetPinUserId)?.name}`}
                 </span>
               </h4>
-              <p className="text-[11px] text-amber-700 dark:text-amber-300 mb-3">
+              <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
                 {locale === "ar"
                   ? "أدخل 4 أرقام جديدة. سيتمكن المستخدم من تسجيل الدخول بها فوراً."
                   : "Enter a new 4-digit numeric code. The user can log in with it immediately."}
@@ -487,7 +487,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                   {locale === "ar" ? "إلغاء" : "Cancel"}
                 </button>
               </div>
-              {pinError && <p className="text-[11px] font-semibold text-rose-600">{pinError}</p>}
+              {pinError && <p className="text-sm font-semibold text-rose-600">{pinError}</p>}
             </form>
           )}
 
@@ -532,7 +532,7 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                             {user.name}
                           </span>
                           {isCurrent && (
-                            <span className="text-[10px] font-semibold text-purple-600 bg-purple-50 dark:bg-purple-950/60 px-1.5 py-0.5 rounded-sm">
+                            <span className="text-xs font-semibold text-purple-600 bg-purple-50 dark:bg-purple-950/60 px-1.5 py-0.5 rounded-sm">
                               {locale === "ar" ? "أنت (الحالي)" : "You (Active)"}
                             </span>
                           )}
@@ -541,14 +541,14 @@ export function UserManagementModal({ isOpen, onClose }: UserManagementModalProp
                         <div className="flex items-center gap-2 mt-0.5">
                           {/* Role Badge */}
                           <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${meta.badgeClass}`}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${meta.badgeClass}`}
                           >
                             {getRoleIcon(user.role)}
                             <span>{locale === "ar" ? meta.labelAr : meta.labelEn}</span>
                           </span>
 
                           {!user.is_active && (
-                            <span className="text-[10px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded-sm">
+                            <span className="text-xs font-bold text-rose-500 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded-sm">
                               {locale === "ar" ? "معطل" : "Inactive"}
                             </span>
                           )}

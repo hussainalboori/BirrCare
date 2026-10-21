@@ -32,13 +32,15 @@ type DoctorSummaryResponse struct {
 	// Daily fluid intake per household-local day (issue #28).
 	DailyFluid []DailyFluid `json:"daily_fluid"`
 	// Bowel movement summary and longest gap between movements (issue #28).
-	BowelSummary BowelSummary `json:"bowel_summary"`
+	BowelSummary BowelSummary          `json:"bowel_summary"`
 	Alertness    map[string]int        `json:"alertness_distribution"`
 	RecentNotes  []models.HandoverNote `json:"recent_notes"`
 	RecentVitals []models.VitalsLog    `json:"recent_vitals"`
 	// Every injection with the reading and what the scale said, so the doctor can
 	// see how the scale is performing and adjust it.
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
+	// PRN (as-needed) medication intake with reasons per day (issue #25).
+	PRNLogs []models.PRNExportLog `json:"prn_logs"`
 }
 
 // DailyFluid is one household-local day of fluid intake (issue #28).
@@ -375,6 +377,40 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// 5. PRN (as-needed) medication intake logs with reasons
+	prnRows, err := h.DB.Query(`
+		SELECT l.id, l.medication_id, m.name_ar, m.name_en, COALESCE(l.dosage_snapshot, m.dosage),
+		       l.given_at, l.reason_tag, COALESCE(l.notes, ''), c.name
+		FROM prn_logs l
+		JOIN medications m ON l.medication_id = m.id
+		JOIN caregivers c ON l.caregiver_id = c.id
+		WHERE l.given_at >= ? AND l.voided_at IS NULL
+		ORDER BY l.given_at DESC
+	`, sinceUTC)
+	if err != nil {
+		internalError(w, "failed to load PRN logs for the report", err)
+		return
+	}
+
+	prnLogs := []models.PRNExportLog{}
+	if prnRows != nil {
+		defer prnRows.Close()
+		for prnRows.Next() {
+			var p models.PRNExportLog
+			var givenAtStr string
+			if err := prnRows.Scan(&p.ID, &p.MedicationID, &p.NameAr, &p.NameEn, &p.Dosage,
+				&givenAtStr, &p.ReasonTag, &p.Notes, &p.CaregiverName); err == nil {
+				p.GivenAt = sqliteToRFC3339(givenAtStr)
+				if t, err := time.Parse(sqliteTimeLayout, givenAtStr); err == nil {
+					p.Date = t.In(ClinicalLocation()).Format("2006-01-02")
+				} else if len(givenAtStr) >= 10 {
+					p.Date = givenAtStr[:10]
+				}
+				prnLogs = append(prnLogs, p)
+			}
+		}
+	}
+
 	// 5. Daily fluid intake (issue #28)
 	dailyFluid := []DailyFluid{}
 	targetML := currentFluidDailyTarget()
@@ -489,6 +525,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		RecentNotes:     recentNotes,
 		RecentVitals:    recentVitals,
 		InsulinLogs:     insulinLogs,
+		PRNLogs:         prnLogs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

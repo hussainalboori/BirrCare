@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -86,3 +87,73 @@ func TestSeedSuperAdminDefaults(t *testing.T) {
 		t.Errorf("expected 0 seeded medications, got %d", medCount)
 	}
 }
+
+func TestProductionTimezoneValidation(t *testing.T) {
+	t.Run("empty timezone in production fails", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_TIMEZONE", "")
+
+		database, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("failed opening in-memory db: %v", err)
+		}
+		defer database.Close()
+
+		err = Migrate(database)
+		if err == nil {
+			t.Fatal("expected Migrate to return error when APP_ENV=production and APP_TIMEZONE is empty, got nil")
+		}
+		if !strings.Contains(err.Error(), "APP_TIMEZONE") {
+			t.Fatalf("expected error mentioning APP_TIMEZONE, got: %v", err)
+		}
+	})
+
+	t.Run("invalid timezone in production fails", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_TIMEZONE", "Invalid/Timezone")
+
+		database, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("failed opening in-memory db: %v", err)
+		}
+		defer database.Close()
+
+		err = Migrate(database)
+		if err == nil {
+			t.Fatal("expected Migrate to return error when APP_TIMEZONE is invalid, got nil")
+		}
+	})
+
+	t.Run("valid timezone in production succeeds", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_TIMEZONE", "Asia/Riyadh")
+
+		database, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("failed opening in-memory db: %v", err)
+		}
+		defer database.Close()
+
+		err = Migrate(database)
+		if err != nil {
+			t.Fatalf("expected Migrate to succeed with valid APP_TIMEZONE, got: %v", err)
+		}
+	})
+
+	t.Run("empty timezone in non-production succeeds", func(t *testing.T) {
+		t.Setenv("APP_ENV", "development")
+		t.Setenv("APP_TIMEZONE", "")
+
+		database, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatalf("failed opening in-memory db: %v", err)
+		}
+		defer database.Close()
+
+		err = Migrate(database)
+		if err != nil {
+			t.Fatalf("expected Migrate to succeed in development without APP_TIMEZONE, got: %v", err)
+		}
+	})
+}
+

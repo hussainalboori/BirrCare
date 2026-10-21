@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
+import { newRequestId } from "@/lib/outbox";
 import { CareStatus, RepositionSide, SkinCondition } from "@/lib/types";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { haptic } from "@/lib/theme";
@@ -68,7 +69,7 @@ export function RepositionCard() {
           kind: "reposition",
           value: side,
           skin_condition: skinCondition,
-          client_request_id: `rep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          client_request_id: newRequestId(),
         }),
       });
       // Reset skin condition to default ok after logging
@@ -264,7 +265,7 @@ export function RepositionCard() {
             >
               <span className="text-base sm:text-lg">{ar ? side.ar : side.en}</span>
               {isCurrentSide && (
-                <span className="mt-0.5 text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                <span className="mt-0.5 text-xs font-bold text-blue-600 dark:text-blue-400">
                   {ar ? "(الجهة الحالية)" : "(Current)"}
                 </span>
               )}

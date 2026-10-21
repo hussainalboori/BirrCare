@@ -81,6 +81,10 @@ export interface Medication {
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */
   is_critical?: boolean;
+  /** PRN (as-needed) medication (issue #25). */
+  is_prn?: boolean;
+  prn_min_hours?: number | null;
+  prn_max_per_24h?: number | null;
   /** Pills/units in the box (issue #20); null = stock not tracked. */
   stock_units?: number | null;
   units_per_dose?: number;
@@ -306,6 +310,7 @@ export interface DoctorSummary {
   recent_notes: HandoverNote[];
   recent_vitals: VitalsLog[];
   insulin_logs?: InsulinLog[];
+  prn_logs?: PRNExportLog[];
 }
 
 export interface DailyFluid {
@@ -418,5 +423,59 @@ export interface CareOverview {
   reposition: CareStatus;
   fluid: CareStatus;
   bowel: CareStatus;
+}
+
+export type PRNReasonTag = "headache" | "pain" | "fever" | "other";
+
+export interface PRNLog {
+  id: string;
+  medication_id: string;
+  caregiver_id: string;
+  caregiver_name?: string;
+  avatar_color?: string;
+  given_at: string;
+  reason_tag: PRNReasonTag;
+  notes?: string;
+  voided_at?: string;
+  voided_by_name?: string;
+  void_reason?: string;
+  dosage_snapshot?: string;
+  /** When the entry was made (given_at may be earlier): own undo for 10 minutes. */
+  recorded_at?: string;
+}
+
+export interface PRNLastGiven {
+  log_id: string;
+  given_at: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  reason_tag: PRNReasonTag;
+  hours_since: number;
+}
+
+export interface PRNMedicationStatus {
+  medication: Medication;
+  count_last_24h: number;
+  max_per_24h?: number | null;
+  min_hours?: number | null;
+  last_given?: PRNLastGiven | null;
+  next_allowed_at?: string;
+  can_give: boolean;
+  lock_reason?: "limit_reached" | "too_soon" | string;
+  recent_logs: PRNLog[];
+}
+
+export interface PRNExportLog {
+  id: string;
+  medication_id: string;
+  name_ar: string;
+  name_en: string;
+  dosage: string;
+  given_at: string;
+  date: string;
+  reason_tag: PRNReasonTag | string;
+  notes?: string;
+  caregiver_name: string;
 }
 

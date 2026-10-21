@@ -372,21 +372,28 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Optional skin-check: "Red area" sets urgent_flag on the next handover
+	var handoverID, summaryArNote string
 	if req.SkinCondition == "red_area" {
-		handoverID := uuid.New().String()
+		handoverID = uuid.New().String()
 		summaryAr := fmt.Sprintf("تنبيه احمرار الجلد: لوحظت منطقة حمراء أثناء التقليب إلى (%s)", valueLabelAr(req.Value))
+		summaryArNote = summaryAr
+		// handover_notes uses the SQLite "YYYY-MM-DD HH:MM:SS" format like every
+		// other note; an RFC3339 value showed as year 0001 in the shift notes.
 		_, err = tx.ExecContext(r.Context(), `
 			INSERT INTO handover_notes (id, caregiver_id, summary, urgent_flag, created_at)
 			VALUES (?, ?, ?, 1, ?)
-		`, handoverID, me.ID, summaryAr, nowUTC)
+		`, handoverID, me.ID, summaryAr, time.Now().UTC().Format(sqliteTimeLayout))
 		if err != nil {
 			internalError(w, "failed inserting urgent handover note", err)
 			return
 		}
 	}
 
-	audit.Log(tx, me.ID, "LOG_CARE_EVENT", "care_events", eventID,
-		fmt.Sprintf("kind: %s, value: %s, skin: %s, thickened: %v", req.Kind, req.Value, req.SkinCondition, req.Thickened))
+	if err := audit.Record(tx, me.ID, "LOG_CARE_EVENT", "care_events", eventID,
+		fmt.Sprintf("kind: %s, value: %s, skin: %s, thickened: %v", req.Kind, req.Value, req.SkinCondition, req.Thickened)); err != nil {
+		internalError(w, "failed to write audit log", err)
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		internalError(w, "failed committing care event", err)
@@ -408,6 +415,12 @@ func (h *CareHandler) LogEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Broadcast SSE to all connected siblings
+	if h.Broker != nil && handoverID != "" {
+		h.Broker.Broadcast("NOTE_ADDED", models.ActorInfo{ID: me.ID, Name: me.Name, AvatarColor: me.AvatarColor}, map[string]interface{}{
+			"id": handoverID, "summary": summaryArNote, "urgent_flag": true,
+			"caregiver_name": me.Name, "avatar_color": me.AvatarColor,
+		})
+	}
 	if h.Broker != nil {
 		h.Broker.Broadcast("CARE_EVENT_LOGGED", models.ActorInfo{
 			ID:          me.ID,

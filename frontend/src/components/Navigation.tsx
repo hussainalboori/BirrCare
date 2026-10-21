@@ -46,7 +46,7 @@ export function Navigation() {
   // Every item has the same box: a 32px icon tile on top and a two-line label area,
   // in six equal columns, so icons and labels line up whether a label wraps or not.
   const itemClass = "flex min-h-14 min-w-0 flex-col items-center justify-start gap-1 rounded-2xl px-0.5 pt-1.5 pb-1 active:scale-95";
-  const labelClass = "line-clamp-2 min-h-[2.4em] w-full text-center text-[11px] leading-[1.2]";
+  const labelClass = "line-clamp-2 min-h-[2.4em] w-full text-center text-xs leading-[1.2]";
 
   // Quick BP (issue #11): straight to the two blood-pressure fields from any page.
   const quickBP = (
