@@ -9,7 +9,7 @@ import { fetchApi } from "@/lib/api";
 import { ALERTNESS_METAS, classifySpO2, classifyTemperature } from "@/lib/clinical";
 import { formatDateTime } from "@/lib/datetime";
 import { Auto, Ltr } from "@/components/Ltr";
-import { FileSpreadsheet, Printer, Activity, Heart, ShieldCheck, AlertTriangle } from "lucide-react";
+import { FileSpreadsheet, Printer, Activity, Heart, ShieldCheck, AlertTriangle, Droplets } from "lucide-react";
 
 export default function DoctorExportPage() {
   const { t, locale } = useLanguage();
@@ -288,6 +288,105 @@ export default function DoctorExportPage() {
                 </div>
               );
             })()}
+
+            {/* Issue #28: 14-day Fluid Intake Table & Bowel Movement Summary */}
+            {((summary.daily_fluid ?? []).length > 0 || summary.bowel_summary) && (
+              <div className="mb-6 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 print:mb-3 print:p-2 break-inside-avoid">
+                <div className="flex items-center justify-between mb-3 print:mb-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Droplets className="h-4 w-4 text-sky-600" />
+                    <span>{locale === "ar" ? "متابعة السوائل وحركة الأمعاء (آخر ١٤ يوماً)" : "Fluid Intake & Bowel Movements (14 Days)"}</span>
+                  </h3>
+                </div>
+
+                {/* Bowel Movement Summary Metrics */}
+                {summary.bowel_summary && (
+                  <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2 print:gap-1 text-xs">
+                    <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "إجمالي مرات الإخراج" : "Total Movements"}</span>
+                      <span className="text-base print:text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
+                        <Ltr>{summary.bowel_summary.total_movements}</Ltr>
+                      </span>
+                    </div>
+
+                    <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "قوام البراز (طبيعي / قاسي / لين)" : "Consistency (N / H / L)"}</span>
+                      <span className="text-sm print:text-xs font-bold text-slate-900 dark:text-white mt-0.5 block">
+                        <Ltr>{summary.bowel_summary.normal_count} / {summary.bowel_summary.hard_count} / {summary.bowel_summary.loose_count}</Ltr>
+                      </span>
+                    </div>
+
+                    <div className={`p-3 print:p-1.5 rounded-xl border ${
+                      summary.bowel_summary.longest_gap_days >= 3
+                        ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200"
+                        : "bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800"
+                    }`}>
+                      <span className="block text-[11px]">{locale === "ar" ? "أطول فترة انقطاع" : "Longest Gap"}</span>
+                      <span className="text-base print:text-xs font-bold mt-0.5 block">
+                        <Ltr>{summary.bowel_summary.longest_gap_days} {locale === "ar" ? (summary.bowel_summary.longest_gap_days <= 10 ? "أيام" : "يوماً") : "days"}</Ltr>
+                        {summary.bowel_summary.longest_gap_days >= 3 && (
+                          <span className="ms-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                            ({locale === "ar" ? "تنبيه إمساك" : "Constipation alert"})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="p-3 print:p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                      <span className="text-slate-500 block text-[11px]">{locale === "ar" ? "آخر إخراج مسجل" : "Last Movement"}</span>
+                      <span className="text-sm print:text-xs font-semibold text-slate-900 dark:text-white mt-0.5 block">
+                        {summary.bowel_summary.days_since_last != null ? (
+                          locale === "ar" ? `قبل ${summary.bowel_summary.days_since_last} يوم` : `${summary.bowel_summary.days_since_last}d ago`
+                        ) : (
+                          locale === "ar" ? "غير مسجل" : "None"
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 14-day Fluid Intake Table */}
+                {(summary.daily_fluid ?? []).length > 0 && (
+                  <div className="overflow-x-auto">
+                    <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                      {locale === "ar" ? "جدول استهلاك السوائل اليومي (الهدف: ١٥٠٠ مل):" : "Daily Fluid Intake Table (Target: 1500 ml):"}
+                    </h4>
+                    <table className="w-full text-start text-xs print:text-[8pt]">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                          <th className="py-1 text-start font-semibold">{locale === "ar" ? "التاريخ" : "Date"}</th>
+                          <th className="py-1 text-start font-semibold">{locale === "ar" ? "إجمالي السوائل" : "Total Fluid"}</th>
+                          <th className="py-1 text-start font-semibold">{locale === "ar" ? "منها مكثف" : "Thickened"}</th>
+                          <th className="py-1 text-start font-semibold">{locale === "ar" ? "نسبة الهدف" : "% of Target"}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {summary.daily_fluid!.map((df) => (
+                          <tr key={df.date} className={df.percent_of_target < 50 && df.total_ml > 0 ? "bg-amber-50/60 dark:bg-amber-950/20" : undefined}>
+                            <td className="py-1 pe-2 font-mono"><Ltr>{df.date.slice(5)}</Ltr></td>
+                            <td className="py-1 pe-2 font-bold text-slate-900 dark:text-white">
+                              <Ltr>{df.total_ml} ml</Ltr>
+                            </td>
+                            <td className="py-1 pe-2 text-slate-600 dark:text-slate-300">
+                              <Ltr>{df.thickened_ml > 0 ? `${df.thickened_ml} ml` : "—"}</Ltr>
+                            </td>
+                            <td className={`py-1 pe-2 font-semibold ${
+                              df.percent_of_target >= 100
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : df.percent_of_target < 50
+                                ? "text-amber-600 dark:text-amber-400 font-bold"
+                                : "text-slate-700 dark:text-slate-300"
+                            }`}>
+                              <Ltr>{df.percent_of_target}%</Ltr>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Key Clinical Summary Metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 gap-3 print:gap-2 mb-6 print:mb-3">

@@ -8,6 +8,7 @@ import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { RepositionCard } from "@/components/RepositionCard";
+import { FluidBowelCard } from "@/components/FluidBowelCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
@@ -118,6 +119,8 @@ export default function MedicationsPage() {
         <PushOptIn />
         {/* Issue #27: Repositioning card to prevent pressure sores */}
         <RepositionCard />
+        {/* Issue #28: Fluid intake and bowel movement tracking */}
+        <FluidBowelCard />
         {/* Issue #13: one tap to the F.A.S.T. stroke check */}
         <Link
           href="/fast"
