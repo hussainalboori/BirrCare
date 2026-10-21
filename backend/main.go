@@ -63,6 +63,7 @@ func main() {
 	opts := server.OptionsFromEnv(database, broker)
 	opts.Push = notifier
 	opts.UpdateDir = handlers.UpdateDirFromEnv(dbPath)
+	opts.PhotoDir = handlers.PhotoDirFromEnv(dbPath)
 	r := server.NewRouter(opts)
 
 	// 7. Tell a sibling when the duty they passed has not been accepted (issue #18)

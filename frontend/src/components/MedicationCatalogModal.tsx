@@ -7,7 +7,9 @@ import { Medication } from "@/lib/types";
 import { canManageMedications } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { autoIntervalHours } from "@/lib/clinical";
+import { uploadMedicinePhoto } from "@/lib/photo";
 import {
+  Camera,
   X,
   Pill,
   Plus,
@@ -74,6 +76,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [instAr, setInstAr] = useState("");
   const [instEn, setInstEn] = useState("");
   const [imageUrl, setImageUrl] = useState("/meds/pill-default.svg");
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState("");
   const [selectedSlots, setSelectedSlots] = useState<string[]>(["morning"]);
   const [daysOfWeek, setDaysOfWeek] = useState<string[]>(ALL_DAY_IDS);
   // Doctor's minimum hours between doses; "" = automatic.
@@ -687,12 +691,12 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
               {/* PILL APPEARANCE & IMAGE SELECTOR */}
               <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white/70 dark:bg-slate-800/50 p-3">
                 <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">
-                  {locale === "ar" ? "شكل ولون الحبة للتعرف البصري (Pill Appearance)" : "Pill Appearance & Visual Identifier"}
+                  {locale === "ar" ? "صورة الدواء (العلبة أو الحبة)" : "Medicine photo (box or pill)"}
                 </label>
 
                 <div className="flex items-center gap-3 mb-2.5">
                   {/* Live preview */}
-                  <div className="h-16 w-16 shrink-0 rounded-xl border-2 border-amber-400 bg-slate-50 dark:bg-slate-900 p-1.5 shadow-xs flex items-center justify-center">
+                  <div className="h-20 w-20 shrink-0 rounded-xl border-2 border-amber-400 bg-slate-50 dark:bg-slate-900 p-1 shadow-xs flex items-center justify-center">
                     <img
                       src={imageUrl || "/meds/pill-default.svg"}
                       alt="Pill Preview"
@@ -725,6 +729,42 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     })}
                   </div>
                 </div>
+
+                {/* Photo of the box or the pill, from the camera or the gallery */}
+                <label
+                  data-testid="med-photo-button"
+                  className={`mb-2 flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-amber-400 px-3 text-sm font-bold text-amber-900 hover:bg-amber-50 dark:text-amber-200 dark:hover:bg-amber-950/40 ${photoBusy ? "pointer-events-none opacity-60" : ""}`}
+                >
+                  {photoBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
+                  <span>
+                    {photoBusy
+                      ? locale === "ar" ? "جارٍ رفع الصورة..." : "Uploading photo..."
+                      : locale === "ar" ? "التقط أو اختر صورة للعلبة" : "Take or choose a photo of the box"}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    data-testid="med-photo-input"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      setPhotoError("");
+                      setPhotoBusy(true);
+                      try {
+                        setImageUrl(await uploadMedicinePhoto(file));
+                      } catch {
+                        setPhotoError(locale === "ar" ? "تعذر رفع الصورة، جرّب صورة أخرى" : "Could not upload the photo, try another one");
+                      } finally {
+                        setPhotoBusy(false);
+                      }
+                    }}
+                  />
+                </label>
+                {photoError && (
+                  <p role="alert" className="mb-2 text-sm font-semibold text-rose-700 dark:text-rose-300">{photoError}</p>
+                )}
 
                 {/* Custom URL input */}
                 <div>

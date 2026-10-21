@@ -269,6 +269,8 @@ crontab -e
 
 Then sync `data/backups/` somewhere else, such as another machine, an encrypted cloud folder or a USB drive. It contains health records, so keep the copy private and encrypted.
 
+Medicine photos (taken from the phone in the medicine form) are plain files in `data/photos/`, not in the database. Sync that folder too; a restored database without it shows the default pill picture instead.
+
 Never back up by copying `birrcare.db` alone while the backend runs: the newest changes may still be in `birrcare.db-wal`. Always use `sqlite3 … ".backup …"`.
 
 ## 10. Restore a backup

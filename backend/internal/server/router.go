@@ -33,6 +33,8 @@ type Options struct {
 	EmergencyLimiter *handlers.IPRateLimiter
 	// UpdateDir holds the files shared with the host updater (issue #43).
 	UpdateDir string
+	// PhotoDir holds medicine photos (box or pill) uploaded from the phone.
+	PhotoDir string
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -75,6 +77,7 @@ func NewRouter(o Options) http.Handler {
 	authHandler := &handlers.AuthHandler{DB: o.DB, Broker: o.Broker, Limiter: o.Limiter}
 	usersHandler := &handlers.UsersHandler{DB: o.DB, Broker: o.Broker}
 	updatesHandler := &handlers.UpdatesHandler{DB: o.DB, Broker: o.Broker, Dir: o.UpdateDir}
+	photoHandler := &handlers.PhotoHandler{DB: o.DB, Dir: o.PhotoDir}
 	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
@@ -195,6 +198,9 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/medications/schedule", medHandler.GetSchedule)
 				api.Post("/medications/log", medHandler.LogDose)
 				api.Get("/medications/stock", medHandler.ListStock)
+				// Medicine photos taken with the phone camera
+				api.Post("/medications/photos", photoHandler.Upload)
+				api.Get("/medications/photos/{name}", photoHandler.Serve)
 				api.Post("/medications/{id}/stock", medHandler.UpdateStock)
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
