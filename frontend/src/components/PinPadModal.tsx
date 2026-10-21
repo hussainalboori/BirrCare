@@ -171,7 +171,7 @@ export function PinPadModal() {
                         </span>
                       )}
                     </div>
-                    <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate w-full text-center">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate w-full text-center">
                       {c.name.split(" ")[0]}
                     </span>
                   </button>
@@ -188,11 +188,11 @@ export function PinPadModal() {
             onClear={handleClear}
             message={
               error ? (
-                <p role="alert" className="text-center text-xs font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
+                <p role="alert" className="text-center text-sm font-semibold text-rose-600 dark:text-rose-400 mb-3 animate-shake">
                   {error}
                 </p>
               ) : (
-                <p className="text-center text-[11px] text-slate-400 mb-3">
+                <p className="text-center text-xs text-slate-400 mb-3">
                   {t.pinHint}
                 </p>
               )

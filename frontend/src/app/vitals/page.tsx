@@ -410,7 +410,7 @@ export default function VitalsPage() {
                         ? t.vitalAlertnessTitle
                         : t.vitalFullTitle}
                     </h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
                       {selectedKind === null
                         ? t.chooseVitalTypeSubtitle
                         : locale === "ar"
@@ -462,7 +462,7 @@ export default function VitalsPage() {
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
                               {t.vitalBPTitle}
                             </span>
-                            <span className="rounded-md bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                            <span className="rounded-md bg-rose-100 px-1.5 py-0.5 text-xs font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300">
                               {locale === "ar" ? "مقياس الذراع" : "BP Cuff"}
                             </span>
                           </div>
@@ -489,7 +489,7 @@ export default function VitalsPage() {
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
                               {t.vitalSugarTitle}
                             </span>
-                            <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                            <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-xs font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
                               mmol/L
                             </span>
                           </div>
@@ -516,7 +516,7 @@ export default function VitalsPage() {
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
                               {t.vitalAlertnessTitle}
                             </span>
-                            <span className="rounded-md bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                            <span className="rounded-md bg-purple-100 px-1.5 py-0.5 text-xs font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-300">
                               {locale === "ar" ? "تقييم عصبي" : "Neuro"}
                             </span>
                           </div>
@@ -543,7 +543,7 @@ export default function VitalsPage() {
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
                               {t.vitalFullTitle}
                             </span>
-                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                               {locale === "ar" ? "شامل الكل" : "All-in-one"}
                             </span>
                           </div>
@@ -596,7 +596,7 @@ export default function VitalsPage() {
 
                         <div className="grid grid-cols-2 gap-3 mb-3">
                           <div>
-                            <span className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            <span className="block text-xs font-semibold text-slate-500 mb-1">
                               {t.systolic}
                             </span>
                             <input
@@ -623,7 +623,7 @@ export default function VitalsPage() {
                           </div>
 
                           <div>
-                            <span className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            <span className="block text-xs font-semibold text-slate-500 mb-1">
                               {t.diastolic}
                             </span>
                             <input
@@ -804,7 +804,7 @@ export default function VitalsPage() {
                                 <span className="text-xs font-bold text-slate-900 dark:text-white">
                                   {locale === "ar" ? meta.labelAr : meta.labelEn}
                                 </span>
-                                <span className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                                <span className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
                                   {locale === "ar" ? meta.descAr : meta.descEn}
                                 </span>
                               </button>
@@ -952,7 +952,7 @@ export default function VitalsPage() {
             </button>
           </div>
 
-          <span className="text-[11px] font-semibold text-slate-400 shrink-0">
+          <span className="text-xs font-semibold text-slate-400 shrink-0">
             {filteredVitals.length} {locale === "ar" ? "سجل" : "records"}
           </span>
         </div>
@@ -999,10 +999,10 @@ export default function VitalsPage() {
                     className={`rounded-2xl border p-4 shadow-xs ${positive ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${positive ? "bg-rose-700 text-white" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"}`}>
+                      <span className={`rounded-md px-2.5 py-1 text-sm font-bold ${positive ? "bg-rose-700 text-white" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"}`}>
                         F.A.S.T. — {positive ? (locale === "ar" ? `علامة: ${signs.join("، ")}` : `sign: ${signs.join(", ")}`) : locale === "ar" ? "لا علامات" : "no signs"}
                       </span>
-                      <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                      <span className="flex items-center gap-1 text-xs text-slate-400">
                         <Clock className="h-3 w-3" />
                         <Ltr>{dateStr} • {timeStr}</Ltr>
                       </span>
@@ -1013,7 +1013,7 @@ export default function VitalsPage() {
                         <bdi dir="auto">{formatTime(vital.last_normal_at, locale)}</bdi>
                       </p>
                     )}
-                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       <bdi>{vital.caregiver_name}</bdi>
                     </p>
                   </div>
@@ -1023,22 +1023,22 @@ export default function VitalsPage() {
               // Badge indicator based on vital type
               const typeBadge =
                 vital.vital_type === "sugar" || (!hasBP && hasSugar) ? (
-                  <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center gap-1">
+                  <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center gap-1">
                     <Droplet className="h-3 w-3 fill-current" />
                     <span>{locale === "ar" ? "فحص سكر" : "Glucose"}</span>
                   </span>
                 ) : vital.vital_type === "bp" || (hasBP && !hasSugar) ? (
-                  <span className="rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300 flex items-center gap-1">
+                  <span className="rounded-md bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300 flex items-center gap-1">
                     <Heart className="h-3 w-3" />
                     <span>{locale === "ar" ? "ضغط ونبض" : "BP & Pulse"}</span>
                   </span>
                 ) : vital.vital_type === "alertness" || hasAlertness ? (
-                  <span className="rounded-md bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-300 flex items-center gap-1">
+                  <span className="rounded-md bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-300 flex items-center gap-1">
                     <Brain className="h-3 w-3" />
                     <span>{locale === "ar" ? "تقييم وعي" : "Alertness"}</span>
                   </span>
                 ) : (
-                  <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
+                  <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
                     <Sparkles className="h-3 w-3" />
                     <span>{locale === "ar" ? "فحص شامل" : "Full Check"}</span>
                   </span>
@@ -1055,7 +1055,7 @@ export default function VitalsPage() {
                       {typeBadge}
                     </div>
 
-                    <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <div className="flex items-center gap-1 text-xs text-slate-400">
                       <Clock className="h-3 w-3" />
                       <Ltr>{dateStr} • {timeStr}</Ltr>
                     </div>
@@ -1091,14 +1091,14 @@ export default function VitalsPage() {
                     )}
 
                     {alertnessMeta && (
-                      <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${alertnessMeta.badgeClass}`}>
+                      <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${alertnessMeta.badgeClass}`}>
                         {locale === "ar" ? alertnessMeta.labelAr : alertnessMeta.labelEn}
                       </span>
                     )}
 
-                    <div className="ms-auto flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <div className="ms-auto flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                       <span
-                        className="flex h-4 w-4 items-center justify-center rounded-full text-[9px] text-white font-bold"
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-xs text-white font-bold"
                         style={{ backgroundColor: vital.avatar_color || "#059669" }}
                       >
                         {vital.caregiver_name?.slice(0, 1)}

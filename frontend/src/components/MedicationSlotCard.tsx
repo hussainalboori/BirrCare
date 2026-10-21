@@ -7,7 +7,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
 import { canManageMedications, isViewer } from "@/lib/permissions";
-import { formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
+import { formatDuration, formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
 import { Auto } from "./Ltr";
 import { DoctorCallButton } from "./CrisisActions";
 import { DOSE_COPY, VOMIT_MINUTES } from "@/lib/doseWarnings";
@@ -311,6 +311,14 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const formattedTime = formatTime(log?.taken_at, locale);
   const scheduledTime = dose.time || (medication.slot_times?.[slot] || "");
 
+  const takenDate = parseServerTime(log?.taken_at);
+  const elapsed = takenDate ? formatDuration(now.getTime() - takenDate.getTime(), locale) : "";
+  const timeAgoText = takenDate && elapsed
+    ? (locale === "ar"
+        ? (elapsed === "أقل من دقيقة" ? "قبل قليل" : `منذ ${elapsed}`)
+        : (elapsed === "less than a minute" ? "just now" : `${elapsed} ago`))
+    : "";
+
   // This card's scheduled moment on the device's clock.
   const scheduledAt = (() => {
     if (!scheduledTime) return null;
@@ -372,44 +380,44 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
 
             <div className="flex-1 min-w-0">
               {/* Slot & Dosage & Scheduled Time Badges */}
-              <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  <Clock className="h-3 w-3" />
+              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <Clock className="h-3.5 w-3.5" />
                   {t.slots[slot as keyof typeof t.slots] || slot}
                 </span>
 
                 {scheduledTime && (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
-                    <span className="text-[10px]">⏰</span>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
+                    <span>⏰</span>
                     <span className="font-mono">{scheduledTime}</span>
                   </span>
                 )}
 
-                <Auto className="rounded-md bg-emerald-100/80 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+                <Auto className="inline-flex items-center rounded-md bg-emerald-100/80 px-2.5 py-1 text-base font-bold text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
                   {medication.dosage}
                 </Auto>
 
                 {isOverdue && (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 animate-pulse">
-                    <AlertCircle className="h-3 w-3 text-rose-600" />
+                  <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 animate-pulse">
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
                     <span>{t.overdue}</span>
                   </span>
                 )}
               </div>
 
               {/* Medication Name */}
-              <h4 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+              <h4 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
                 {medName}
               </h4>
               {altName && altName !== medName && (
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate -mt-0.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate -mt-0.5">
                   {altName}
                 </p>
               )}
 
               {/* Instructions */}
               {instructions && (
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                <p className="mt-1 text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
                   {instructions}
                 </p>
               )}
@@ -431,68 +439,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                   {ar ? "إلغاء" : "Cancel"}
                 </button>
               </div>
-            ) : isLogged && log ? (
-              <div className="flex flex-col items-end gap-1" role="status">
-                <div
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-xs ${
-                    isTaken && !vomited ? "bg-emerald-600" : needsDoctor ? "bg-orange-600" : "bg-amber-600"
-                  }`}
-                >
-                  {isTaken ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                  <span>
-                    {log.status === "partial"
-                      ? c.badgePartial
-                      : log.status === "refused"
-                      ? c.badgeRefused
-                      : isTaken
-                      ? t.statusTaken
-                      : t.statusSkipped}
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-1 text-[11px] font-medium ${
-                    isTaken ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"
-                  }`}
-                >
-                  <span
-                    className="flex h-4 w-4 items-center justify-center rounded-full text-[9px] text-white font-bold"
-                    style={{ backgroundColor: log.avatar_color || "#059669" }}
-                  >
-                    {log.caregiver_name?.slice(0, 1)}
-                  </span>
-                  <span>
-                    {isGiven ? t.givenBy : ar ? "بواسطة" : "by"} <bdi>{log.caregiver_name}</bdi>
-                    {formattedTime && (
-                      <>
-                        {" "}
-                        {t.atTime} <Auto>{formattedTime}</Auto>
-                      </>
-                    )}
-                  </span>
-                </div>
-                {!isTaken && log.notes && <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">{log.notes}</p>}
-                {isGiven && !vomited && !vomitOpen && log.id !== "local" && !isViewer(currentCaregiver?.role) && (
-                  <button
-                    type="button"
-                    onClick={() => setVomitOpen(true)}
-                    className="flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-orange-700 dark:text-orange-400"
-                  >
-                    <AlertCircle className="h-4 w-4" />
-                    {c.vomitedQuestion}
-                  </button>
-                )}
-                {canCancel && !cancelOpen && (
-                  <button
-                    type="button"
-                    onClick={() => setCancelOpen(true)}
-                    className="flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-rose-700 underline-offset-2 hover:underline dark:text-rose-400"
-                  >
-                    <Ban className="h-4 w-4" />
-                    {ar ? "إلغاء التسجيل" : "Cancel entry"}
-                  </button>
-                )}
-              </div>
-            ) : isIntervalLocked ? (
+            ) : isLogged && log ? null : isIntervalLocked ? (
               <div
                 role="status"
                 className="flex min-h-12 items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
@@ -513,7 +460,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 onClick={() => handleLogDose()}
                 disabled={isSubmitting}
                 aria-busy={isSubmitting}
-                className={`flex min-h-12 items-center gap-2 rounded-xl px-3.5 sm:px-4 py-2.5 text-xs font-bold transition-all active:scale-95 shadow-sm ${
+                className={`flex min-h-12 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all active:scale-95 shadow-sm ${
                   isSubmitting
                     ? "bg-slate-300 text-slate-600 cursor-not-allowed dark:bg-slate-700 dark:text-slate-300"
                     : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
@@ -547,6 +494,99 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             )}
           </div>
         </div>
+
+        {/* Full-width status row when logged (Double-Dose Locked) */}
+        {isLogged && log && (
+          <div
+            role="status"
+            className={`mt-3 pt-3 border-t flex flex-wrap items-center justify-between gap-2.5 ${
+              isTaken && !vomited
+                ? "border-emerald-200/80 dark:border-emerald-900/50"
+                : needsDoctor
+                ? "border-orange-200/80 dark:border-orange-900/50"
+                : "border-amber-200/80 dark:border-amber-900/50"
+            }`}
+          >
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <div
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold text-white shadow-xs ${
+                  isTaken && !vomited ? "bg-emerald-600" : needsDoctor ? "bg-orange-600" : "bg-amber-600"
+                }`}
+              >
+                {isTaken ? <Check className="h-4 w-4 stroke-[3]" /> : <AlertCircle className="h-4 w-4" />}
+                <span>
+                  {log.status === "partial"
+                    ? c.badgePartial
+                    : log.status === "refused"
+                    ? c.badgeRefused
+                    : isTaken
+                    ? t.statusTaken
+                    : t.statusSkipped}
+                </span>
+              </div>
+
+              <div
+                className={`inline-flex items-center gap-2 text-base font-semibold ${
+                  isTaken ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"
+                }`}
+              >
+                <span
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-xs text-white font-bold shrink-0"
+                  style={{ backgroundColor: log.avatar_color || "#059669" }}
+                >
+                  {log.caregiver_name?.slice(0, 1)}
+                </span>
+                <span className="flex items-center gap-1.5 flex-wrap">
+                  <span>{isGiven ? t.givenBy : ar ? "بواسطة" : "by"} <bdi>{log.caregiver_name}</bdi></span>
+                  {formattedTime && (
+                    <>
+                      <span aria-hidden="true" className="opacity-60">·</span>
+                      <Auto>{formattedTime}</Auto>
+                    </>
+                  )}
+                  {timeAgoText && (
+                    <>
+                      <span aria-hidden="true" className="opacity-60">·</span>
+                      <span className="text-sm font-normal text-slate-600 dark:text-slate-400">
+                        {timeAgoText}
+                      </span>
+                    </>
+                  )}
+                </span>
+              </div>
+            </div>
+
+            {/* Actions: vomited or cancel */}
+            <div className="flex items-center gap-2 flex-wrap ms-auto">
+              {isGiven && !vomited && !vomitOpen && log.id !== "local" && !isViewer(currentCaregiver?.role) && (
+                <button
+                  type="button"
+                  onClick={() => setVomitOpen(true)}
+                  className="flex min-h-12 items-center gap-1 rounded-xl px-2.5 py-1 text-sm font-semibold text-orange-700 dark:text-orange-400 hover:bg-orange-100/50 dark:hover:bg-orange-950/40"
+                >
+                  <AlertCircle className="h-4 w-4" />
+                  {c.vomitedQuestion}
+                </button>
+              )}
+              {canCancel && !cancelOpen && (
+                <button
+                  type="button"
+                  onClick={() => setCancelOpen(true)}
+                  className="flex min-h-12 items-center gap-1 rounded-xl px-2.5 py-1 text-sm font-semibold text-rose-700 underline-offset-2 hover:underline dark:text-rose-400 hover:bg-rose-100/50 dark:hover:bg-rose-950/40"
+                >
+                  <Ban className="h-4 w-4" />
+                  {ar ? "إلغاء التسجيل" : "Cancel entry"}
+                </button>
+              )}
+            </div>
+
+            {!isTaken && log.notes && (
+              <p className="w-full text-sm font-semibold text-amber-800 dark:text-amber-300 mt-1">
+                {log.notes}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Partial or vomited: persistent warning, routed to the doctor (never a re-dose amount) */}
         {needsDoctor && log && (

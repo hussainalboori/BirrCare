@@ -192,7 +192,7 @@ export function ScheduleManagementModal({
             <div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <span>{t.manageSchedule}</span>
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                   <ShieldCheck className="h-3 w-3" />
                   {locale === "ar" ? "صلاحيات المشرف والمدير" : "Super Admin & Admin"}
                 </span>
@@ -229,7 +229,7 @@ export function ScheduleManagementModal({
                   ? "تحديد أيام ومواعيد الأدوية لضبط التعافي العصبي"
                   : "Prescription Schedule & Timing Rule Engine"}
               </p>
-              <p className="text-[11px] text-sky-700 dark:text-sky-400 mt-0.5">
+              <p className="text-xs text-sky-700 dark:text-sky-400 mt-0.5">
                 {locale === "ar"
                   ? "الجرعات المحددة ستظهر تلقائياً في الصفحة الرئيسية فقط في الأيام المقررة وبالمواعيد المحددة بالدقائق لمنع اللبس بين الإخوة."
                   : "Doses will only appear on the family dashboard on their prescribed days and sorted by exact clock times."}
@@ -284,12 +284,12 @@ export function ScheduleManagementModal({
                             <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                               {locale === "ar" ? med.name_ar : med.name_en || med.name_ar}
                             </h3>
-                            <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                               {med.dosage}
                             </span>
                           </div>
                           {med.name_en && locale === "ar" && (
-                            <p className="text-[11px] text-slate-400 font-mono">
+                            <p className="text-xs text-slate-400 font-mono">
                               {med.name_en}
                             </p>
                           )}
@@ -339,7 +339,7 @@ export function ScheduleManagementModal({
                           <button
                             type="button"
                             onClick={() => handleSetAllDays(med.id)}
-                            className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border transition-all ${
+                            className={`text-xs font-semibold px-2 py-0.5 rounded-lg border transition-all ${
                               isAllDays
                                 ? "bg-emerald-500 text-white border-emerald-500"
                                 : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700"
@@ -369,7 +369,7 @@ export function ScheduleManagementModal({
                             );
                           })}
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <p className="text-xs text-slate-400 mt-1">
                           {isAllDays
                             ? locale === "ar"
                               ? "مقرر يومياً طوال الأسبوع"
