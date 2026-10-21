@@ -11,7 +11,7 @@ export const translations = {
     
     // Nav
     navMeds: "الأدوية",
-    navVitals: "المؤشرات الحيوية",
+    navVitals: "المؤشرات والمتابعة",
     navHandovers: "تسليم الوردية",
     navDoctorExport: "تقرير الطبيب",
 
@@ -72,7 +72,7 @@ export const translations = {
     doubleDoseAlert: "تنبيه أمان: تم تسجيل هذه الجرعة مسبقاً!",
 
     // Vitals
-    vitalsTitle: "مؤشرات التعافي من الجلطة",
+    vitalsTitle: "المؤشرات والمتابعة",
     recordVitals: "تسجيل قراءة جديدة",
     chooseVitalType: "اختر نوع الفحص المراد تسجيله",
     chooseVitalTypeSubtitle: "سجّل الفحص الذي تم قياسه الآن دون الحاجة لتعبئة باقي الفحوصات",
@@ -168,7 +168,7 @@ export const translations = {
 
     // Nav
     navMeds: "Meds",
-    navVitals: "Vitals",
+    navVitals: "Vitals & Tracker",
     navHandovers: "Shift notes",
     navDoctorExport: "Doctor report",
 
@@ -229,7 +229,7 @@ export const translations = {
     doubleDoseAlert: "Safety Alert: This dose was already logged!",
 
     // Vitals
-    vitalsTitle: "Stroke Recovery Vitals",
+    vitalsTitle: "Vitals & Tracker",
     recordVitals: "Record New Vitals",
     chooseVitalType: "Choose Vital Metric to Record",
     chooseVitalTypeSubtitle: "Record only the metric measured right now without needing to fill all fields",

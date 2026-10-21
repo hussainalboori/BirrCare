@@ -13,6 +13,8 @@ import { ClinicalThresholds } from "@/components/ClinicalThresholds";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { CorrectionNote, CorrectVital } from "@/components/VitalCorrection";
 import { OxygenTempBadges, SpO2Fields, TemperatureField } from "@/components/OxygenTemp";
+import { RepositionCard } from "@/components/RepositionCard";
+import { FluidBowelCard } from "@/components/FluidBowelCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
@@ -976,6 +978,10 @@ export default function VitalsPage() {
             </div>
           </div>
         )}
+
+        {/* Trackers: repositioning (#27), fluids and bowel (#28) */}
+        <RepositionCard />
+        <FluidBowelCard />
 
         {/* ========================================================================= */}
         {/* FILTER PILLS FOR HISTORY */}

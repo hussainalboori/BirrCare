@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// The medicines page shows only medicines (plus the one-tap stroke check); the
-// day's other care lives on the Report page, one tap away in the bottom bar.
+// The medicines page shows only medicines (plus the one-tap stroke check). The
+// trackers live on Vitals & Tracker; the last handover and alerts on Report.
 async function open(page: Page, baseURL: string, path: string, locale = "ar") {
   await page.context().addCookies([{ name: "birrcare_lang", value: locale, url: baseURL }]);
   await page.route("**/api/v1/**", async (route) => {
@@ -15,18 +15,25 @@ async function open(page: Page, baseURL: string, path: string, locale = "ar") {
   await page.goto(path);
 }
 
-test("medicines page is medicines only; Report holds the rest", async ({ page, baseURL }) => {
+test("medicines page is medicines only; trackers are on Vitals & Tracker", async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 375, height: 800 });
   await open(page, baseURL!, "/");
   await expect(page.getByTestId("seems-off")).toBeVisible();
   await expect(page.getByTestId("reposition-card")).toHaveCount(0);
   await expect(page.getByTestId("fluid-bowel-card")).toHaveCount(0);
 
-  await page.locator("nav").getByRole("link", { name: "التقرير" }).click();
-  await expect(page).toHaveURL(/\/report$/);
+  const vitals = page.locator("nav").getByRole("link", { name: "المؤشرات والمتابعة" });
+  await vitals.click();
+  await expect(page).toHaveURL(/\/vitals$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("المؤشرات والمتابعة");
   await expect(page.getByTestId("reposition-card")).toBeVisible();
   await expect(page.getByTestId("fluid-bowel-card")).toBeVisible();
-  await expect(page.locator("nav").getByRole("link", { name: "التقرير" })).toHaveAttribute("aria-current", "page");
+  await expect(vitals).toHaveAttribute("aria-current", "page");
+
+  await page.locator("nav").getByRole("link", { name: "التقرير" }).click();
+  await expect(page).toHaveURL(/\/report$/);
+  await expect(page.getByTestId("reposition-card")).toHaveCount(0);
+  await expect(page.getByTestId("fluid-bowel-card")).toHaveCount(0);
 });
 
 for (const locale of ["ar", "en"] as const) {
