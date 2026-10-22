@@ -64,6 +64,7 @@ func main() {
 	opts.Push = notifier
 	opts.UpdateDir = handlers.UpdateDirFromEnv(dbPath)
 	opts.PhotoDir = handlers.PhotoDirFromEnv(dbPath)
+	opts.BackupDir = handlers.BackupDirFromEnv(dbPath)
 	r := server.NewRouter(opts)
 
 	// 7. Tell a sibling when the duty they passed has not been accepted (issue #18)
@@ -71,6 +72,7 @@ func main() {
 	defer stopReminders()
 	handlers.StartDutyReminders(reminderCtx, database, notifier, broker)
 	handlers.StartUpdateWatcher(reminderCtx, opts.UpdateDir, broker)
+	handlers.StartBackupWatcher(reminderCtx, database, opts.BackupDir)
 
 	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
 	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)

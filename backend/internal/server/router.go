@@ -35,6 +35,8 @@ type Options struct {
 	UpdateDir string
 	// PhotoDir holds medicine photos (box or pill) uploaded from the phone.
 	PhotoDir string
+	// BackupDir is shared with the host backup script (issue #51).
+	BackupDir string
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -78,6 +80,7 @@ func NewRouter(o Options) http.Handler {
 	usersHandler := &handlers.UsersHandler{DB: o.DB, Broker: o.Broker}
 	updatesHandler := &handlers.UpdatesHandler{DB: o.DB, Broker: o.Broker, Dir: o.UpdateDir}
 	photoHandler := &handlers.PhotoHandler{DB: o.DB, Dir: o.PhotoDir}
+	backupHandler := &handlers.BackupHandler{DB: o.DB, Dir: o.BackupDir}
 	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
@@ -127,6 +130,10 @@ func NewRouter(o Options) http.Handler {
 	}
 	r.Get("/health", healthHandler)
 	r.With(auth.RequireAuth).Get("/audit/verify", auditHandler.Verify)
+	// For scripts/backup.sh on this machine only: outside /api/v1, so neither the
+	// Next.js proxy nor the tunnel forwards it; also guarded by a shared secret.
+	r.Post("/internal/backup/snapshot", backupHandler.Snapshot)
+	r.Post("/internal/backup/verify", backupHandler.Verify)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", healthHandler)
@@ -188,6 +195,10 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/admin/update/install", updatesHandler.Install)
 				api.Post("/admin/update/skip", updatesHandler.Skip)
 				api.Put("/admin/update/policy", updatesHandler.SetPolicy)
+
+				// Off-site backups: status and "Back up now" (issue #51)
+				api.Get("/admin/backup/status", backupHandler.GetStatus)
+				api.Post("/admin/backup/run", backupHandler.Run)
 
 				// Medications & Scheduling
 				api.Get("/medications", medHandler.ListMedications)

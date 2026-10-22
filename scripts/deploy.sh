@@ -33,13 +33,33 @@ if [ -f "data/birrcare.db" ]; then
   mkdir -p "${BACKUP_DIR}"
   BACKUP_FILE="${BACKUP_DIR}/birrcare_backup_$(date +%Y%m%d_%H%M%S).db"
   echo "--> Creating safety database snapshot at ${BACKUP_FILE}..."
-  
-  if command -v sqlite3 >/dev/null 2>&1; then
-    sqlite3 data/birrcare.db ".backup '${BACKUP_FILE}'"
-  else
-    cp data/birrcare.db "${BACKUP_FILE}"
+
+  # A consistent copy only (issue #51): with WAL, a plain cp of birrcare.db can
+  # miss the newest changes. Ask the running app for a snapshot (VACUUM INTO,
+  # integrity-checked); if the app is down, use sqlite3's online backup.
+  SECRET_FILE="data/backup/secret"
+  if [ ! -s "${SECRET_FILE}" ]; then
+    mkdir -p data/backup
+    (umask 077 && head -c 48 /dev/urandom | base64 | tr -d '/+=\n' >"${SECRET_FILE}")
   fi
-  echo "    Backup created successfully."
+  SNAP=""
+  SNAP="$(curl -fsS --max-time 120 -X POST -H "X-Backup-Secret: $(tr -d '\n' <"${SECRET_FILE}")" \
+    http://127.0.0.1:8080/internal/backup/snapshot 2>/dev/null)" || SNAP=""
+  if printf '%s' "${SNAP}" | grep -q '"integrity":"ok"' && [ -f data/backup/staging/birrcare.db ]; then
+    cp data/backup/staging/birrcare.db "${BACKUP_FILE}"
+  elif command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 data/birrcare.db ".backup '${BACKUP_FILE}'"
+  elif [ -n "${SKIP_DB_BACKUP:-}" ]; then
+    echo "    WARNING: no consistent snapshot possible; SKIP_DB_BACKUP is set, continuing without one." >&2
+    BACKUP_FILE=""
+  else
+    echo "ERROR: could not take a consistent database backup: the app did not answer and sqlite3" >&2
+    echo "       is not installed. Start the app (docker compose up -d) or install sqlite3, then run" >&2
+    echo "       this again. Nothing was changed; the running version stays up." >&2
+    echo "       (To update without a backup anyway: SKIP_DB_BACKUP=1 ./scripts/deploy.sh)" >&2
+    exit 1
+  fi
+  [ -n "${BACKUP_FILE}" ] && echo "    Backup created successfully."
   
   # Retain only the last 10 backups to preserve disk space
   ls -tp "${BACKUP_DIR}"/birrcare_backup_*.db 2>/dev/null | grep -v '/$' | tail -n +11 | xargs -I {} rm -- {} 2>/dev/null || true

@@ -28,7 +28,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -51,7 +51,7 @@ export function AlertCenter() {
     const fresh = list.filter((a) => !announced.current.has(a.id));
     if (fresh.length) {
       fresh.forEach((a) => announced.current.add(a.id));
-      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock" || a.kind === "bowel_overdue" || a.kind === "low_fluid");
+      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock" || a.kind === "bowel_overdue" || a.kind === "low_fluid" || a.kind === "backup_failed");
       playAlert(quiet ? "chime" : "crisis");
       haptic([400, 150, 400, 150, 400], { crisis: !quiet });
     }
@@ -227,6 +227,23 @@ export function AlertCenter() {
       advice = ar
         ? `السوائل المستهلكة اليوم أقل من 50% من الهدف اليومي (${p.total_ml ?? 0} مل من أصل ${p.target_ml ?? 1500} مل). يرجى تقديم السوائل للمريض.`
         : `Daily fluid intake is below 50% of the target (${p.total_ml ?? 0} ml of ${p.target_ml ?? 1500} ml). Please offer fluids.`;
+      break;
+    }
+    case "backup_failed": {
+      // Only the Super Admin gets this (issue #51).
+      const reason = String(p.reason || "");
+      if (reason === "invalid_grant") {
+        title = ar ? "انتهى تسجيل دخول Google للنسخ الاحتياطي" : "Google sign-in for backups expired";
+        advice = ar
+          ? "لن تُرفع نسخ احتياطية حتى تعيد تسجيل الدخول. شغّل على الخادم: rclone config reconnect gdrive:"
+          : "No backups are uploaded until you sign in again. Run on the server: rclone config reconnect gdrive:";
+      } else if (reason === "restore_failed") {
+        title = ar ? "فشل اختبار استرجاع النسخة الاحتياطية" : "Backup restore test failed";
+        advice = ar ? "افتح القائمة ← الخادم لمعرفة السبب." : "Open Menu → Server to see why.";
+      } else {
+        title = ar ? "لم تُحفظ نسخة احتياطية منذ أكثر من يوم" : "No off-site backup for more than a day";
+        advice = ar ? "افتح القائمة ← الخادم لمعرفة السبب." : "Open Menu → Server to see why.";
+      }
       break;
     }
     case "vomited":

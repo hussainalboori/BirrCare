@@ -20,6 +20,7 @@ import { ThemePicker, themeLabel, useThemeMode } from "./ThemePicker";
 import { DevicePairingModal } from "./DevicePairingModal";
 import { UpdatesModal } from "./UpdatesModal";
 import { UPDATE_STATUS_EVENT, fetchUpdateStatus } from "@/lib/updates";
+import { backupNeedsAttention, fetchBackupStatus } from "@/lib/backups";
 
 interface CaregiverHeaderProps {
   connectionStatus?: ConnectionStatus;
@@ -40,6 +41,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const [isUpdatesOpen, setIsUpdatesOpen] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
+  const [backupAttention, setBackupAttention] = useState(false);
   const themeMode = useThemeMode();
 
   const role = currentCaregiver?.role || "caregiver";
@@ -51,15 +53,20 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const emergencyToken = useEmergencyToken();
   const router = useRouter();
 
-  // Issue #43: a dot on the Super Admin's menu when an update is waiting.
+  // Issues #43 and #51: a dot on the Super Admin's menu when an update is
+  // waiting or the off-site backups need attention.
   const superAdmin = isSuperAdmin(role);
-  const updateDot = superAdmin && updateReady;
+  const updateDot = superAdmin && (updateReady || backupAttention);
   useEffect(() => {
     if (!superAdmin) return;
-    const refresh = () =>
+    const refresh = () => {
       fetchUpdateStatus()
         .then((s) => setUpdateReady(s.update_available && !s.pending))
         .catch(() => {});
+      fetchBackupStatus()
+        .then((b) => setBackupAttention(typeof b?.reason === "string" && backupNeedsAttention(b)))
+        .catch(() => {});
+    };
     const onEvent = (e: Event) => {
       const type = (e as CustomEvent<{ type?: string }>).detail?.type;
       if (type === "UPDATE_AVAILABLE" || type === "UPDATE_STARTING") refresh();
@@ -95,12 +102,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           {
             key: "updates",
             icon: Download,
-            label: ar ? "التحديثات" : "Updates",
-            short: ar ? "التحديثات" : "Updates",
+            label: ar ? "الخادم: النسخ الاحتياطي والتحديثات" : "Server: backups & updates",
+            short: ar ? "الخادم" : "Server",
             tone: "bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 dark:hover:bg-sky-900/60",
             onClick: () => setIsUpdatesOpen(true),
-            hint: updateReady ? (ar ? "تحديث جديد" : "New update") : undefined,
-            dot: updateReady,
+            hint: backupAttention
+              ? ar ? "النسخ الاحتياطي يحتاج انتباهك" : "Backups need attention"
+              : updateReady ? (ar ? "تحديث جديد" : "New update") : undefined,
+            dot: updateReady || backupAttention,
           },
         ]
       : []),

@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { fetchApi } from "@/lib/api";
 import { CHECKER_COMMAND, UPDATE_STATUS_EVENT, UpdateStatus, fetchUpdateStatus, shortSha } from "@/lib/updates";
 import { Ltr } from "./Ltr";
+import { BackupsCard } from "./BackupsCard";
 
 // Super Admin only (issue #43): see what is running, read what changed, and
 // install when the house is calm, or skip. Nothing installs by itself unless
@@ -148,12 +149,12 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={ar ? "التحديثات" : "Updates"}
+        aria-label={ar ? "الخادم: النسخ الاحتياطي والتحديثات" : "Server: backups & updates"}
         data-testid="updates-card"
         className="relative max-h-dvh w-full max-w-lg overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-3xl dark:border-slate-800 dark:bg-slate-900"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-black text-slate-900 dark:text-white">{ar ? "التحديثات" : "Updates"}</h2>
+          <h2 className="text-lg font-black text-slate-900 dark:text-white">{ar ? "الخادم" : "Server"}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -163,6 +164,11 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           </button>
         </div>
 
+        <div className="mb-4 border-b border-slate-200 pb-4 dark:border-slate-800">
+          <BackupsCard ar={ar} />
+        </div>
+
+        <h3 className="mb-2 text-base font-black text-slate-900 dark:text-white">{ar ? "التحديثات" : "Updates"}</h3>
         {!s ? (
           <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">{ar ? "جارٍ التحميل..." : "Loading..."}</p>
         ) : (

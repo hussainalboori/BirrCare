@@ -65,7 +65,7 @@ test("Super Admin sees the dot and the change list; installing tells every phone
   await expect(sister.getByTestId("menu-update-dot")).toHaveCount(0);
 
   await admin.getByRole("button", { name: "Menu" }).click();
-  await admin.getByRole("button", { name: /^Updates/ }).click();
+  await admin.getByRole("button", { name: /^Server/ }).click();
   const card = admin.getByTestId("updates-card");
   await expect(card).toContainText("Running 8ecc00c");
   await expect(card).toContainText("Update available · 2 changes");
@@ -76,7 +76,7 @@ test("Super Admin sees the dot and the change list; installing tells every phone
 
   // A caregiver has no Updates entry at all.
   await sister.getByRole("button", { name: "Menu" }).click();
-  await expect(sister.getByRole("button", { name: /^Updates/ })).toHaveCount(0);
+  await expect(sister.getByRole("button", { name: /^Server/ })).toHaveCount(0);
   await sister.keyboard.press("Escape");
 
   await admin.getByTestId("update-install").click();
@@ -93,7 +93,7 @@ test("ar: the Updates card fits a phone", async ({ browser, baseURL }) => {
   const shared: Shared = { queues: new Map(), installs: [] };
   const admin = await phone(await browser.newContext(), baseURL!, shared, { id: "sa1", name: "Hussain", role: "super_admin" }, "ar");
   await admin.getByRole("button", { name: "القائمة" }).click();
-  await admin.getByRole("button", { name: /^التحديثات/ }).click();
+  await admin.getByRole("button", { name: /^الخادم/ }).click();
   await expect(admin.getByTestId("updates-card")).toContainText("يوجد تحديث");
   expect(await admin.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });

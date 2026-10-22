@@ -1,0 +1,12 @@
+# User unit: install to ~/.config/systemd/user/ (see docs/DEPLOYMENT.md §9)
+[Unit]
+Description=Birrcare encrypted off-site backup (restic)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# ~/.local/bin first: restic, rclone and jq can be installed there without root.
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=%h/birrcare/scripts/backup.sh
+TimeoutStartSec=2h

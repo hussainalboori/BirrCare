@@ -106,6 +106,10 @@ jobs:
       - name: Updater shell tests
         run: bash scripts/tests/auto-deploy.test.sh
 
+      # Off-site backups: integrity gate, no .env, Back up now, invalid_grant (issue #51)
+      - name: Backup shell tests
+        run: bash scripts/tests/backup.test.sh
+
       - name: Build Backend Container
         uses: docker/build-push-action@v7
         with:

@@ -1,0 +1,11 @@
+# User unit: install to ~/.config/systemd/user/ (see docs/DEPLOYMENT.md §9)
+# "Back up now" in the app writes data/backup/request.json; start right away.
+[Unit]
+Description=Run a Birrcare backup as soon as the Super Admin asks
+
+[Path]
+PathChanged=%h/birrcare/data/backup/request.json
+Unit=birrcare-backup.service
+
+[Install]
+WantedBy=paths.target

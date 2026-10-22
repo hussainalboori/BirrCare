@@ -187,7 +187,7 @@ You should see a CSP with `frame-ancestors 'none'`, `X-Frame-Options: DENY` and 
 
 ## 8. Updates: offered in the app, installed when you say so
 
-`scripts/auto-deploy.sh` checks `main` every 5 minutes. When there is a new commit **whose CI run on GitHub passed**, it tells the app, and the Super Admin sees a dot on **Menu → Updates**. That screen shows:
+`scripts/auto-deploy.sh` checks `main` every 5 minutes. When there is a new commit **whose CI run on GitHub passed**, it tells the app, and the Super Admin sees a dot on **Menu → Server**. That screen shows:
 
 - the version running now;
 - the list of changes;
@@ -253,27 +253,142 @@ git pull
 
 ## 9. Backups
 
-### Automatic snapshot on every deploy
+A dead disk or SD card, a lost server or ransomware must not take the medication and vitals history with it. Backups therefore go **off the machine**, encrypted, every 6 hours, and the Super Admin sees in the app whether they work (**Menu → Server**).
 
-`deploy.sh` copies `data/birrcare.db` to `data/backups/birrcare_backup_YYYYMMDD_HHMMSS.db` before rebuilding, and keeps the **last 10**.
+### What runs
 
-### Daily backups and an off-host copy
+- **Before every update:** `deploy.sh` saves a snapshot in `data/backups/` (last 10 kept). It asks the running app for a consistent copy; if the app is down it uses `sqlite3 .backup`; it never copies the live database file with `cp`.
+- **Every 6 hours:** `scripts/backup.sh`:
+  1. asks the app for a consistent snapshot (`VACUUM INTO`), checked with `integrity_check`;
+  2. uploads it and `data/photos/` with **restic**, encrypted on the server before anything leaves it, so Google (or Cloudflare / Backblaze) only ever holds unreadable data;
+  3. keeps the last 8, plus one a day for 30 days, one a week for 12 weeks and one a month for 12 months;
+  4. copies the newest snapshot to a **second destination**, if you set one;
+  5. once a week, **restores** the newest snapshot and has the app check it (integrity, and no doses or readings missing);
+  6. writes `data/backup/status.json`, which **Menu → Server** shows. If there's no successful backup for 24 hours, the restore test fails, or Google sign-in expires, the Super Admin gets an alert.
 
-Deploy snapshots only happen when there is an update. Add a daily backup and copy it **off the machine**, because a dead SD card or disk takes `data/backups/` with it:
+`.env` is never backed up: it holds `SESSION_SECRET`.
+
+**Free places to keep the backups** (the database is a few MB, so any free tier lasts years):
+
+| Destination | Free allowance | Use it as |
+|---|---|---|
+| Google Drive (personal account) | 15 GB shared with Gmail and Photos | main copy |
+| Cloudflare R2 | 10 GB; may ask for a payment method to enable | second copy |
+| Backblaze B2 | first 10 GB | second copy |
+| USB drive or another machine | free | offline second copy |
+
+### Setup
+
+**1. Install restic and rclone on the server.** With root: `sudo apt install restic rclone`. Without root, download the official Linux builds from <https://github.com/restic/restic/releases> and <https://rclone.org/downloads/> into `~/.local/bin/`.
+
+**2. Make a Google OAuth client** (one time, on a laptop, in <https://console.cloud.google.com/>):
+
+1. Create a project, open **APIs & Services → Library** and enable **Google Drive API**.
+2. **OAuth consent screen:** User type *External*, add your email as a test user, then set **Publishing status: In production**. *If you leave it in "Testing", Google expires the sign-in after 7 days and backups stop; the app will then show "Google sign-in for backups expired".*
+3. **Credentials → Create credentials → OAuth client ID**, type **Desktop app**. Keep the client ID and secret.
+
+(A Google *service account* doesn't work for a personal Drive any more: new service accounts can't own files since April 2025.)
+
+**3. Connect rclone to Google Drive.** The server has no browser, so sign in on the laptop:
+
+```bash
+# On the laptop (with rclone installed):
+rclone authorize "drive" "<client id>" "<client secret>"
+# A browser opens; sign in with the family Google account. Copy the token it prints.
+
+# On the server:
+rclone config create gdrive drive client_id="<client id>" client_secret="<client secret>" \
+  scope=drive.file token='<paste the token, the whole {...} line>'
+rclone lsd gdrive:            # should answer without errors
+```
+
+`scope=drive.file` lets rclone see only the folder it creates, not the rest of the Drive.
+
+**4. Create the encrypted repository and its password.**
+
+```bash
+mkdir -p ~/.config/birrcare && chmod 700 ~/.config/birrcare
+openssl rand -base64 32 > ~/.config/birrcare/restic-password
+chmod 600 ~/.config/birrcare/restic-password
+restic -r rclone:gdrive:birrcare-backups --password-file ~/.config/birrcare/restic-password init
+cat ~/.config/birrcare/restic-password
+```
+
+> **Print that password and keep it with the family's important papers.** Without it, nobody can open the backups, not even you. If the server dies, the password and the Google sign-in are all you need to get everything back.
+
+**5. Settings file** `~/.config/birrcare/backup.env` (plain `KEY=value` lines, quotes optional):
+
+```bash
+RESTIC_REPOSITORY=rclone:gdrive:birrcare-backups
+RESTIC_PASSWORD_FILE=~/.config/birrcare/restic-password
+BACKUP_NAME=Google Drive
+```
+
+Then `chmod 600 ~/.config/birrcare/backup.env` and run the first backup by hand:
+
+```bash
+~/birrcare/scripts/backup.sh
+cat ~/birrcare/data/backup/status.json
+```
+
+The first run also does the restore test. **Menu → Server** should now show "Backups are working".
+
+**6. Run it every 6 hours.** With systemd user units (needs `loginctl enable-linger`, see §8):
+
+```bash
+cp ~/birrcare/scripts/systemd/birrcare-backup.{service,timer,path} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now birrcare-backup.timer birrcare-backup.path
+```
+
+Without root (e.g. an LXC container where linger is refused), use the user's crontab instead:
 
 ```bash
 crontab -e
-# Daily at 03:30: consistent snapshot, keep 30 days
-30 3 * * * cd ~/birrcare && mkdir -p data/backups/daily && sqlite3 data/birrcare.db ".backup 'data/backups/daily/birrcare_$(date +\%F).db'" && find data/backups/daily -name '*.db' -mtime +30 -delete
+PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
+15 */6 * * * /home/<you>/birrcare/scripts/backup.sh >> /home/<you>/.local/state/birrcare/backup.log 2>&1
+* * * * * /home/<you>/birrcare/scripts/backup.sh --if-requested >> /home/<you>/.local/state/birrcare/backup.log 2>&1
 ```
 
-Then sync `data/backups/` somewhere else, such as another machine, an encrypted cloud folder or a USB drive. It contains health records, so keep the copy private and encrypted.
+The second line makes **Back up now** in the app start within a minute.
 
-Medicine photos (taken from the phone in the medicine form) are plain files in `data/photos/`, not in the database. Sync that folder too; a restored database without it shows the default pill picture instead.
+### A second copy (recommended)
 
-Never back up by copying `birrcare.db` alone while the backend runs: the newest changes may still be in `birrcare.db-wal`. Always use `sqlite3 … ".backup …"`.
+Three copies on two kinds of storage, one of them elsewhere: Google Drive plus one of these. Create the second repository with the **same password** and the same chunking, so copies stay small:
+
+```bash
+restic -r <second repo> --password-file ~/.config/birrcare/restic-password init \
+  --from-repo rclone:gdrive:birrcare-backups --from-password-file ~/.config/birrcare/restic-password --copy-chunker-params
+```
+
+and add it to `backup.env`:
+
+```bash
+# Cloudflare R2 (bucket + R2 API token with Object Read & Write)
+RESTIC_REPOSITORY2=s3:https://<account id>.r2.cloudflarestorage.com/birrcare-backups
+AWS_ACCESS_KEY_ID=<r2 access key id>
+AWS_SECRET_ACCESS_KEY=<r2 secret access key>
+BACKUP_NAME2=Cloudflare R2
+
+# or Backblaze B2 (S3-compatible endpoint of your bucket's region)
+# RESTIC_REPOSITORY2=s3:https://s3.<region>.backblazeb2.com/<bucket>
+
+# or a USB drive that stays plugged in
+# RESTIC_REPOSITORY2=/media/usb/birrcare-backups
+```
+
+### When the app says something is wrong
+
+| Menu → Server says | Do this on the server |
+|---|---|
+| Google sign-in for backups expired | `rclone config reconnect gdrive:` (sign in on the laptop again as in step 3). Check the OAuth client is **In production**. |
+| No backup for more than a day | `tail -n 30 ~/.local/state/birrcare/backup.log` or `journalctl --user -u birrcare-backup -n 30`; is the app running and the timer / cron line in place? |
+| The weekly restore test failed | Run `FORCE_RESTORE_TEST=1 ~/birrcare/scripts/backup.sh` and read the error. Don't delete anything; tell whoever maintains the server. |
+| Off-site backups aren't set up yet | Follow the setup above. |
 
 ## 10. Restore a backup
+
+### From a pre-update snapshot (same server)
 
 ```bash
 cd ~/birrcare
@@ -284,6 +399,32 @@ rm -f data/birrcare.db-wal data/birrcare.db-shm              # stale WAL files b
 docker compose start birrcare-backend
 curl -s http://127.0.0.1:8080/api/v1/health
 ```
+
+### From Google Drive onto a new machine
+
+You need only the **restic password** (printed in step 4) and the **Google account**.
+
+1. Prepare the machine as in §1–§3 (Docker, `git clone`, a new `.env`; a new `SESSION_SECRET` just means everyone signs in again). Install restic and rclone and connect rclone to Google Drive as in setup steps 1–3.
+2. Restore the newest snapshot:
+
+   ```bash
+   echo '<the printed password>' > /tmp/restic-password
+   restic -r rclone:gdrive:birrcare-backups --password-file /tmp/restic-password snapshots
+   restic -r rclone:gdrive:birrcare-backups --password-file /tmp/restic-password restore latest --target /tmp/restore
+   ```
+
+3. Put the database and the photos in place (restic keeps the original folder names under `/tmp/restore`):
+
+   ```bash
+   cd ~/birrcare && mkdir -p data
+   cp "$(find /tmp/restore -path '*backup/staging/birrcare.db' | head -n 1)" data/birrcare.db
+   cp -r "$(find /tmp/restore -type d -name photos | head -n 1)" data/photos
+   rm -f data/birrcare.db-wal data/birrcare.db-shm
+   rm -rf /tmp/restore /tmp/restic-password
+   ```
+
+4. Start it: `SKIP_DB_BACKUP=1 ./scripts/deploy.sh` (there is no running app yet to take a pre-update snapshot from). Open the app and check that the last doses and readings are there.
+5. Set up backups again on the new machine (§9), reusing the same repository and password.
 
 Everything recorded after the backup was taken is lost, so tell the family which doses and readings to re-enter.
 
@@ -303,7 +444,7 @@ echo <good-sha> > ~/.local/state/birrcare/deployed-sha             # tell the up
 systemctl --user start birrcare-deploy.timer birrcare-deploy.path
 ```
 
-With manual updates (the default) the app will offer the bad commit again, because it is still the latest `main`. Press **Skip this version** in Menu → Updates; a fixed commit on `main` is offered as soon as its CI passes. If you switched on **Automatic updates**, switch it off first, or keep the timer stopped until `main` is fixed. Otherwise the updater installs the bad commit again.
+With manual updates (the default) the app will offer the bad commit again, because it is still the latest `main`. Press **Skip this version** in Menu → Server; a fixed commit on `main` is offered as soon as its CI passes. If you switched on **Automatic updates**, switch it off first, or keep the timer stopped until `main` is fixed. Otherwise the updater installs the bad commit again.
 
 ## 12. Day-to-day operations
 
@@ -374,5 +515,6 @@ Check that the tunnel points at port 3000, which proxies the live stream, and no
 - [ ] `EMERGENCY_NUMBER` and `DOCTOR_PHONE` set and tested from a phone
 - [ ] Emergency card filled in, QR printed and on the fridge or front door, Access **Bypass** for `/emergency/*` only, tested from a logged-out phone
 - [ ] Lock-screen alerts turned on and tested on every family phone (iPhone: from the Home Screen app)
-- [ ] Updater timer and path units enabled with linger (Menu → Updates shows no "checker isn't running" notice)
+- [ ] Updater timer and path units enabled with linger (Menu → Server shows no "checker isn't running" notice)
+- [ ] Off-site backups set up (§9); restic password printed and stored with the family's papers; Menu → Server shows "Backups are working"
 - [ ] Daily backup plus an off-host copy, and one test restore done
