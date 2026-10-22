@@ -86,6 +86,16 @@ load_config() {
   done <"$1"
 }
 
+# Cron appends to these logs (systemd uses the journal, which rotates itself):
+# keep them from growing forever.
+trim_log() {
+  local f="$1"
+  if [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ]; then
+    tail -n 2000 "$f" >"${f}.tmp" && mv -f "${f}.tmp" "$f"
+  fi
+  return 0
+}
+
 main() {
   local project_root only_if_requested="" only_if_due=""
   project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -100,6 +110,7 @@ main() {
   local restore_every="${RESTORE_TEST_EVERY_DAYS:-7}"
 
   mkdir -p "$BACKUP_DIR"
+  trim_log "${XDG_STATE_HOME:-$HOME/.local/state}/birrcare/backup.log"
   local request="${BACKUP_DIR}/request.json"
   PROCESSING="${BACKUP_DIR}/request.processing"
   if [ -n "$only_if_requested" ] && [ ! -f "$request" ]; then

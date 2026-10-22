@@ -118,6 +118,7 @@ jobs:
           bash scripts/tests/deploy-config.test.sh
           bash scripts/tests/install-deps.test.sh
           bash scripts/tests/deploy.test.sh
+          bash scripts/tests/setup.test.sh
 
       - name: Build Backend Container
         uses: docker/build-push-action@v7
@@ -177,6 +178,9 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
+          # The version /api/v1/health reports; deploy.sh checks it after pulling.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
           cache-from: type=gha
@@ -198,6 +202,8 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           cache-from: type=gha

@@ -87,7 +87,9 @@ test("no EMERGENCY_NUMBER: the call button still renders from the fallback, and 
   await page.keyboard.type("100");
   const fallback = page.getByTestId("live-crisis").locator('a[href^="tel:"]');
   await expect(fallback).toHaveCount(1);
-  await expect(fallback).toHaveAttribute("href", /^tel:\d+$/);
+  // The server's EMERGENCY_NUMBER (999 in the test server), sent inside the page,
+  // not a number compiled into the build.
+  await expect(fallback).toHaveAttribute("href", "tel:999");
   await expect(page.getByTestId("emergency-setup-banner")).toBeVisible();
 });
 

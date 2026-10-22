@@ -5,6 +5,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { fetchApi } from "@/lib/api";
 import { Ltr } from "./Ltr";
 import { Phone, Siren } from "lucide-react";
+import { useDefaultEmergency } from "@/lib/emergencyDefault";
 
 export interface Contacts {
   emergency_number?: string;
@@ -14,12 +15,11 @@ export interface Contacts {
 
 /**
  * Emergency number used when the server has none or can't be reached (offline,
- * Wi-Fi blip): the last number this phone received, else a build-time default
- * (NEXT_PUBLIC_DEFAULT_EMERGENCY, set from EMERGENCY_NUMBER when the image is
- * built), else 112 (the GSM emergency number most mobile networks route).
- * Calling must never depend on the network (issue #11).
+ * Wi-Fi blip): the last number this phone received, else the server's
+ * EMERGENCY_NUMBER sent inside the (cached) page, else 112 (the GSM emergency
+ * number most mobile networks route). Calling must never depend on the
+ * network (issue #11).
  */
-export const BUILD_EMERGENCY_NUMBER = process.env.NEXT_PUBLIC_DEFAULT_EMERGENCY || "112";
 const CACHE_KEY = "birrcare_contacts";
 
 function cachedContacts(): Contacts {
@@ -57,6 +57,7 @@ function loadContacts(): Promise<Contacts | null> {
 export function useContacts(): Contacts & { emergency: string; configured: boolean | null } {
   const [contacts, setContacts] = useState<Contacts>({});
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const fallback = useDefaultEmergency();
   useEffect(() => {
     let alive = true;
     setContacts(cachedContacts());
@@ -69,7 +70,7 @@ export function useContacts(): Contacts & { emergency: string; configured: boole
       alive = false;
     };
   }, []);
-  return { ...contacts, emergency: contacts.emergency_number || BUILD_EMERGENCY_NUMBER, configured };
+  return { ...contacts, emergency: contacts.emergency_number || fallback, configured };
 }
 
 const STEPS = {

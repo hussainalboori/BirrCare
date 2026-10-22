@@ -14,6 +14,8 @@ import { AlertCenter, EmergencySetupBanner, TimezoneMismatchBanner } from "@/com
 import { Navigation } from "@/components/Navigation";
 import { ThemeKeeper } from "@/components/ThemePicker";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { EmergencyDefaultProvider } from "@/lib/emergencyDefault";
+import { cleanEmergencyNumber } from "@/lib/emergencyNumber";
 import { THEME_COLORS, THEME_COOKIE, THEME_SCRIPT, parseThemeMode, themeClasses } from "@/lib/theme";
 
 export const metadata: Metadata = {
@@ -64,6 +66,8 @@ export default async function RootLayout({
       </head>
       <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 font-sans selection:bg-emerald-500 selection:text-white pb-[calc(5rem+var(--outbox-h,0px)+env(safe-area-inset-bottom))]">
         <LanguageProvider initialLocale={locale}>
+          {/* Read from the server's settings at request time, not baked into the build. */}
+          <EmergencyDefaultProvider value={cleanEmergencyNumber(process.env.EMERGENCY_NUMBER)}>
           <CaregiverProvider>
             <EmergencySetupBanner />
             <TimezoneMismatchBanner />
@@ -78,6 +82,7 @@ export default async function RootLayout({
             {children}
             <Navigation />
           </CaregiverProvider>
+          </EmergencyDefaultProvider>
         </LanguageProvider>
       </body>
     </html>

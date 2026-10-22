@@ -34,16 +34,21 @@ case "\$1" in
   info) [ -f "$W/docker-down" ] && exit 1; exit 0 ;;
   inspect) [ -f "$W/running" ] || exit 1; case "\$*" in *birrcare_backend*) echo sha256:oldback ;; *) echo sha256:oldfront ;; esac ;;
   tag) exit 0 ;;
+  pull) [ -f "$W/pull-ok" ] || { echo "denied: requires authentication"; exit 1; } ;;
   image)
     case "\$2" in
-      inspect) [ -f "$W/has-prev" ] || exit 1; case "\$*" in *'{{range'*) echo "GIT_SHA=${OLD}cccc" ;; esac ;;
-      prune) exit 0 ;;
+      inspect)
+        case "\$*" in
+          *ghcr.io*) cat "$W/pulled-version" 2>/dev/null || echo "GIT_SHA=${NEW}" ;;
+          *) [ -f "$W/has-prev" ] || exit 1; case "\$*" in *'{{range'*) echo "GIT_SHA=${OLD}cccc" ;; esac ;;
+        esac ;;
+      prune | rm) exit 0 ;;
     esac ;;
   builder) exit 0 ;;
   compose)
     case "\$2" in
-      build) [ -f "$W/build-fails" ] && { echo "ERROR: go build failed"; exit 1; }; echo built ;;
-      up) case "\$*" in *--no-build*) touch "$W/rolled-back" ;; esac ;;
+      build) [ -f "$W/build-fails" ] && { echo "ERROR: go build failed"; exit 1; }; echo "#12 [builder 4/6] RUN go build" ;;
+      up) case "\$*" in *--force-recreate*) touch "$W/rolled-back" ;; esac ;;
       logs) echo "birrcare_backend | panic: migration failed" ;;
       ps) printf 'birrcare_backend\tUp 2 minutes\nbirrcare_frontend\tUp 2 minutes\n' ;;
     esac ;;
@@ -72,7 +77,7 @@ case "\$url" in
   *) exit 7 ;;
 esac
 EOF
-  printf '#!/usr/bin/env bash\necho %s\n' "$NEW" >"$W/bin/git"
+  printf '#!/usr/bin/env bash\n[ "$1" = remote ] && { echo https://github.com/HussainAlboori/BirrCare.git; exit 0; }\necho %s\n' "$NEW" >"$W/bin/git"
   chmod +x "$W/bin/"* "$R/scripts/"*.sh
 }
 
@@ -99,13 +104,48 @@ setup
 run
 check "good: exit 0" "$(cat "$W/rc")" "0"
 check "good: seven steps" "$(grep -cE '^\[[1-7]/7\]' "$W/out")" "7"
-check "good: no docker build noise on screen" "$(out_has 'built')" "0"
-check "good: build output in the log" "$(grep -l built "$R"/data/logs/deploy-*.log | wc -l | tr -d ' ')" "1"
+check "good: no docker build noise on screen" "$(out_has 'RUN go build')" "0"
+check "good: build output in the log" "$(grep -l 'RUN go build' "$R"/data/logs/deploy-*.log | wc -l | tr -d ' ')" "1"
 check "good: previous version kept" "$(dcalls 'tag sha256:oldback birrcare-backend:previous')" "1"
 check "good: previous kept before building" "$(grep -nE '^(tag sha256:oldback|compose build)' "$W/docker-calls" | cut -d: -f2 | cut -d' ' -f1 | tr '\n' ' ')" "tag compose "
 check "good: new version confirmed" "$(out_has 'version 2222222 is answering')" "1"
+check "good: tried the CI image first" "$(dcalls 'pull ghcr.io/hussainalboori/birrcare-backend:sha-2222222')" "1"
+check "good: built here when it can't be downloaded" "$(out_has 'built here')" "1"
 check "good: database copied first" "$(ls "$R"/data/backups/ | grep -c birrcare_backup_)" "1"
 check "good: says done" "$(out_has 'Done in')" "1"
+rm -rf "$W"
+
+# 1b. The CI-built images for this version download: no build at all.
+setup
+touch "$W/pull-ok"
+run
+check "pull: exit 0" "$(cat "$W/rc")" "0"
+check "pull: says downloaded" "$(out_has 'downloaded')" "1"
+check "pull: nothing built" "$(dcalls 'compose build')" "0"
+check "pull: used as the local images" "$(dcalls 'tag ghcr.io/hussainalboori/birrcare-frontend:sha-2222222 birrcare-frontend:local')" "1"
+check "pull: started without building" "$(dcalls 'compose up -d --no-build --remove-orphans')" "1"
+check "pull: registry names dropped afterwards" "$(dcalls 'image rm ghcr.io/hussainalboori/birrcare-backend:sha-2222222')" "1"
+rm -rf "$W"
+
+# 1c. A downloaded image of another version is not used.
+setup
+touch "$W/pull-ok"
+echo "GIT_SHA=9999999" >"$W/pulled-version"
+run
+check "wrong pulled version: built instead" "$(dcalls 'compose build')" "1"
+rm -rf "$W"
+
+# 1d. --pull: download or nothing; --build: never download.
+setup
+run --pull
+check "--pull without images: exit 1" "$(cat "$W/rc")" "1"
+check "--pull without images: nothing built" "$(dcalls 'compose build')" "0"
+check "--pull without images: nothing started" "$(dcalls 'compose up')" "0"
+: >"$W/docker-calls"
+touch "$W/pull-ok"
+run --build
+check "--build: no download" "$(dcalls '^pull')" "0"
+check "--build: built" "$(dcalls 'compose build')" "1"
 rm -rf "$W"
 
 # 2. The new version never answers: back to the previous images by itself.

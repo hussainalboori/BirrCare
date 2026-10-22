@@ -183,6 +183,16 @@ deploy() {
   [ "$status" = success ]
 }
 
+# Cron appends to these logs (systemd uses the journal, which rotates itself):
+# keep them from growing forever.
+trim_log() {
+  local f="$1"
+  if [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ]; then
+    tail -n 2000 "$f" >"${f}.tmp" && mv -f "${f}.tmp" "$f"
+  fi
+  return 0
+}
+
 main() {
   local project_root branch
   project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -202,6 +212,7 @@ main() {
   done
 
   mkdir -p "$STATE_DIR" "$UPDATE_DIR"
+  trim_log "${STATE_DIR}/updater.log"
   cd "$project_root"
 
   # One run at a time: the timer and the path unit can fire together.

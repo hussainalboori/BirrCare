@@ -74,7 +74,9 @@ request() {
 # 1. No policy.json + new CI-passed commit → offered, not deployed.
 setup
 touch "$W/db-change"
+seq 1 200000 >"$W/state/birrcare/updater.log" # a cron log that grew too big
 run
+check "log: trimmed to the last 2000 lines" "$(wc -l <"$W/state/birrcare/updater.log" | tr -d ' ')" "2000"
 check "manual by default: available.json offers the commit" "$(avail .target_sha)" "$T1"
 check "manual by default: CI recorded" "$(avail .ci)" "success"
 check "manual by default: commit list" "$(avail '.commits[0].subject')" "fix(vitals): larger numbers"

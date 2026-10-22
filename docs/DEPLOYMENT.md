@@ -33,8 +33,10 @@ The tools are installed by one script (step 2).
 ```bash
 git clone https://github.com/hussainalboori/BirrCare.git ~/birrcare
 cd ~/birrcare
-sudo ./scripts/install-deps.sh
+./scripts/setup.sh
 ```
+
+`setup.sh` does steps 2 to 4 in one go: the installer below (only if something is missing), the settings questions (step 3) and the first start (step 4). Run it as your normal user. To run the installer on its own: `sudo ./scripts/install-deps.sh`.
 
 **Run it once, with `sudo`.** It asks for your password one time and installs everything in that one run. Afterwards `deploy.sh`, updates from the app and backups all run as your normal user and never ask for a password. It checks what's already there and asks before each step:
 
@@ -104,7 +106,7 @@ Updates are installed from **Menu → Server** with nobody at the terminal, so t
 |---|---|---|
 | `APP_TIMEZONE` | yes | IANA zone, e.g. `Asia/Bahrain`. Decides which day a dose belongs to; the backend refuses to start without it. |
 | `SUPER_ADMIN_USER`, `SUPER_ADMIN_PIN` | first install only | The first account, created when the database is empty. |
-| `EMERGENCY_NUMBER` | yes | Crisis call button. Also built into the app as the offline fallback, so changing it needs `./scripts/deploy.sh` (rebuild). |
+| `EMERGENCY_NUMBER` | yes | Crisis call button. Also sent inside every page as the offline fallback; after changing it, `./scripts/deploy.sh restart`. |
 | `DOCTOR_NAME`, `DOCTOR_PHONE` | optional | The doctor's call button; empty hides it. |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | optional | From step 6, to map Cloudflare sign-in to caregivers by email. |
 | `PUSH_CONTACT` | optional | Contact (email or https link) given to push services for lock-screen alerts. |
@@ -128,13 +130,28 @@ It first asks the questions from step 3, then shows seven short steps. The full 
 [1/7] Checks ................... ✔ 13 GB free
 [2/7] Settings ................. ✔ time zone Asia/Bahrain
 [3/7] Database backup .......... ✔ data/backups/birrcare_backup_20261022_091500.db
-[4/7] Building ................. ✔ version 1fa215d · 3 min 12 s
+[4/7] New version .............. ✔ version 1fa215d · downloaded · 25 s
 [5/7] Starting ................. ✔
 [6/7] Health check ............. ✔ version 1fa215d is answering
 [7/7] Clean-up ................. ✔ disk 31% used
       ✔ reachable from the internet: https://care.example.com
 ✔ Done in 3 min 40 s. Open https://care.example.com
 ```
+
+**Downloaded, not built.** CI builds and checks every version and publishes its images (`ghcr.io/<owner>/birrcare-backend` and `-frontend`, tagged `sha-<version>`). `deploy.sh` downloads the images for exactly the version being installed. This takes seconds, uses no build tools and leaves no build cache on the disk. It checks that each image reports that version. It builds on the server instead, as before, when:
+
+- the packages are private;
+- the server has no internet;
+- the processor isn't a PC (x86-64) one, e.g. a Raspberry Pi;
+- you pass `--build`.
+
+The household's settings, including the emergency number, are read when the app starts, so the same images fit every household.
+
+To let the server download them, make both packages public once. They contain only the app's code (already public), never any data:
+
+1. On GitHub, open your profile → **Packages** → `birrcare-backend` → **Package settings**.
+2. Under **Danger Zone**, choose **Change visibility** → **Public**.
+3. Do the same for `birrcare-frontend`.
 
 What it checks before changing anything:
 
@@ -540,7 +557,7 @@ With manual updates (the default) the app will offer the bad commit again, becau
 | App logs | `./scripts/deploy.sh logs` (or `logs backend` / `logs frontend`, add `-f` to follow) |
 | Restart without rebuilding | `./scripts/deploy.sh restart` |
 | Go back to the previous version | `./scripts/deploy.sh rollback` |
-| Deploy the current code | `./scripts/deploy.sh` (`--verbose` shows every line) |
+| Deploy the current code | `./scripts/deploy.sh` (`--verbose` shows every line, `--build` builds here instead of downloading) |
 | Past deploys | `ls data/logs/` |
 | Updater logs | `journalctl --user -u birrcare-deploy.service -n 50`, or `~/.local/state/birrcare/updater.log` with cron |
 | Stop | `docker compose down` |

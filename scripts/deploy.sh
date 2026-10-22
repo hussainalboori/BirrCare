@@ -6,11 +6,16 @@ set -euo pipefail
 #   ./scripts/deploy.sh             build and start the current version (default)
 #   ./scripts/deploy.sh status      versions, containers, health, disk, backups, timers
 #   ./scripts/deploy.sh logs [backend|frontend] [-f]   recent app logs
-#   ./scripts/deploy.sh restart     restart without rebuilding
+#   ./scripts/deploy.sh restart     restart without rebuilding (applies .env changes)
 #   ./scripts/deploy.sh rollback    go back to the version before the last deploy
 #
 # Options: --verbose (show everything, not just the steps), --yes (don't ask),
-#          --lang ar|en.
+#          --build (always build here) / --pull (only download), --lang ar|en.
+#
+# By default a deploy downloads the images CI already built and checked for
+# exactly this version (ghcr.io/<owner>/birrcare-*:sha-<version>), which takes
+# seconds; if they can't be downloaded (private packages, no internet, an ARM
+# board such as a Raspberry Pi), it builds here instead, as before.
 #
 # A deploy shows seven short steps; the full output goes to data/logs/. If the
 # new version doesn't come up, it goes back to the previous one by itself (and,
@@ -28,6 +33,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 CMD="deploy"
+GET_MODE="${BIRRCARE_GET_MODE:-auto}" # auto | pull | build
 VERBOSE=""
 ASSUME_YES=""
 LANG_SEL=""
@@ -39,6 +45,8 @@ while [ $# -gt 0 ]; do
     backend | frontend) LOG_SERVICE="birrcare-$1" ;;
     -f | --follow) LOG_FOLLOW=1 ;;
     --verbose | -v) VERBOSE=1 ;;
+    --build) GET_MODE="build" ;;
+    --pull) GET_MODE="pull" ;;
     --yes | -y) ASSUME_YES=1 ;;
     --lang) LANG_SEL="$2"; shift ;;
     -h | --help | help) sed -n '3,27p' "$0"; exit 0 ;;
@@ -54,6 +62,17 @@ HEALTH_TIMEOUT="${BIRRCARE_HEALTH_TIMEOUT:-120}"
 MIN_FREE_GB="${BIRRCARE_MIN_FREE_GB:-3}"
 BACKEND_URL="http://127.0.0.1:8080"
 FRONTEND_URL="http://127.0.0.1:3000"
+# Where CI publishes the images: ghcr.io/<GitHub owner of this checkout>.
+registry_prefix() {
+  if [ -n "${BIRRCARE_REGISTRY:-}" ]; then
+    printf '%s' "$BIRRCARE_REGISTRY"
+    return
+  fi
+  local owner
+  owner="$(git remote get-url origin 2>/dev/null | sed -nE 's#^(https://github\.com/|git@github\.com:)([^/]+)/.*#\2#p' | tr '[:upper:]' '[:lower:]')"
+  if [ -n "$owner" ]; then printf 'ghcr.io/%s' "$owner"; fi
+  return 0 # no GitHub remote: no download, build here
+}
 # docker-compose.yml names the images, so the previous ones can be kept.
 IMG_BACKEND="birrcare-backend:local"
 IMG_FRONTEND="birrcare-frontend:local"
@@ -319,7 +338,7 @@ cmd_deploy() {
   fi
 
   # 4. Build. Keep the images that are running now, to go back to.
-  step "$(t "Building" "البناء")"
+  step "$(t "New version" "الإصدار الجديد")"
   GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo dev)}"
   export GIT_SHA
   local want="${GIT_SHA:0:7}" b_id f_id
@@ -329,20 +348,44 @@ cmd_deploy() {
     HAVE_PREVIOUS=1
     PREV_VERSION="$(image_version "$PREV_BACKEND")"
   fi
-  # Leftovers from a build that failed half-way.
-  run docker builder prune -af || true
   t0=$SECONDS
-  if ! run docker compose build --pull; then
-    fail_step "$(t "the build failed" "فشل البناء")"
+  local how="" reg
+  # Download the images CI built and checked for exactly this version…
+  reg="$(registry_prefix)"
+  if [ "$GET_MODE" != "build" ] && [ -n "$reg" ] && [ "$want" != "dev" ]; then
+    if run docker pull "${reg}/birrcare-backend:sha-${want}" && run docker pull "${reg}/birrcare-frontend:sha-${want}" &&
+      [ "$(image_version "${reg}/birrcare-backend:sha-${want}")" = "$want" ] &&
+      [ "$(image_version "${reg}/birrcare-frontend:sha-${want}")" = "$want" ]; then
+      run docker tag "${reg}/birrcare-backend:sha-${want}" "$IMG_BACKEND"
+      run docker tag "${reg}/birrcare-frontend:sha-${want}" "$IMG_FRONTEND"
+      how="$(t "downloaded" "تم التنزيل")"
+    else
+      echo "--- could not download ${reg}/birrcare-*:sha-${want} (private packages, no internet or another processor); building here" >>"$LOG"
+    fi
+  fi
+  if [ -z "$how" ] && [ "$GET_MODE" = "pull" ]; then
+    fail_step "$(t "the images for ${want} could not be downloaded" "تعذر تنزيل صور الإصدار ${want}")"
     show_log_tail
-    err "$(t "Nothing was changed; the running version stays up." "لم يتغير شيء؛ الإصدار الحالي يبقى يعمل.")"
+    err "$(t "Nothing was changed; the running version stays up. (Without --pull, it builds here instead.)" "لم يتغير شيء؛ الإصدار الحالي يبقى يعمل.")"
     exit 1
   fi
-  done_step "$(t "version ${want}" "الإصدار ${want}") · $(fmt_secs $((SECONDS - t0)))"
+  # …or build here.
+  if [ -z "$how" ]; then
+    # Leftovers from a build that failed half-way.
+    run docker builder prune -af || true
+    if ! run docker compose build --pull; then
+      fail_step "$(t "the build failed" "فشل البناء")"
+      show_log_tail
+      err "$(t "Nothing was changed; the running version stays up." "لم يتغير شيء؛ الإصدار الحالي يبقى يعمل.")"
+      exit 1
+    fi
+    how="$(t "built here" "بُني محلياً")"
+  fi
+  done_step "$(t "version ${want}" "الإصدار ${want}") · ${how} · $(fmt_secs $((SECONDS - t0)))"
 
   # 5. Start.
   step "$(t "Starting" "التشغيل")"
-  if ! run docker compose up -d --remove-orphans; then
+  if ! run docker compose up -d --no-build --remove-orphans; then
     recover "$(t "the new containers did not start" "لم تبدأ الحاويات الجديدة")"
   fi
   done_step
@@ -358,6 +401,10 @@ cmd_deploy() {
   # untagged old images and the build cache. The running containers, the
   # previous version (for rollback), the database and backups are kept.
   step "$(t "Clean-up" "التنظيف")"
+  # Downloaded images stay under their birrcare-*:local names; drop the registry names.
+  if [ -n "$reg" ]; then
+    run docker image rm "${reg}/birrcare-backend:sha-${want}" "${reg}/birrcare-frontend:sha-${want}" || true
+  fi
   run docker image prune -f || true
   run docker builder prune -af || true
   done_step "$(t "disk $(used_pct) used" "القرص مستخدم $(used_pct)")"
@@ -428,7 +475,8 @@ cmd_restart() {
   take_lock
   TOTAL=2
   step "$(t "Restarting" "إعادة التشغيل")"
-  run docker compose restart || { fail_step; show_log_tail; exit 1; }
+  # Recreate (not "docker compose restart"), so changes in .env take effect.
+  run docker compose up -d --force-recreate --remove-orphans || { fail_step; show_log_tail; exit 1; }
   done_step
   step "$(t "Health check" "فحص السلامة")"
   if wait_healthy ""; then done_step; else fail_step "$HEALTH_PROBLEM"; show_log_tail; exit 1; fi

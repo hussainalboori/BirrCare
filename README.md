@@ -51,8 +51,7 @@ Phone ──HTTPS──► Cloudflare Access ──tunnel──► 127.0.0.1:300
 ```bash
 git clone <this repository>
 cd BirrCare
-sudo ./scripts/install-deps.sh   # once: Docker, git, curl, jq, optional backup tools, timers
-./scripts/deploy.sh              # asks a few questions, writes .env, builds and starts (no sudo)
+./scripts/setup.sh    # installs what's missing (asks your password once), asks a few questions, starts the app
 ```
 
 - Frontend: <http://127.0.0.1:3000>
@@ -71,7 +70,7 @@ The database lives in `./data/birrcare.db` on the host (mounted at `/data`).
 | `SUPER_ADMIN_USER` | `admin` | Name of the Super Admin seeded when the database is empty. |
 | `SUPER_ADMIN_PIN` | `1234` | 4-digit PIN for that seeded account. |
 | `APP_TIMEZONE` | Required in production (process local zone in dev) | IANA zone of the household, e.g. `Asia/Riyadh`. Decides which day a dose belongs to and the export's date range. Production fails to start without it. |
-| `EMERGENCY_NUMBER` | empty | Emergency call button on a BP crisis, e.g. `997`. Also built into the frontend image as the offline fallback. If empty, the button uses `112` and admins see a "not configured" banner. Rebuild after changing it. |
+| `EMERGENCY_NUMBER` | empty | Emergency call button on a BP crisis, e.g. `997`. Also sent inside every page as the offline fallback. If empty, the button uses `112` and admins see a "not configured" banner. Restart after changing it (`./scripts/deploy.sh restart`). |
 | `DOCTOR_NAME`, `DOCTOR_PHONE` | empty | Doctor call button on a BP crisis and on partial or vomited doses. |
 | `CF_ACCESS_TEAM_DOMAIN` | empty | Cloudflare Zero Trust team domain, e.g. `yourteam.cloudflareaccess.com`. |
 | `CF_ACCESS_AUD` | empty | Access application AUD tag. Cloudflare sign-in is enabled only when both CF values are set. |
