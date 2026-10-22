@@ -232,6 +232,11 @@ HAVE_PREVIOUS=""
 PREV_VERSION=""
 BACKUP_FILE=""
 
+# Is the backend container up (and so possibly writing to the database)?
+backend_running() {
+  [ -n "$(docker ps -q --filter name=^birrcare_backend$ --filter status=running 2>/dev/null || true)" ]
+}
+
 recover() {
   local why="$1"
   fail_step "$why"
@@ -262,6 +267,7 @@ recover() {
     mv -f data/birrcare.db "$kept"
     for ext in -wal -shm; do [ -f "data/birrcare.db${ext}" ] && mv -f "data/birrcare.db${ext}" "${kept}${ext}"; done
     cp "$BACKUP_FILE" data/birrcare.db
+    if [ -f "${BACKUP_FILE}-wal" ]; then cp "${BACKUP_FILE}-wal" data/birrcare.db-wal; fi
     if run docker compose up -d --no-build --force-recreate && wait_healthy ""; then
       show_log_tail
       say ""
@@ -354,17 +360,22 @@ cmd_deploy() {
       "${BACKEND_URL}/internal/backup/snapshot" 2>>"$LOG")" || snap=""
     if printf '%s' "$snap" | grep -q '"integrity":"ok"' && [ -f data/backup/staging/birrcare.db ]; then
       cp data/backup/staging/birrcare.db "$BACKUP_FILE"
-    elif command -v sqlite3 >/dev/null 2>&1; then
-      run sqlite3 data/birrcare.db ".backup '${BACKUP_FILE}'"
+    elif command -v "${BIRRCARE_SQLITE3:-sqlite3}" >/dev/null 2>&1; then
+      run "${BIRRCARE_SQLITE3:-sqlite3}" data/birrcare.db ".backup '${BACKUP_FILE}'"
+    elif ! backend_running; then
+      # Nothing is writing to it: the file plus its WAL is a consistent copy
+      # (SQLite reads "<copy>-wal" next to "<copy>" when it opens it).
+      cp data/birrcare.db "$BACKUP_FILE"
+      if [ -s data/birrcare.db-wal ]; then cp data/birrcare.db-wal "${BACKUP_FILE}-wal"; fi
     elif [ -n "${SKIP_DB_BACKUP:-}" ]; then
       BACKUP_FILE=""
     else
       fail_step "$(t "no consistent copy possible" "تعذرت نسخة متسقة")"
-      err "$(t "The app did not answer and sqlite3 is not installed. Start the app (docker compose up -d) or install sqlite3 (sudo ./scripts/install-deps.sh), then run this again. Nothing was changed. (To update without a backup anyway: SKIP_DB_BACKUP=1 ./scripts/deploy.sh)" "التطبيق لم يستجب و sqlite3 غير مثبت. شغّل التطبيق أو ثبّت sqlite3 ثم أعد المحاولة. لم يتغير شيء.")"
+      err "$(t "The app is running but did not answer, and sqlite3 is not installed. Start the app (docker compose up -d) or install sqlite3 (sudo ./scripts/install-deps.sh), then run this again. Nothing was changed. (To update without a backup anyway: SKIP_DB_BACKUP=1 ./scripts/deploy.sh)" "التطبيق لم يستجب و sqlite3 غير مثبت. شغّل التطبيق أو ثبّت sqlite3 ثم أعد المحاولة. لم يتغير شيء.")"
       exit 1
     fi
     # Keep the last 10.
-    { ls -t data/backups/birrcare_backup_*.db 2>/dev/null || true; } | tail -n +11 | while IFS= read -r old; do rm -f -- "$old"; done
+    { ls -t data/backups/birrcare_backup_*.db 2>/dev/null || true; } | tail -n +11 | while IFS= read -r old; do rm -f -- "$old" "${old}-wal"; done
     if [ -n "$BACKUP_FILE" ]; then done_step "$BACKUP_FILE"; else printf '%s %s\n' "$(mark_warn)" "$(t "skipped (SKIP_DB_BACKUP)" "تم التخطي (SKIP_DB_BACKUP)")"; fi
   else
     done_step "$(t "no database yet (first install)" "لا توجد قاعدة بيانات بعد (تثبيت أول)")"

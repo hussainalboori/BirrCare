@@ -44,6 +44,7 @@ case "\$1" in
         esac ;;
       prune | rm) exit 0 ;;
     esac ;;
+  ps) [ -f "$W/running" ] && echo abc123 ;;
   builder) exit 0 ;;
   compose)
     case "\$2" in
@@ -168,6 +169,27 @@ check "db restore: exit 5" "$(cat "$W/rc")" "5"
 check "db restore: database from before the update" "$(cat "$R/data/birrcare.db")" "snapshot-db"
 check "db restore: updated database kept aside" "$(cat "$R"/data/birrcare.db.failed-* 2>/dev/null)" "live-db"
 check "db restore: says where" "$(out_has 'is kept in data/birrcare.db.failed-')" "1"
+rm -rf "$W"
+
+# 3b. The app is stopped and sqlite3 missing: the files themselves are copied
+# (nothing writes to them); with the app running but silent, stop instead.
+setup
+echo stopped-db >"$R/data/birrcare.db"
+echo wal-pages >"$R/data/birrcare.db-wal"
+rm -f "$W/running"
+sed -i.bak 's|\*/internal/backup/snapshot)|*/internal/backup/snapshot) exit 7 ;; never)|' "$W/bin/curl"
+export BIRRCARE_SQLITE3=no-such-sqlite3
+run
+check "app stopped: deploy goes on" "$(cat "$W/rc")" "0"
+check "app stopped: database copied" "$(cat "$R"/data/backups/birrcare_backup_*.db | tr -d '\n')" "stopped-db"
+check "app stopped: WAL copied with it" "$(cat "$R"/data/backups/birrcare_backup_*.db-wal | tr -d '\n')" "wal-pages"
+rm -rf "$R/data/backups"
+touch "$W/running"
+: >"$W/docker-calls"
+run
+check "app running but silent: refused" "$(cat "$W/rc")" "1"
+check "app running but silent: nothing built" "$(dcalls 'compose build')" "0"
+unset BIRRCARE_SQLITE3
 rm -rf "$W"
 
 # 4. First install fails: nothing to go back to.
