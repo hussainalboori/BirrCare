@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, CloudUpload, Loader2, XCircle } from "lucide-react";
 import { fetchApi } from "@/lib/api";
-import { BackupStatus, fetchBackupStatus } from "@/lib/backups";
+import { BackupSchedule, BackupStatus, fetchBackupStatus } from "@/lib/backups";
 import { UPDATE_STATUS_EVENT } from "@/lib/updates";
 import { Ltr } from "./Ltr";
 
@@ -18,6 +18,11 @@ export function BackupsCard({ ar }: { ar: boolean }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
+  // Backup times being edited; null = showing what the server has.
+  const [draft, setDraft] = useState<BackupSchedule | null>(null);
+  const [newTime, setNewTime] = useState("");
+  const [savingTimes, setSavingTimes] = useState(false);
+  const [timesMsg, setTimesMsg] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +74,28 @@ export function BackupsCard({ ar }: { ar: boolean }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveTimes = async () => {
+    if (!draft) return;
+    setSavingTimes(true);
+    setTimesMsg("");
+    try {
+      setS(await fetchApi<BackupStatus>("/admin/backup/schedule", { method: "PUT", body: JSON.stringify(draft) }));
+      setDraft(null);
+      setTimesMsg(ar ? "تم حفظ الأوقات" : "Times saved");
+    } catch {
+      setTimesMsg(ar ? "تعذر الحفظ: اختر من 1 إلى 6 أوقات" : "Could not save: choose 1 to 6 times");
+    } finally {
+      setSavingTimes(false);
+    }
+  };
+
+  const fmtTime = (iso?: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return new Intl.DateTimeFormat(ar ? "ar-u-nu-latn" : "en-GB", { hour: "2-digit", minute: "2-digit" }).format(d);
   };
 
   if (!s) {
@@ -174,6 +201,104 @@ export function BackupsCard({ ar }: { ar: boolean }) {
           )}
         </p>
       )}
+
+      {s.postponed && (
+        <p data-testid="backup-postponed" className="rounded-xl bg-amber-50 p-2.5 text-sm font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          {s.postponed.reason === "crisis"
+            ? ar ? "تأجّل النسخ الاحتياطي لوجود تنبيه طوارئ مفتوح. " : "Backup postponed: an emergency alert is open. "
+            : ar ? "تأجّل النسخ الاحتياطي لأن التطبيق قيد الاستخدام. " : "Backup postponed: the app is in use. "}
+          {ar ? "يحاول كل 5 دقائق، ويعمل حتماً عند " : "It tries every 5 minutes and runs anyway at "}
+          <Ltr>{fmtTime(new Date(Date.parse(s.postponed.slot) + 2 * 3600_000).toISOString())}</Ltr>.
+        </p>
+      )}
+
+      {s.schedule && (() => {
+        const sch = draft ?? s.schedule;
+        const edit = (next: BackupSchedule) => {
+          setDraft(next);
+          setTimesMsg("");
+        };
+        return (
+          <div data-testid="backup-times" className="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+            <p className="text-sm font-bold text-slate-900 dark:text-white">{ar ? "أوقات النسخ الاحتياطي (بتوقيت المنزل)" : "Backup times (household time)"}</p>
+            {s.next_at && !draft && (
+              <p data-testid="backup-next" className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                {ar ? "النسخة القادمة: " : "Next backup: "}
+                <Ltr>{fmt(s.next_at)}</Ltr>
+              </p>
+            )}
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {sch.times.map((t) => (
+                <li key={t} className="flex min-h-12 items-center gap-1 rounded-xl bg-slate-100 ps-3 dark:bg-slate-800">
+                  <Ltr className="text-base font-bold text-slate-900 dark:text-white">{t}</Ltr>
+                  <button
+                    type="button"
+                    disabled={sch.times.length <= 1}
+                    onClick={() => edit({ ...sch, times: sch.times.filter((x) => x !== t) })}
+                    className="min-h-12 rounded-xl px-3 text-sm font-semibold text-rose-700 disabled:opacity-40 dark:text-rose-300"
+                  >
+                    {ar ? "إزالة" : "Remove"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {sch.times.length < 6 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="time"
+                  value={newTime}
+                  onChange={(e) => setNewTime(e.target.value)}
+                  aria-label={ar ? "وقت جديد" : "New time"}
+                  data-testid="backup-new-time"
+                  className="min-h-12 rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+                <button
+                  type="button"
+                  disabled={!newTime || sch.times.includes(newTime)}
+                  onClick={() => {
+                    edit({ ...sch, times: [...sch.times, newTime].sort() });
+                    setNewTime("");
+                  }}
+                  className="min-h-12 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200"
+                >
+                  {ar ? "إضافة الوقت" : "Add time"}
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={sch.avoid_busy}
+              data-testid="backup-avoid-busy"
+              onClick={() => edit({ ...sch, avoid_busy: !sch.avoid_busy })}
+              className="mt-2 flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-1 text-start"
+            >
+              <span>
+                <span className="block text-sm font-bold text-slate-900 dark:text-white">{ar ? "انتظر إذا كان التطبيق قيد الاستخدام" : "Wait while the app is in use"}</span>
+                <span className="block text-xs text-slate-600 dark:text-slate-300">
+                  {ar
+                    ? "إذا سُجّل شيء في آخر 10 دقائق أو كان هناك تنبيه طوارئ، يتأجل حتى ساعتين ثم يعمل حتماً."
+                    : "If something was saved in the last 10 minutes or an emergency alert is open, it waits up to 2 hours, then runs anyway."}
+                </span>
+              </span>
+              <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${sch.avoid_busy ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"}`}>
+                {sch.avoid_busy ? (ar ? "مفعّل" : "On") : ar ? "متوقف" : "Off"}
+              </span>
+            </button>
+            {draft && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" data-testid="backup-times-save" disabled={savingTimes} onClick={saveTimes} className="min-h-12 rounded-xl bg-emerald-700 px-4 text-base font-bold text-white disabled:opacity-50">
+                  {ar ? "حفظ الأوقات" : "Save times"}
+                </button>
+                <button type="button" onClick={() => setDraft(null)} className="min-h-12 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                  {ar ? "إلغاء" : "Cancel"}
+                </button>
+              </div>
+            )}
+            {timesMsg && <p className="mt-1 text-sm font-semibold text-slate-700 dark:text-slate-200">{timesMsg}</p>}
+          </div>
+        );
+      })()}
 
       {pending ? (
         <p data-testid="backup-running" className="flex min-h-12 items-center gap-2 text-sm font-bold text-sky-800 dark:text-sky-200">

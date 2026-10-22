@@ -11,7 +11,15 @@ export interface BackupDestination {
 
 export type BackupReason = "ok" | "not_set_up" | "stale" | "failed" | "restore_failed" | "invalid_grant";
 
+export interface BackupSchedule {
+  times: string[]; // "HH:MM", household time
+  avoid_busy: boolean;
+}
+
 export interface BackupStatus {
+  schedule?: BackupSchedule;
+  next_at?: string;
+  postponed?: { slot: string; reason: "in_use" | "crisis"; at: string } | null;
   configured: boolean;
   stale: boolean;
   reason: BackupReason;

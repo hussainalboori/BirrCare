@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"birrcare/backend/internal/audit"
@@ -57,6 +59,192 @@ func BackupDirFromEnv(dbPath string) string {
 type BackupHandler struct {
 	DB  *sql.DB
 	Dir string
+
+	mu        sync.Mutex
+	postponed *BackupPostponed // the current slot was put off because the app was busy
+}
+
+// ---------------------------------------------------------------------------
+// Schedule: the Super Admin picks the times; the backend decides when one is
+// due, so household time and "is the app in use" come from the app itself.
+// ---------------------------------------------------------------------------
+
+// BackupSchedule is stored in app_settings under "backup_schedule".
+type BackupSchedule struct {
+	Times     []string `json:"times"`      // "HH:MM", household time
+	AvoidBusy bool     `json:"avoid_busy"` // wait while the family is using the app
+}
+
+type BackupPostponed struct {
+	Slot   string `json:"slot"`   // RFC3339
+	Reason string `json:"reason"` // in_use | crisis
+	At     string `json:"at"`
+}
+
+var defaultBackupSchedule = BackupSchedule{Times: []string{"03:00", "09:00", "15:00", "21:00"}, AvoidBusy: true}
+
+const (
+	backupMaxTimes = 6
+	// Someone saved something this recently: the app is in use.
+	backupBusyWindow = 10 * time.Minute
+	// A backup is never put off for longer than this.
+	backupMaxDelay = 2 * time.Hour
+	// After a failed attempt, wait this long before trying the same slot again.
+	backupRetryAfter = 30 * time.Minute
+)
+
+// normalizeBackupTimes validates, sorts and de-duplicates "HH:MM" times.
+func normalizeBackupTimes(times []string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range times {
+		t = strings.TrimSpace(t)
+		parsed, err := time.Parse("15:04", t)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a time like 03:00", t)
+		}
+		t = parsed.Format("15:04")
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 || len(out) > backupMaxTimes {
+		return nil, fmt.Errorf("choose between 1 and %d backup times a day", backupMaxTimes)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (h *BackupHandler) loadSchedule(ctx context.Context) BackupSchedule {
+	var raw string
+	if err := h.DB.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key = 'backup_schedule'`).Scan(&raw); err != nil {
+		return defaultBackupSchedule
+	}
+	var sch BackupSchedule
+	if json.Unmarshal([]byte(raw), &sch) != nil {
+		return defaultBackupSchedule
+	}
+	if times, err := normalizeBackupTimes(sch.Times); err == nil {
+		sch.Times = times
+		return sch
+	}
+	return defaultBackupSchedule
+}
+
+// backupSlots returns the scheduled moments of the given day.
+func backupSlots(day time.Time, loc *time.Location, times []string) []time.Time {
+	y, m, d := day.In(loc).Date()
+	var out []time.Time
+	for _, t := range times {
+		hm, err := time.Parse("15:04", t)
+		if err != nil {
+			continue
+		}
+		out = append(out, time.Date(y, m, d, hm.Hour(), hm.Minute(), 0, 0, loc))
+	}
+	return out
+}
+
+// lastBackupSlot is the latest scheduled moment at or before now.
+func lastBackupSlot(now time.Time, loc *time.Location, times []string) time.Time {
+	var best time.Time
+	for _, day := range []time.Time{now.AddDate(0, 0, -1), now} {
+		for _, s := range backupSlots(day, loc, times) {
+			if !s.After(now) && s.After(best) {
+				best = s
+			}
+		}
+	}
+	return best
+}
+
+// nextBackupSlot is the first scheduled moment after now.
+func nextBackupSlot(now time.Time, loc *time.Location, times []string) time.Time {
+	var best time.Time
+	for _, day := range []time.Time{now, now.AddDate(0, 0, 1)} {
+		for _, s := range backupSlots(day, loc, times) {
+			if s.After(now) && (best.IsZero() || s.Before(best)) {
+				best = s
+			}
+		}
+	}
+	return best
+}
+
+// busyReason says why now is a bad moment: someone saved something in the
+// last few minutes, or an emergency alert is still open.
+func (h *BackupHandler) busyReason(ctx context.Context) string {
+	var n int
+	_ = h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs WHERE datetime(created_at) >= datetime('now', ?)`,
+		fmt.Sprintf("-%d minutes", int(backupBusyWindow.Minutes()))).Scan(&n)
+	if n > 0 {
+		return "in_use"
+	}
+	_ = h.DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM alerts a
+		WHERE a.kind IN ('bp_crisis', 'bp_low', 'fast_positive')
+		  AND datetime(a.created_at) >= datetime('now', '-30 minutes')
+		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id)`).Scan(&n)
+	if n > 0 {
+		return "crisis"
+	}
+	return ""
+}
+
+type backupDue struct {
+	Due    bool   `json:"due"`
+	Slot   string `json:"slot,omitempty"`
+	Reason string `json:"reason"` // due | no_slot | done | retry_later | in_use | crisis
+}
+
+// decideBackup: is a scheduled backup due now? Pure, for tests.
+func decideBackup(now time.Time, loc *time.Location, sch BackupSchedule, st *BackupStatusFile, busy string) backupDue {
+	slot := lastBackupSlot(now, loc, sch.Times)
+	if slot.IsZero() {
+		return backupDue{Reason: "no_slot"}
+	}
+	res := backupDue{Slot: slot.UTC().Format(time.RFC3339)}
+	if st != nil {
+		if t, err := time.Parse(time.RFC3339, st.LastSuccessAt); err == nil && !t.Before(slot) {
+			res.Reason = "done"
+			return res
+		}
+		if t, err := time.Parse(time.RFC3339, st.LastAttemptAt); err == nil && !t.Before(slot) && now.Sub(t) < backupRetryAfter {
+			res.Reason = "retry_later"
+			return res
+		}
+	}
+	if sch.AvoidBusy && busy != "" && now.Sub(slot) < backupMaxDelay {
+		res.Reason = busy
+		return res
+	}
+	res.Due, res.Reason = true, "due"
+	return res
+}
+
+// Due: POST /internal/backup/due — the host asks every few minutes.
+func (h *BackupHandler) Due(w http.ResponseWriter, r *http.Request) {
+	if !h.internalGuard(w, r) {
+		return
+	}
+	sch := h.loadSchedule(r.Context())
+	busy := ""
+	if sch.AvoidBusy {
+		busy = h.busyReason(r.Context())
+	}
+	st, _ := h.readStatus()
+	res := decideBackup(time.Now(), ClinicalLocation(), sch, st, busy)
+	h.mu.Lock()
+	switch res.Reason {
+	case "in_use", "crisis":
+		h.postponed = &BackupPostponed{Slot: res.Slot, Reason: res.Reason, At: time.Now().UTC().Format(time.RFC3339)}
+	case "due", "done":
+		h.postponed = nil
+	}
+	h.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 type BackupDestination struct {
@@ -84,6 +272,9 @@ type BackupStatus struct {
 	Reason     string            `json:"reason"` // ok | not_set_up | stale | failed | restore_failed | invalid_grant
 	Pending    bool              `json:"pending"`
 	Status     *BackupStatusFile `json:"status"`
+	Schedule   BackupSchedule    `json:"schedule"`
+	NextAt     string            `json:"next_at,omitempty"`
+	Postponed  *BackupPostponed  `json:"postponed,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +462,27 @@ func (h *BackupHandler) status() BackupStatus {
 			pending = true
 		}
 	}
-	return BackupStatus{Configured: ok, Stale: stale, Reason: reason, Pending: pending, Status: st}
+	res := BackupStatus{Configured: ok, Stale: stale, Reason: reason, Pending: pending, Status: st}
+	res.Schedule = h.loadSchedule(context.Background())
+	if next := nextBackupSlot(time.Now(), ClinicalLocation(), res.Schedule.Times); !next.IsZero() {
+		res.NextAt = next.UTC().Format(time.RFC3339)
+	}
+	h.mu.Lock()
+	if p := h.postponed; p != nil {
+		// Only while that slot is still the current one and not yet backed up.
+		cur := lastBackupSlot(time.Now(), ClinicalLocation(), res.Schedule.Times)
+		done := false
+		if st != nil {
+			if t, err := time.Parse(time.RFC3339, st.LastSuccessAt); err == nil && !cur.IsZero() && !t.Before(cur) {
+				done = true
+			}
+		}
+		if !done && !cur.IsZero() && p.Slot == cur.UTC().Format(time.RFC3339) {
+			res.Postponed = p
+		}
+	}
+	h.mu.Unlock()
+	return res
 }
 
 // alertingReasons raise a Super-Admin-only alert.
@@ -365,6 +576,48 @@ func (h *BackupHandler) Run(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(h.status())
+}
+
+// SetSchedule: PUT /admin/backup/schedule {times, avoid_busy}
+func (h *BackupHandler) SetSchedule(w http.ResponseWriter, r *http.Request) {
+	me := superAdmin(w, r)
+	if me == nil {
+		return
+	}
+	var req BackupSchedule
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
+		return
+	}
+	times, err := normalizeBackupTimes(req.Times)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_TIMES", err.Error())
+		return
+	}
+	req.Times = times
+	raw, _ := json.Marshal(req)
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO app_settings (key, value) VALUES ('backup_schedule', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, string(raw)); err != nil {
+		internalError(w, "failed saving backup schedule", err)
+		return
+	}
+	if err := audit.Record(tx, me.ID, "BACKUP_SCHEDULE_CHANGED", "backup", "schedule",
+		fmt.Sprintf("times %s, avoid busy %v", strings.Join(times, " "), req.AvoidBusy)); err != nil {
+		internalError(w, "failed to write audit log", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed saving backup schedule", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.status())
 }
 

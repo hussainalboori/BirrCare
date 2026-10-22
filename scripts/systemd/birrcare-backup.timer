@@ -1,11 +1,10 @@
 # User unit: install to ~/.config/systemd/user/ (see docs/DEPLOYMENT.md §9)
 [Unit]
-Description=Birrcare off-site backup every 6 hours
+Description=Ask the app every 5 minutes whether a Birrcare backup is due
 
 [Timer]
-OnCalendar=00/6:15
+OnCalendar=*:0/5
 Persistent=true
-RandomizedDelaySec=5min
 
 [Install]
 WantedBy=timers.target

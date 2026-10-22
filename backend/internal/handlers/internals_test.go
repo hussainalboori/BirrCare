@@ -21,3 +21,14 @@ func SetWriteAtomicHookForTest(fn func(f *os.File, data []byte) error) func() {
 	writeAtomicHook = fn
 	return func() { writeAtomicHook = orig }
 }
+
+// Backup schedule internals (issue #51), for the external tests.
+type BackupDueForTest = backupDue
+
+func DecideBackupForTest(now time.Time, loc *time.Location, sch BackupSchedule, st *BackupStatusFile, busy string) backupDue {
+	return decideBackup(now, loc, sch, st, busy)
+}
+
+func NextBackupSlotForTest(now time.Time, loc *time.Location, times []string) time.Time {
+	return nextBackupSlot(now, loc, times)
+}

@@ -3,7 +3,11 @@ set -euo pipefail
 
 # Birrcare (رعاية بر) — Encrypted off-site backup (issue #51)
 #
-# Runs on the host every 6 hours (cron or scripts/systemd/birrcare-backup.*):
+# Runs on the host at the times the Super Admin chose in the app (Menu →
+# Server; default 03:00, 09:00, 15:00, 21:00 household time). Cron or
+# scripts/systemd/birrcare-backup.* call it every 5 minutes with --if-due and
+# the app answers whether a backup is due; while someone is using the app it
+# waits (at most 2 hours). Each run:
 #   1. asks the backend for a consistent snapshot of the database (VACUUM INTO;
 #      the backend checks integrity_check, so the host needs no sqlite3);
 #   2. backs up that snapshot and data/photos/ with restic, encrypted on this
@@ -19,6 +23,7 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/backup.sh                 run a backup now
+#   scripts/backup.sh --if-due        only if a chosen backup time is due (every 5 min)
 #   scripts/backup.sh --if-requested  only if "Back up now" was pressed in the app
 #
 # Settings: ~/.config/birrcare/backup.env (mode 600), see docs/DEPLOYMENT.md §9:
@@ -80,9 +85,10 @@ load_config() {
 }
 
 main() {
-  local project_root only_if_requested=""
+  local project_root only_if_requested="" only_if_due=""
   project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   [ "${1:-}" = "--if-requested" ] && only_if_requested=1
+  [ "${1:-}" = "--if-due" ] && only_if_due=1
 
   BACKUP_DIR="${BACKUP_DIR:-${project_root}/data/backup}"
   STATUS_FILE="${BACKUP_DIR}/status.json"
@@ -115,6 +121,8 @@ main() {
   trap 'rm -f "$PROCESSING"' EXIT
 
   if [ ! -f "$config" ]; then
+    # The 5-minute check stays quiet until backups are set up.
+    [ -n "$only_if_due" ] && exit 0
     echo "backup: not set up yet ($config is missing); see docs/DEPLOYMENT.md §9" >&2
     exit 1
   fi
@@ -130,6 +138,19 @@ main() {
     (umask 077 && head -c 48 /dev/urandom | base64 | tr -d '/+=\n' >"$secret_file")
   fi
   secret="$(tr -d '\n' <"$secret_file")"
+
+  # A "Back up now" request always runs; otherwise, with --if-due, the app
+  # decides: a chosen time has come and nobody is using the app right now.
+  if [ -n "$only_if_due" ] && [ ! -f "$PROCESSING" ]; then
+    local due
+    due="$(curl -fsS --max-time 30 -X POST -H "X-Backup-Secret: ${secret}" "${backend}/internal/backup/due")" ||
+      { echo "backup: could not ask the app whether a backup is due" >&2; exit 0; }
+    case "$(jq -r '.reason // ""' <<<"$due")" in
+      in_use) echo "backup: $(now_utc) postponed: the app is in use" ;;
+      crisis) echo "backup: $(now_utc) postponed: an emergency alert is open" ;;
+    esac
+    [ "$(jq -r '.due // false' <<<"$due")" = "true" ] || exit 0
+  fi
 
   ATTEMPT_AT="$(now_utc)"
   write_status '.status = "running" | .last_attempt_at = $at' --arg at "$ATTEMPT_AT"

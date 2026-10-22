@@ -253,12 +253,12 @@ git pull
 
 ## 9. Backups
 
-A dead disk or SD card, a lost server or ransomware must not take the medication and vitals history with it. Backups therefore go **off the machine**, encrypted, every 6 hours, and the Super Admin sees in the app whether they work (**Menu → Server**).
+A dead disk or SD card, a lost server or ransomware must not take the medication and vitals history with it. Backups therefore go **off the machine**, encrypted, at the times the Super Admin chooses, and the Super Admin sees in the app whether they work (**Menu → Server**).
 
 ### What runs
 
 - **Before every update:** `deploy.sh` saves a snapshot in `data/backups/` (last 10 kept). It asks the running app for a consistent copy; if the app is down it uses `sqlite3 .backup`; it never copies the live database file with `cp`.
-- **Every 6 hours:** `scripts/backup.sh`:
+- **At the chosen backup times:** set in **Menu → Server → Backup times**, 1 to 6 times a day in household time. The default is 03:00, 09:00, 15:00 and 21:00. With **Wait while the app is in use** on (the default), a backup doesn't start if someone saved something in the last 10 minutes or an emergency alert is open. It tries again every 5 minutes, and after 2 hours it runs anyway. **Back up now** always runs straight away. The host asks the app every 5 minutes whether a backup is due; the app answers in household time. At each backup, `scripts/backup.sh`:
   1. asks the app for a consistent snapshot (`VACUUM INTO`), checked with `integrity_check`;
   2. uploads it and `data/photos/` with **restic**, encrypted on the server before anything leaves it, so Google (or Cloudflare / Backblaze) only ever holds unreadable data;
   3. keeps the last 8, plus one a day for 30 days, one a week for 12 weeks and one a month for 12 months;
@@ -333,7 +333,7 @@ cat ~/birrcare/data/backup/status.json
 
 The first run also does the restore test. **Menu → Server** should now show "Backups are working".
 
-**6. Run it every 6 hours.** With systemd user units (needs `loginctl enable-linger`, see §8):
+**6. Let it run at the chosen times.** The host asks the app every 5 minutes whether a backup is due. With systemd user units (needs `loginctl enable-linger`, see §8):
 
 ```bash
 cp ~/birrcare/scripts/systemd/birrcare-backup.{service,timer,path} ~/.config/systemd/user/
@@ -346,7 +346,7 @@ Without root (e.g. an LXC container where linger is refused), use the user's cro
 ```bash
 crontab -e
 PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
-15 */6 * * * /home/<you>/birrcare/scripts/backup.sh >> /home/<you>/.local/state/birrcare/backup.log 2>&1
+*/5 * * * * /home/<you>/birrcare/scripts/backup.sh --if-due >> /home/<you>/.local/state/birrcare/backup.log 2>&1
 * * * * * /home/<you>/birrcare/scripts/backup.sh --if-requested >> /home/<you>/.local/state/birrcare/backup.log 2>&1
 ```
 

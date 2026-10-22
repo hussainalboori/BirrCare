@@ -20,6 +20,7 @@ BACKUP_NAME=Google Drive
 EOF
   echo ok >"$W/integrity"
   echo '{"medication_logs":5,"vitals_logs":3}' >"$W/restored-counts"
+  echo '{"due":true,"reason":"due"}' >"$W/due"
   : >"$W/restic-calls"
   : >"$W/restic-fail"
 
@@ -31,6 +32,7 @@ case "\$url" in
   */internal/backup/snapshot)
     echo "fake db" >"$W/data/backup/staging/birrcare.db"
     echo '{"file":"staging/birrcare.db","integrity":"'"\$(cat "$W/integrity")"'","counts":{"medication_logs":5,"vitals_logs":3}}' ;;
+  */internal/backup/due) cat "$W/due" ;;
   */internal/backup/verify)
     [ -f "$W/data/backup/restore-test/birrcare.db" ] || exit 22
     echo '{"integrity":"ok","counts":'"\$(cat "$W/restored-counts")"'}' ;;
@@ -150,6 +152,41 @@ rm "$W/cfg/backup.env"
 run
 check "not set up: exit code" "$(cat "$W/rc")" "1"
 check "not set up: no status.json" "$([ -e "$W/data/backup/status.json" ] && echo yes || echo no)" "no"
+rm -rf "$W"
+
+# 8. --if-due: the app says the family is using it → wait, no backup.
+setup
+echo '{"due":false,"reason":"in_use","slot":"2026-10-22T12:00:00Z"}' >"$W/due"
+run --if-due
+check "busy: exit code" "$(cat "$W/rc")" "0"
+check "busy: restic not called" "$(calls '^backup')" "0"
+check "busy: postponement logged" "$(grep -c 'postponed: the app is in use' "$W/out")" "1"
+# The chosen time arrives and nobody is using the app → backup.
+echo '{"due":true,"reason":"due"}' >"$W/due"
+run --if-due
+check "due: backup ran" "$(calls '^backup')" "1"
+# Already done for this time → nothing.
+echo '{"due":false,"reason":"done"}' >"$W/due"
+run --if-due
+check "done: no second backup" "$(calls '^backup')" "1"
+check "done: quiet" "$(grep -c postponed "$W/out" || true)" "0"
+rm -rf "$W"
+
+# 9. "Back up now" runs even when no backup time is due.
+setup
+echo '{"due":false,"reason":"in_use"}' >"$W/due"
+echo '{"action":"backup"}' >"$W/data/backup/request.json"
+run --if-due
+check "request beats schedule: backup ran" "$(calls '^backup')" "1"
+check "request beats schedule: request consumed" "$(ls "$W/data/backup" | grep -c '^request' || true)" "0"
+rm -rf "$W"
+
+# 10. Not set up: the 5-minute check stays quiet.
+setup
+rm "$W/cfg/backup.env"
+run --if-due
+check "not set up, --if-due: exit 0" "$(cat "$W/rc")" "0"
+check "not set up, --if-due: no output" "$(wc -c <"$W/out" | tr -d ' ')" "0"
 rm -rf "$W"
 
 if [ "$fails" -gt 0 ]; then

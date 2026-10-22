@@ -134,6 +134,7 @@ func NewRouter(o Options) http.Handler {
 	// Next.js proxy nor the tunnel forwards it; also guarded by a shared secret.
 	r.Post("/internal/backup/snapshot", backupHandler.Snapshot)
 	r.Post("/internal/backup/verify", backupHandler.Verify)
+	r.Post("/internal/backup/due", backupHandler.Due)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", healthHandler)
@@ -199,6 +200,7 @@ func NewRouter(o Options) http.Handler {
 				// Off-site backups: status and "Back up now" (issue #51)
 				api.Get("/admin/backup/status", backupHandler.GetStatus)
 				api.Post("/admin/backup/run", backupHandler.Run)
+				api.Put("/admin/backup/schedule", backupHandler.SetSchedule)
 
 				// Medications & Scheduling
 				api.Get("/medications", medHandler.ListMedications)
