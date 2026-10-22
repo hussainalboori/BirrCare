@@ -124,7 +124,7 @@ The questions live in [`scripts/env.schema`](../scripts/env.schema). For the com
 ./scripts/deploy.sh
 ```
 
-Run it as your normal user, **never with `sudo`**. Files it creates must belong to you, so that updates and backups can use them. If an earlier run used `sudo`, it stops and shows the one-time fix (`sudo chown -R $USER: .env data`).
+Run it as your normal user, **never with `sudo`**. Files it creates must belong to you, so that updates and backups can use them. If an earlier run used `sudo`, it stops and shows the one-time fix (`sudo chown -R $USER: ~/BirrCare/.env ~/BirrCare/data`, using your folder's full path).
 
 It first asks the questions from step 3, then shows seven short steps. The full output (Docker's build lines and so on) goes to `data/logs/deploy-<date>.log`:
 

@@ -243,6 +243,7 @@ chmod 400 "$R/.env"
 run
 check "root-owned files: refused" "$(cat "$W/rc")" "1"
 check "root-owned files: one-time fix shown" "$(out_has 'sudo chown -R')" "1"
+check "root-owned files: fix uses full paths" "$(out_has "/repo/.env\" \"")" "1"
 chmod 600 "$R/.env"
 rm -rf "$W"
 

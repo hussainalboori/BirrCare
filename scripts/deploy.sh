@@ -118,7 +118,7 @@ if [ "$(id -u)" != "0" ]; then
   if [ -n "$not_mine" ]; then
     err "$(t "These belong to another user (probably from an earlier run with sudo):${not_mine}" "هذه تخص مستخدماً آخر (غالباً من تشغيل سابق باستخدام sudo):${not_mine}")"
     err "$(t "Give them back to $(id -un) once, then run this again:" "أعدها إلى $(id -un) مرة واحدة، ثم أعد التشغيل:")"
-    err "  sudo chown -R $(id -un): .env data"
+    err "  sudo chown -R $(id -un): \"${PROJECT_ROOT}/.env\" \"${PROJECT_ROOT}/data\""
     exit 1
   fi
 fi
