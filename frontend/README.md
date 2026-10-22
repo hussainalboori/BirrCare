@@ -1,39 +1,71 @@
-This is the Birrcare web app, a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app). See the [root README](../README.md) for the whole system.
+# Birrcare Frontend Web Application
 
-## Getting Started
+Welcome to the frontend application for **Birrcare (رعاية بر)**! This is a mobile-first, responsive web application built with **Next.js 16**, **React 19**, and **Tailwind CSS 4**.
 
-The app calls the Go backend through its own `/api/v1` proxy (`src/app/api/v1/[...path]/route.ts`), which forwards to `INTERNAL_BACKEND_URL` (default `http://birrcare-backend:8080`, the Docker Compose service name). Start the backend first, then run the development server:
+It is designed to feel fast and comfortable on mobile phones (iOS Safari and Android Chrome) and wall-mounted bedside tablets, with native bidirectional support for Arabic (Right-to-Left) and English (Left-to-Right).
 
+---
+
+## How It Works
+
+The frontend serves as both the client user interface and the local gateway for the system:
+
+- **Same-Origin Security:** The browser only connects to port `3000`. The Next.js API route (`src/app/api/v1/[...path]/route.ts`) proxies `/api/v1/*` calls to the Go backend (`INTERNAL_BACKEND_URL`). This ensures session cookies remain strictly same-origin.
+- **Zero-Refresh Sync:** The custom `useLiveSync()` hook maintains an open Server-Sent Events (SSE) connection. When any sibling logs a dose or vital on their phone, every other open screen updates in real time.
+- **Offline Tolerance:** When a caregiver taps a dose while Wi-Fi is temporarily interrupted, the tap is stored locally on the device and sent once the connection is restored.
+- **Night Mode:** A true OLED black theme (`Menu → Screen colours`) dims colors and text for quiet night shifts in the sickroom, keeping only critical alerts brightly colored.
+
+---
+
+## Getting Started Locally
+
+To run the frontend on your local development machine:
+
+### 1. Install Dependencies
 ```bash
 npm install
+```
+
+### 2. Start the Dev Server
+Point `INTERNAL_BACKEND_URL` to your running Go backend:
+```bash
 INTERNAL_BACKEND_URL=http://localhost:8080 npm run dev
 ```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `src/app/page.tsx`. The page auto-updates as you edit the file.
+## Available Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Tajawal](https://fonts.google.com/specimen/Tajawal) (Arabic) and [Inter](https://fonts.google.com/specimen/Inter) (English).
+| Command | Description |
+|---|---|
+| `npm run dev` | Starts the Next.js development server with hot-module reloading. |
+| `npm run build` | Builds an optimized production bundle. |
+| `npm run start` | Runs the compiled production server. |
+| `npm run lint` | Runs ESLint to check for code quality and syntax issues. |
+| `npm test` | Runs unit tests using Vitest (in `src/__tests__/`). |
+| `npm run test:e2e` | Runs mobile end-to-end tests using Playwright (API calls are mocked). |
 
-## Tests
-
+Before your first Playwright run, make sure browser binaries are installed:
 ```bash
-npm run lint
-npm test           # Vitest unit tests (src/__tests__)
-npm run test:e2e   # Playwright RTL/LTR checks; API calls are mocked, no backend needed
+npx playwright install chromium webkit
 ```
 
-Before the first e2e run: `npx playwright install chromium webkit`.
+---
 
-## Learn More
+## Typography & Bilingual Support
 
-To learn more about Next.js, take a look at the following resources:
+Fonts are loaded locally using `next/font`:
+- **Arabic:** [Tajawal](https://fonts.google.com/specimen/Tajawal) (`dir="rtl"`)
+- **English:** [Inter](https://fonts.google.com/specimen/Inter) (`dir="ltr"`)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+When writing styles, use Tailwind logical properties (`ms-*`, `me-*`, `start-*`, `end-*`) rather than physical directions (`ml-*`, `mr-*`, `left-*`, `right-*`) so layouts flip correctly between languages.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deployment
+## Related Documentation
 
-Birrcare is self-hosted with Docker Compose next to the Go backend, not on Vercel. See [Deployment](../README.md#deployment) in the root README.
+- [Root System README](../README.md): High-level project overview and quick start.
+- [Developer Guide](../docs/DEVELOPMENT.md): Full-stack developer instructions and architecture details.
+- [API Reference](../docs/API.md): Complete list of REST endpoints and real-time SSE events.
+- [Clinical Guide](../docs/CLINICAL.md): Stroke vitals thresholds, dose locking, and care protocols.

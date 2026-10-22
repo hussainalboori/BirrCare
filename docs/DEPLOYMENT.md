@@ -116,7 +116,7 @@ Updates are installed from **Menu → Server** with nobody at the terminal, so t
 | `DISABLE_2FA_FOR` | never | Break-glass only, see [Lost 2FA phone](#lost-2fa-phone-and-recovery-codes). |
 | `CORS_ALLOWED_ORIGINS` | never | Not needed with the default proxy. |
 
-The questions live in [`scripts/env.schema`](../scripts/env.schema). CI fails if the app reads a setting that has no line there, so an update can't add a setting without its question.
+The questions live in [`scripts/env.schema`](../scripts/env.schema). For the complete list of settings and options, see [docs/CONFIGURATION.md](CONFIGURATION.md). CI fails if the app reads a setting that has no line there, so an update can't add a setting without its question.
 
 ## 4. First start
 
