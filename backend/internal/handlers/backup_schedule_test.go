@@ -134,3 +134,45 @@ func TestBackupDueEndpointPostponesWhileInUse(t *testing.T) {
 		t.Errorf("status should show the postponement, got %+v", st.Postponed)
 	}
 }
+
+func TestBackupRetentionChoice(t *testing.T) {
+	h, _, _ := backupFixture(t)
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/backup/schedule", bytes.NewBufferString(body))
+		req = req.WithContext(authContext(req.Context(), siblings[0]))
+		rec := httptest.NewRecorder()
+		h.SetSchedule(rec, req)
+		return rec
+	}
+	snapRetention := func() string {
+		var res struct {
+			Retention string `json:"retention"`
+		}
+		json.NewDecoder(internalCall(h.Snapshot, "127.0.0.1:1", testBackupSecret, nil).Body).Decode(&res)
+		return res.Retention
+	}
+
+	// Default: keep history.
+	var st handlers.BackupStatus
+	json.NewDecoder(adminCall(h.GetStatus, siblings[0], http.MethodGet).Body).Decode(&st)
+	if st.Schedule.Retention != "history" || snapRetention() != "history" {
+		t.Fatalf("default retention should be history, got %q / %q", st.Schedule.Retention, snapRetention())
+	}
+
+	if rec := put(`{"times":["03:00"],"avoid_busy":true,"retention":"everything"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown retention: expected 400, got %d", rec.Code)
+	}
+
+	// Latest only: the host is told on the next snapshot.
+	rec := put(`{"times":["03:00"],"avoid_busy":true,"retention":"latest"}`)
+	json.NewDecoder(rec.Body).Decode(&st)
+	if rec.Code != http.StatusOK || st.Schedule.Retention != "latest" || snapRetention() != "latest" {
+		t.Errorf("latest: %d %+v / %q", rec.Code, st.Schedule, snapRetention())
+	}
+
+	// Older clients that don't send it keep history.
+	put(`{"times":["03:00"],"avoid_busy":true}`)
+	if r := snapRetention(); r != "history" {
+		t.Errorf("missing retention should mean history, got %q", r)
+	}
+}

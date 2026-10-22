@@ -23,6 +23,8 @@ export function BackupsCard({ ar }: { ar: boolean }) {
   const [newTime, setNewTime] = useState("");
   const [savingTimes, setSavingTimes] = useState(false);
   const [timesMsg, setTimesMsg] = useState("");
+  // Switching to "latest copy only" deletes older copies: confirm first.
+  const [confirmLatest, setConfirmLatest] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -83,7 +85,8 @@ export function BackupsCard({ ar }: { ar: boolean }) {
     try {
       setS(await fetchApi<BackupStatus>("/admin/backup/schedule", { method: "PUT", body: JSON.stringify(draft) }));
       setDraft(null);
-      setTimesMsg(ar ? "تم حفظ الأوقات" : "Times saved");
+      setConfirmLatest(false);
+      setTimesMsg(ar ? "تم الحفظ" : "Saved");
     } catch {
       setTimesMsg(ar ? "تعذر الحفظ: اختر من 1 إلى 6 أوقات" : "Could not save: choose 1 to 6 times");
     } finally {
@@ -202,6 +205,18 @@ export function BackupsCard({ ar }: { ar: boolean }) {
         </p>
       )}
 
+      {(st?.destinations ?? []).some((d) => d.snapshots) && (
+        <p data-testid="backup-copies" className="text-sm text-slate-700 dark:text-slate-200">
+          {ar ? "نسخ يمكن الرجوع إليها: " : "Copies to go back to: "}
+          {(st?.destinations ?? []).map((d, i) => (
+            <span key={d.name}>
+              {i > 0 && " · "}
+              <bdi>{d.name}</bdi> <Ltr>{d.snapshots ?? 0}</Ltr>
+            </span>
+          ))}
+        </p>
+      )}
+
       {s.postponed && (
         <p data-testid="backup-postponed" className="rounded-xl bg-amber-50 p-2.5 text-sm font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           {s.postponed.reason === "crisis"
@@ -285,12 +300,75 @@ export function BackupsCard({ ar }: { ar: boolean }) {
                 {sch.avoid_busy ? (ar ? "مفعّل" : "On") : ar ? "متوقف" : "Off"}
               </span>
             </button>
+            <fieldset className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+              <legend className="text-sm font-bold text-slate-900 dark:text-white">{ar ? "ماذا نحتفظ به" : "What to keep"}</legend>
+              {(["history", "latest"] as const).map((r) => {
+                const selected = (sch.retention ?? "history") === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    data-testid={`backup-keep-${r}`}
+                    onClick={() => {
+                      if (r === "latest" && !selected) {
+                        setConfirmLatest(true);
+                        return;
+                      }
+                      setConfirmLatest(false);
+                      edit({ ...sch, retention: r });
+                    }}
+                    className={`mt-2 block min-h-12 w-full rounded-xl border-2 p-2.5 text-start ${selected ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40" : "border-slate-200 dark:border-slate-700"}`}
+                  >
+                    <span className="block text-sm font-bold text-slate-900 dark:text-white">
+                      {r === "history" ? (ar ? "الاحتفاظ بالسجل (مُستحسن)" : "Keep history (recommended)") : ar ? "أحدث نسخة فقط" : "Latest copy only"}
+                    </span>
+                    <span className="block text-xs text-slate-600 dark:text-slate-300">
+                      {r === "history"
+                        ? ar
+                          ? "آخر 8 نسخ، ونسخة لكل يوم لمدة 30 يوماً، ولكل أسبوع 12 أسبوعاً، ولكل شهر سنة. يمكنك الرجوع ليوم سابق إذا حدث خطأ. تُحفظ التغييرات فقط، فالمساحة الإضافية قليلة."
+                          : "The last 8, one a day for 30 days, one a week for 12 weeks, one a month for a year. You can go back to an earlier day if something went wrong. Only changes are stored, so it uses little extra space."
+                        : ar
+                          ? "كل نسخة جديدة تحذف السابقة. أقل مساحة، لكن إذا حُفظ خطأ أو تلف فلا يمكن الرجوع."
+                          : "Each new backup deletes the previous one. Least space, but if a mistake or damage gets backed up, there is nothing to go back to."}
+                    </span>
+                  </button>
+                );
+              })}
+              {confirmLatest && (
+                <div data-testid="backup-latest-confirm" className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                  <p className="font-bold">
+                    {ar
+                      ? "عند النسخة القادمة ستُحذف كل النسخ الأقدم ولا يمكن استرجاعها."
+                      : "At the next backup, all older copies are deleted and can't be brought back."}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="backup-latest-yes"
+                      onClick={() => {
+                        setConfirmLatest(false);
+                        edit({ ...sch, retention: "latest" });
+                      }}
+                      className="min-h-12 rounded-xl border border-amber-500 px-3 text-sm font-bold"
+                    >
+                      {ar ? "نعم، أحدث نسخة فقط" : "Yes, keep only the newest copy"}
+                    </button>
+                    <button type="button" onClick={() => setConfirmLatest(false)} className="min-h-12 rounded-xl bg-slate-800 px-3 text-sm font-bold text-white dark:bg-slate-700">
+                      {ar ? "لا، احتفظ بالسجل" : "No, keep history"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </fieldset>
+
             {draft && (
               <div className="mt-2 flex flex-wrap gap-2">
                 <button type="button" data-testid="backup-times-save" disabled={savingTimes} onClick={saveTimes} className="min-h-12 rounded-xl bg-emerald-700 px-4 text-base font-bold text-white disabled:opacity-50">
-                  {ar ? "حفظ الأوقات" : "Save times"}
+                  {ar ? "حفظ" : "Save"}
                 </button>
-                <button type="button" onClick={() => setDraft(null)} className="min-h-12 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                <button type="button" onClick={() => { setDraft(null); setConfirmLatest(false); }} className="min-h-12 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                   {ar ? "إلغاء" : "Cancel"}
                 </button>
               </div>

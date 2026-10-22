@@ -261,7 +261,11 @@ A dead disk or SD card, a lost server or ransomware must not take the medication
 - **At the chosen backup times:** set in **Menu → Server → Backup times**, 1 to 6 times a day in household time. The default is 03:00, 09:00, 15:00 and 21:00. With **Wait while the app is in use** on (the default), a backup doesn't start if someone saved something in the last 10 minutes or an emergency alert is open. It tries again every 5 minutes, and after 2 hours it runs anyway. **Back up now** always runs straight away. The host asks the app every 5 minutes whether a backup is due; the app answers in household time. At each backup, `scripts/backup.sh`:
   1. asks the app for a consistent snapshot (`VACUUM INTO`), checked with `integrity_check`;
   2. uploads it and `data/photos/` with **restic**, encrypted on the server before anything leaves it, so Google (or Cloudflare / Backblaze) only ever holds unreadable data;
-  3. keeps the last 8, plus one a day for 30 days, one a week for 12 weeks and one a month for 12 months;
+  3. keeps what the Super Admin chose in **Menu → Server → What to keep**:
+     - **Keep history** (default): the last 8, plus one a day for 30 days, one a week for 12 weeks and one a month for 12 months. You can go back to an earlier day if a mistake or damaged data got backed up. restic stores only what changed, so this costs little extra space.
+     - **Latest copy only**: each backup deletes the previous one. It uses the least space, but there is nothing to go back to.
+
+     Older copies are removed only after the new backup is safely stored, and a database that fails its health check is never uploaded. The card shows how many copies each destination holds;
   4. copies the newest snapshot to a **second destination**, if you set one;
   5. once a week, **restores** the newest snapshot and has the app check it (integrity, and no doses or readings missing);
   6. writes `data/backup/status.json`, which **Menu → Server** shows. If there's no successful backup for 24 hours, the restore test fails, or Google sign-in expires, the Super Admin gets an alert.
@@ -425,6 +429,17 @@ You need only the **restic password** (printed in step 4) and the **Google accou
 
 4. Start it: `SKIP_DB_BACKUP=1 ./scripts/deploy.sh` (there is no running app yet to take a pre-update snapshot from). Open the app and check that the last doses and readings are there.
 5. Set up backups again on the new machine (§9), reusing the same repository and password.
+
+### Go back to an earlier day
+
+With **Keep history**, list the copies and restore the one from before the problem (on the same server or a new one):
+
+```bash
+restic -r rclone:gdrive:birrcare-backups --password-file ~/.config/birrcare/restic-password snapshots --tag birrcare
+restic -r rclone:gdrive:birrcare-backups --password-file ~/.config/birrcare/restic-password restore <snapshot id> --target /tmp/restore
+```
+
+Then put the database in place as in step 3 above, with the app stopped (`docker compose stop birrcare-backend`), and start it again.
 
 Everything recorded after the backup was taken is lost, so tell the family which doses and readings to re-enter.
 

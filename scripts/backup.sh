@@ -13,7 +13,9 @@ set -euo pipefail
 #   2. backs up that snapshot and data/photos/ with restic, encrypted on this
 #      machine, to the main repository (Google Drive through rclone, or
 #      R2/B2/USB);
-#   3. applies retention (keep-last 8, daily 30, weekly 12, monthly 12);
+#   3. applies the retention the Super Admin chose in the app: "history"
+#      (keep-last 8, daily 30, weekly 12, monthly 12: older days to go back
+#      to) or "latest" (only the newest copy);
 #   4. copies the newest snapshot to a second repository, if one is set;
 #   5. once a week, test-restores the newest snapshot and has the backend check
 #      it (integrity and row counts);
@@ -162,6 +164,13 @@ main() {
   integrity="$(jq -r '.integrity // ""' <<<"$snap")"
   [ "$integrity" = "ok" ] || fail "the database snapshot failed its integrity check: ${integrity:-no answer}"
   staged="${BACKUP_DIR}/$(jq -r '.file' <<<"$snap")"
+  local retention keep
+  retention="$(jq -r '.retention // "history"' <<<"$snap")"
+  if [ "$retention" = "latest" ]; then
+    keep=(--keep-last 1)
+  else
+    keep=(--keep-last 8 --keep-daily 30 --keep-weekly 12 --keep-monthly 12)
+  fi
   [ -f "$staged" ] || fail "the snapshot file is missing: $staged"
 
   # 2. Encrypted backup. Only the snapshot and the photos: never .env.
@@ -179,27 +188,32 @@ main() {
   [ -n "$snapshot_id" ] || fail "restic did not report a snapshot id"
   local done_at destinations
   done_at="$(now_utc)"
-  destinations="$(jq -nc --arg n "${BACKUP_NAME:-Main backup}" --arg at "$done_at" --arg id "$snapshot_id" --argjson size "$size" \
-    '[{name: $n, last_success_at: $at, snapshot_id: $id, size_bytes: $size}]')"
 
-  # 3. Retention.
-  if ! restic forget --tag birrcare --keep-last 8 --keep-daily 30 --keep-weekly 12 --keep-monthly 12 --prune >/dev/null 2>"$err"; then
+  # 3. Retention, as chosen in the app. Only after a successful backup, so the
+  # previous copy is never removed before the new one is safely stored.
+  if ! restic forget --tag birrcare "${keep[@]}" --prune >/dev/null 2>"$err"; then
     cat "$err" >&2
     fail "restic forget/prune failed: $(tail -n 1 "$err")" "$err"
   fi
+
+  # Copies kept there now, to go back to.
+  local kept
+  kept="$(restic snapshots --json --tag birrcare 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+  destinations="$(jq -nc --arg n "${BACKUP_NAME:-Main backup}" --arg at "$done_at" --arg id "$snapshot_id" --argjson size "$size" --argjson k "${kept:-0}" \
+    '[{name: $n, last_success_at: $at, snapshot_id: $id, size_bytes: $size, snapshots: $k}]')"
 
   # 4. Second copy.
   if [ -n "${RESTIC_REPOSITORY2:-}" ]; then
     local pw2="${RESTIC_PASSWORD_FILE2:-$RESTIC_PASSWORD_FILE}"
     if ! restic -r "$RESTIC_REPOSITORY2" --password-file "$pw2" copy \
       --from-repo "$RESTIC_REPOSITORY" --from-password-file "$RESTIC_PASSWORD_FILE" "$snapshot_id" >/dev/null 2>"$err" ||
-      ! restic -r "$RESTIC_REPOSITORY2" --password-file "$pw2" forget --tag birrcare \
-        --keep-last 8 --keep-daily 30 --keep-weekly 12 --keep-monthly 12 --prune >/dev/null 2>>"$err"; then
+      ! restic -r "$RESTIC_REPOSITORY2" --password-file "$pw2" forget --tag birrcare "${keep[@]}" --prune >/dev/null 2>>"$err"; then
       cat "$err" >&2
       fail "copy to ${BACKUP_NAME2:-the second repository} failed: $(tail -n 1 "$err")" "$err"
     fi
-    destinations="$(jq -c --arg n "${BACKUP_NAME2:-Second copy}" --arg at "$(now_utc)" --arg id "$snapshot_id" --argjson size "$size" \
-      '. + [{name: $n, last_success_at: $at, snapshot_id: $id, size_bytes: $size}]' <<<"$destinations")"
+    kept="$(restic -r "$RESTIC_REPOSITORY2" --password-file "$pw2" snapshots --json --tag birrcare 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+    destinations="$(jq -c --arg n "${BACKUP_NAME2:-Second copy}" --arg at "$(now_utc)" --arg id "$snapshot_id" --argjson size "$size" --argjson k "${kept:-0}" \
+      '. + [{name: $n, last_success_at: $at, snapshot_id: $id, size_bytes: $size, snapshots: $k}]' <<<"$destinations")"
   fi
 
   write_status '.status = "success" | .last_success_at = $at | .destinations = $d | .error = "" | .error_code = ""

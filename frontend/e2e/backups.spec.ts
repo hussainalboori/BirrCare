@@ -7,10 +7,10 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString(
 const states = {
   green: {
     configured: true, stale: false, reason: "ok", pending: false,
-    schedule: { times: ["03:00", "09:00", "15:00", "21:00"], avoid_busy: true }, next_at: new Date(Date.now() + 3 * 3600_000).toISOString(),
+    schedule: { times: ["03:00", "09:00", "15:00", "21:00"], avoid_busy: true, retention: "history" }, next_at: new Date(Date.now() + 3 * 3600_000).toISOString(),
     status: {
       status: "success", last_success_at: hoursAgo(2), last_attempt_at: hoursAgo(2),
-      destinations: [{ name: "Google Drive", snapshot_id: "a1b2c3d4" }, { name: "Cloudflare R2", snapshot_id: "a1b2c3d4" }],
+      destinations: [{ name: "Google Drive", snapshot_id: "a1b2c3d4", snapshots: 23 }, { name: "Cloudflare R2", snapshot_id: "a1b2c3d4", snapshots: 23 }],
       last_restore_test_at: hoursAgo(30), last_restore_test_ok: true,
     },
   },
@@ -112,8 +112,8 @@ test("Super Admin picks the backup times and the busy-time rule", async ({ page,
   await page.getByRole("button", { name: "Add time" }).click();
   await page.getByTestId("backup-avoid-busy").click();
   await page.getByTestId("backup-times-save").click();
-  await expect.poll(() => puts).toEqual([{ times: ["03:00", "09:00", "14:30", "21:00"], avoid_busy: false }]);
-  await expect(times).toContainText("Times saved");
+  await expect.poll(() => puts).toEqual([{ times: ["03:00", "09:00", "14:30", "21:00"], avoid_busy: false, retention: "history" }]);
+  await expect(times).toContainText("Saved");
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });
 
@@ -127,3 +127,25 @@ for (const locale of ["ar", "en"] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   });
 }
+
+test("switching to latest-copy-only needs a confirmation", async ({ page, baseURL }) => {
+  const puts: unknown[] = [];
+  await open(page, baseURL!, "en", "super_admin", states.green, [], puts);
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("button", { name: /^Server/ }).click();
+  await expect(page.getByTestId("backup-copies")).toContainText("Google Drive 23");
+  await expect(page.getByTestId("backup-keep-history")).toHaveAttribute("aria-checked", "true");
+
+  // Changing your mind leaves history selected and nothing to save.
+  await page.getByTestId("backup-keep-latest").click();
+  await expect(page.getByTestId("backup-latest-confirm")).toContainText("all older copies are deleted");
+  await page.getByRole("button", { name: "No, keep history" }).click();
+  await expect(page.getByTestId("backup-keep-history")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("backup-times-save")).toHaveCount(0);
+
+  await page.getByTestId("backup-keep-latest").click();
+  await page.getByTestId("backup-latest-yes").click();
+  await expect(page.getByTestId("backup-keep-latest")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("backup-times-save").click();
+  await expect.poll(() => puts).toEqual([{ times: ["03:00", "09:00", "15:00", "21:00"], avoid_busy: true, retention: "latest" }]);
+});

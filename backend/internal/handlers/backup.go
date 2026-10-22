@@ -73,7 +73,15 @@ type BackupHandler struct {
 type BackupSchedule struct {
 	Times     []string `json:"times"`      // "HH:MM", household time
 	AvoidBusy bool     `json:"avoid_busy"` // wait while the family is using the app
+	// Retention: "history" keeps older copies to go back to (last 8, daily 30,
+	// weekly 12, monthly 12); "latest" keeps only the newest copy.
+	Retention string `json:"retention"`
 }
+
+const (
+	RetentionHistory = "history"
+	RetentionLatest  = "latest"
+)
 
 type BackupPostponed struct {
 	Slot   string `json:"slot"`   // RFC3339
@@ -81,7 +89,7 @@ type BackupPostponed struct {
 	At     string `json:"at"`
 }
 
-var defaultBackupSchedule = BackupSchedule{Times: []string{"03:00", "09:00", "15:00", "21:00"}, AvoidBusy: true}
+var defaultBackupSchedule = BackupSchedule{Times: []string{"03:00", "09:00", "15:00", "21:00"}, AvoidBusy: true, Retention: RetentionHistory}
 
 const (
 	backupMaxTimes = 6
@@ -124,6 +132,9 @@ func (h *BackupHandler) loadSchedule(ctx context.Context) BackupSchedule {
 	var sch BackupSchedule
 	if json.Unmarshal([]byte(raw), &sch) != nil {
 		return defaultBackupSchedule
+	}
+	if sch.Retention != RetentionLatest {
+		sch.Retention = RetentionHistory
 	}
 	if times, err := normalizeBackupTimes(sch.Times); err == nil {
 		sch.Times = times
@@ -252,6 +263,7 @@ type BackupDestination struct {
 	LastSuccessAt string `json:"last_success_at,omitempty"`
 	SnapshotID    string `json:"snapshot_id,omitempty"`
 	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	Snapshots     int    `json:"snapshots,omitempty"` // copies kept there, to go back to
 }
 
 // BackupStatusFile is what scripts/backup.sh writes.
@@ -400,6 +412,8 @@ func (h *BackupHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
 		"size_bytes": size,
 		"integrity":  check.Integrity,
 		"counts":     check.Counts,
+		// What the host keeps after this backup (Menu → Server).
+		"retention":  h.loadSchedule(r.Context()).Retention,
 		"created_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -596,6 +610,14 @@ func (h *BackupHandler) SetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Times = times
+	switch req.Retention {
+	case "":
+		req.Retention = RetentionHistory
+	case RetentionHistory, RetentionLatest:
+	default:
+		writeJSONError(w, http.StatusBadRequest, "INVALID_RETENTION", `retention must be "history" or "latest"`)
+		return
+	}
 	raw, _ := json.Marshal(req)
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -609,7 +631,7 @@ func (h *BackupHandler) SetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := audit.Record(tx, me.ID, "BACKUP_SCHEDULE_CHANGED", "backup", "schedule",
-		fmt.Sprintf("times %s, avoid busy %v", strings.Join(times, " "), req.AvoidBusy)); err != nil {
+		fmt.Sprintf("times %s, avoid busy %v, keep %s", strings.Join(times, " "), req.AvoidBusy, req.Retention)); err != nil {
 		internalError(w, "failed to write audit log", err)
 		return
 	}

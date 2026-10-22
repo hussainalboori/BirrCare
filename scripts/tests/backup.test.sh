@@ -21,6 +21,8 @@ EOF
   echo ok >"$W/integrity"
   echo '{"medication_logs":5,"vitals_logs":3}' >"$W/restored-counts"
   echo '{"due":true,"reason":"due"}' >"$W/due"
+  echo history >"$W/retention"
+  echo 23 >"$W/kept"
   : >"$W/restic-calls"
   : >"$W/restic-fail"
 
@@ -31,7 +33,7 @@ url="\${@: -1}"
 case "\$url" in
   */internal/backup/snapshot)
     echo "fake db" >"$W/data/backup/staging/birrcare.db"
-    echo '{"file":"staging/birrcare.db","integrity":"'"\$(cat "$W/integrity")"'","counts":{"medication_logs":5,"vitals_logs":3}}' ;;
+    echo '{"file":"staging/birrcare.db","integrity":"'"\$(cat "$W/integrity")"'","retention":"'"\$(cat "$W/retention")"'","counts":{"medication_logs":5,"vitals_logs":3}}' ;;
   */internal/backup/due) cat "$W/due" ;;
   */internal/backup/verify)
     [ -f "$W/data/backup/restore-test/birrcare.db" ] || exit 22
@@ -44,12 +46,13 @@ EOF
 #!/usr/bin/env bash
 echo "\$*" >>"$W/restic-calls"
 sub=""
-for a in "\$@"; do case "\$a" in backup|forget|copy|check|restore) sub="\$a"; break ;; esac; done
+for a in "\$@"; do case "\$a" in backup|forget|copy|check|restore|snapshots) sub="\$a"; break ;; esac; done
 if grep -qx "\$sub" "$W/restic-fail" 2>/dev/null; then
   echo "Fatal: oauth2: cannot fetch token: 400 Bad Request Response: {\"error\": \"invalid_grant\"}" >&2
   exit 1
 fi
 case "\$sub" in
+  snapshots) n=\$(cat "$W/kept"); printf '['; for i in \$(seq 1 "\$n"); do [ "\$i" -gt 1 ] && printf ','; printf '{"id":"s%s"}' "\$i"; done; echo ']' ;;
   backup) echo '{"message_type":"status","percent_done":1}'
           echo '{"message_type":"summary","snapshot_id":"a1b2c3d4e5f6","total_bytes_processed":4096}' ;;
   restore) t=""; prev=""; for a in "\$@"; do [ "\$prev" = "--target" ] && t="\$a"; prev="\$a"; done
@@ -100,7 +103,8 @@ check "success: last_success_at set" "$(status '.last_success_at | test("T")')" 
 check "success: .env never backed up" "$(grep -c '\.env' "$W/restic-calls" || true)" "0"
 check "success: photos backed up" "$(grep '^backup' "$W/restic-calls" | grep -c 'data/photos')" "1"
 check "success: snapshot backed up" "$(grep '^backup' "$W/restic-calls" | grep -c 'staging/birrcare.db')" "1"
-check "success: retention applied" "$(grep -c 'forget --tag birrcare --keep-last 8 --keep-daily 30 --keep-weekly 12 --keep-monthly 12 --prune' "$W/restic-calls")" "1"
+check "success: history retention applied" "$(grep -c 'forget --tag birrcare --keep-last 8 --keep-daily 30 --keep-weekly 12 --keep-monthly 12 --prune' "$W/restic-calls")" "1"
+check "success: copies kept recorded" "$(status '.destinations[0].snapshots')" "23"
 check "success: first run does the restore test" "$(status .last_restore_test_ok)" "true"
 check "success: restore-test copy cleaned up" "$([ -e "$W/data/backup/restore-test/birrcare.db" ] && echo left || echo gone)" "gone"
 check "success: secret created, private" "$(stat -c %a "$W/data/backup/secret" 2>/dev/null || stat -f %Lp "$W/data/backup/secret")" "600"
@@ -152,6 +156,25 @@ rm "$W/cfg/backup.env"
 run
 check "not set up: exit code" "$(cat "$W/rc")" "1"
 check "not set up: no status.json" "$([ -e "$W/data/backup/status.json" ] && echo yes || echo no)" "no"
+rm -rf "$W"
+
+# 7b. "Latest copy only": the old copies go, but only after the new backup.
+setup
+echo latest >"$W/retention"
+echo 1 >"$W/kept"
+run
+check "latest: keeps only the newest" "$(grep -c 'forget --tag birrcare --keep-last 1 --prune' "$W/restic-calls")" "1"
+check "latest: no history rules" "$(grep -c 'keep-daily' "$W/restic-calls" || true)" "0"
+check "latest: forget runs after the backup" "$(grep -nE '^(backup|forget)' "$W/restic-calls" | cut -d: -f2 | cut -d' ' -f1 | tr '\n' ' ')" "backup forget "
+check "latest: one copy kept" "$(status '.destinations[0].snapshots')" "1"
+rm -rf "$W"
+
+# 7c. A failed backup never deletes anything, whatever the retention.
+setup
+echo latest >"$W/retention"
+echo backup >"$W/restic-fail"
+run
+check "failed backup: nothing forgotten" "$(calls '^forget')" "0"
 rm -rf "$W"
 
 # 8. --if-due: the app says the family is using it → wait, no backup.

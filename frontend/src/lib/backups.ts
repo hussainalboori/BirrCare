@@ -7,6 +7,8 @@ export interface BackupDestination {
   last_success_at?: string;
   snapshot_id?: string;
   size_bytes?: number;
+  /** Copies kept there, to go back to. */
+  snapshots?: number;
 }
 
 export type BackupReason = "ok" | "not_set_up" | "stale" | "failed" | "restore_failed" | "invalid_grant";
@@ -14,6 +16,8 @@ export type BackupReason = "ok" | "not_set_up" | "stale" | "failed" | "restore_f
 export interface BackupSchedule {
   times: string[]; // "HH:MM", household time
   avoid_busy: boolean;
+  /** "history": older copies to go back to; "latest": only the newest copy. */
+  retention?: "history" | "latest";
 }
 
 export interface BackupStatus {
