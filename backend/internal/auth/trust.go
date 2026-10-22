@@ -118,8 +118,9 @@ func IsTrustedHomeIP(ipStr string) bool {
 	if ip == nil {
 		return false
 	}
-	for _, env := range []string{"TRUSTED_HOME_IP", "TRUSTED_HOME_SUBNETS"} {
-		for _, s := range strings.Split(os.Getenv(env), ",") {
+	// Read by name so scripts/tests/env-schema.test.sh can see both settings.
+	for _, list := range []string{os.Getenv("TRUSTED_HOME_IP"), os.Getenv("TRUSTED_HOME_SUBNETS")} {
+		for _, s := range strings.Split(list, ",") {
 			s = strings.TrimSpace(s)
 			if s == "" {
 				continue

@@ -29,6 +29,7 @@ case "\$1" in
   cat-file) exit 0 ;;
   diff) [ -f "$W/db-change" ] && echo backend/internal/db/migrations.go; exit 0 ;;
   log) printf 'abc1234\tfix(vitals): larger numbers\t2026-10-21T10:00:00+03:00\n' ;;
+  show) [ -f "$W/target-schema" ] && cat "$W/target-schema" || exit 128 ;;
   *) echo "stub git: unexpected \$*" >&2; exit 1 ;;
 esac
 EOF
@@ -155,6 +156,65 @@ request "$T1"
 DRY_RUN=1 run
 check "dry run: request untouched" "$(ls "$W/repo/data/update" | grep -c 'request.json' || true)" "1"
 check "dry run: deploy.sh not called" "$(deploys)" "0"
+rm -rf "$W"
+
+# with_settings: the real setup-env.sh, a complete .env, and a target version
+# whose schema adds a required setting this .env doesn't have.
+with_settings() {
+  local root
+  root="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+  cp "$root/scripts/setup-env.sh" "$W/repo/scripts/" && chmod +x "$W/repo/scripts/setup-env.sh"
+  mkdir -p "$W/repo/data" && echo db >"$W/repo/data/birrcare.db"
+  printf 'APP_TIMEZONE=Asia/Bahrain\nEMERGENCY_NUMBER=999\nSESSION_SECRET=0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij\nAUTH_DEV_FALLBACK=false\nCF_ACCESS_TRUST_EMAIL_HEADER=false\n' >"$W/repo/.env"
+  cat >"$W/target-schema" <<'SCHEMA'
+APP_TIMEZONE|ask|yes|@detect-tz|tz|Household time zone|المنطقة الزمنية
+EMERGENCY_NUMBER|ask|yes|112|phone|Emergency number|رقم الطوارئ
+WARD_NAME|ask|yes||text|Name of the care ward|اسم جناح الرعاية
+SESSION_SECRET|generate|yes|@random48|secret48||
+SCHEMA
+}
+
+# 11. The new version needs a setting .env lacks: offered with needs_config,
+#     and Install refuses without touching anything.
+setup
+with_settings
+run
+check "needs config: offered" "$(avail .target_sha)" "$T1"
+check "needs config: key listed" "$(avail '.needs_config[0].key')" "WARD_NAME"
+check "needs config: question listed" "$(avail '.needs_config[0].question_en')" "Name of the care ward"
+request "$T1"
+run
+check "needs config: deploy.sh not called" "$(deploys)" "0"
+check "needs config: no checkout" "$([ -f "$W/reset" ] && echo yes || echo no)" "no"
+check "needs config: result" "$(result .status)" "needs_config"
+check "needs config: missing key in result" "$(result '.missing[0]')" "WARD_NAME"
+check "needs config: request consumed" "$(ls "$W/repo/data/update" | grep -c '^request' || true)" "0"
+# Once the setting is answered, the same version installs.
+echo "WARD_NAME=Home" >>"$W/repo/.env"
+run
+check "answered: no longer needs config" "$(avail '.needs_config | length')" "0"
+request "$T1"
+run
+check "answered: deployed" "$(deploys)" "1"
+rm -rf "$W"
+
+# 12. Automatic updates don't install a version that needs a setting.
+setup
+with_settings
+echo '{"mode":"auto"}' >"$W/repo/data/update/policy.json"
+run
+check "auto + needs config: not deployed" "$(deploys)" "0"
+rm -rf "$W"
+
+# 13. deploy.sh stops with exit 3 (setting missing): needs_config, not rejected.
+setup
+printf '#!/usr/bin/env bash\necho '"'"'NEEDS_CONFIG {"missing":[{"key":"WARD_NAME","question_en":"Ward","question_ar":"جناح"}],"unsafe":false}'"'"'\nexit 3\n' >"$W/deploy"
+request "$T1"
+run
+check "exit 3: result needs_config" "$(result .status)" "needs_config"
+check "exit 3: missing key" "$(result '.missing[0]')" "WARD_NAME"
+check "exit 3: version not rejected" "$([ -f "$W/state/birrcare/rejected-sha" ] && cat "$W/state/birrcare/rejected-sha" || echo none)" "none"
+check "exit 3: still offered" "$(avail .target_sha)" "$T1"
 rm -rf "$W"
 
 if [ "$fails" -gt 0 ]; then

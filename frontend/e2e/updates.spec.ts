@@ -40,7 +40,7 @@ async function phone(context: BrowserContext, baseURL: string, shared: Shared, m
     if (path === "/auth/me") return json({ ...me, avatar_color: "#059669", preferred_lang: locale, is_active: true, totp_enabled: true, created_at: "2026-10-01T00:00:00Z" });
     if (path.startsWith("/admin/update/")) {
       if (me.role !== "super_admin") return json({ error: "FORBIDDEN" }, 403);
-      if (path === "/admin/update/status") return json(status);
+      if (path === "/admin/update/status") return json((globalThis as { __status?: unknown }).__status ?? status);
       if (path === "/admin/update/install") {
         shared.installs.push(req.postDataJSON());
         const ev = JSON.stringify({ type: "UPDATE_STARTING", timestamp: new Date().toISOString(), actor: { id: me.id, name: me.name, avatar_color: "#059669" }, payload: { target_sha: "4f2a91c" } });
@@ -97,3 +97,30 @@ test("ar: the Updates card fits a phone", async ({ browser, baseURL }) => {
   await expect(admin.getByTestId("updates-card")).toContainText("يوجد تحديث");
   expect(await admin.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });
+
+for (const locale of ["ar", "en"] as const) {
+  test(`${locale}: an update that needs a new setting says so and can't be installed`, async ({ browser, baseURL }) => {
+    (globalThis as { __status?: unknown }).__status = {
+      ...status,
+      available: {
+        ...status.available,
+        needs_config: [{ key: "WARD_NAME", question_en: "Name of the care ward", question_ar: "اسم جناح الرعاية" }],
+      },
+    };
+    try {
+      const shared: Shared = { queues: new Map(), installs: [] };
+      const admin = await phone(await browser.newContext(), baseURL!, shared, { id: "sa1", name: "Hussain", role: "super_admin" }, locale);
+      await admin.getByRole("button", { name: locale === "ar" ? "القائمة" : "Menu" }).click();
+      await admin.getByRole("button", { name: locale === "ar" ? /^الخادم/ : /^Server/ }).click();
+      const notice = admin.getByTestId("update-needs-config");
+      await expect(notice).toContainText(locale === "ar" ? "هذا التحديث يحتاج إعداداً جديداً" : "This update needs a new setting");
+      await expect(notice).toContainText(locale === "ar" ? "اسم جناح الرعاية" : "Name of the care ward");
+      await expect(notice).toContainText("./scripts/deploy.sh");
+      await expect(admin.getByTestId("update-install")).toBeDisabled();
+      expect(await admin.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+      expect(shared.installs).toEqual([]);
+    } finally {
+      delete (globalThis as { __status?: unknown }).__status;
+    }
+  });
+}

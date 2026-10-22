@@ -17,14 +17,17 @@ export interface UpdateStatus {
     checked_at: string;
     commits: UpdateCommit[] | null;
     changes_database: boolean;
+    /** Settings this version needs that the server's .env doesn't have (issue #52). */
+    needs_config?: { key: string; question_en: string; question_ar: string }[] | null;
   } | null;
   update_available: boolean;
   result: {
     sha: string;
-    status: "success" | "failed" | "rejected";
+    status: "success" | "failed" | "rejected" | "needs_config";
     started_at?: string;
     finished_at?: string;
     log_tail?: string;
+    missing?: string[] | null;
   } | null;
   policy: { mode: "manual" | "auto"; skipped_sha?: string };
   pending: boolean;

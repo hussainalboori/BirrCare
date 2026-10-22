@@ -50,13 +50,22 @@ type UpdateCommit struct {
 	Date    string `json:"date"`
 }
 
+// UpdateNeedsConfig is a setting the offered version requires that .env
+// doesn't answer yet (issue #52); it has to be answered on the server.
+type UpdateNeedsConfig struct {
+	Key        string `json:"key"`
+	QuestionEn string `json:"question_en"`
+	QuestionAr string `json:"question_ar"`
+}
+
 type UpdateAvailable struct {
-	CurrentSHA      string         `json:"current_sha"`
-	TargetSHA       string         `json:"target_sha"`
-	CI              string         `json:"ci"`
-	CheckedAt       string         `json:"checked_at"`
-	Commits         []UpdateCommit `json:"commits"`
-	ChangesDatabase bool           `json:"changes_database"`
+	CurrentSHA      string              `json:"current_sha"`
+	TargetSHA       string              `json:"target_sha"`
+	CI              string              `json:"ci"`
+	CheckedAt       string              `json:"checked_at"`
+	Commits         []UpdateCommit      `json:"commits"`
+	ChangesDatabase bool                `json:"changes_database"`
+	NeedsConfig     []UpdateNeedsConfig `json:"needs_config,omitempty"`
 }
 
 type UpdatePolicy struct {
@@ -73,10 +82,12 @@ type UpdateRequest struct {
 
 type UpdateResult struct {
 	SHA        string `json:"sha"`
-	Status     string `json:"status"` // success | failed | rejected
+	Status     string `json:"status"` // success | failed | rejected | needs_config
 	StartedAt  string `json:"started_at,omitempty"`
 	FinishedAt string `json:"finished_at,omitempty"`
 	LogTail    string `json:"log_tail,omitempty"`
+	// Settings that were missing when status is needs_config.
+	Missing []string `json:"missing,omitempty"`
 }
 
 type UpdateStatus struct {
@@ -283,6 +294,15 @@ func (h *UpdatesHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.exists(updateRequestFile) || h.exists(updateProcessing) {
 		writeJSONError(w, http.StatusConflict, "IN_PROGRESS", "an update is already being installed")
+		return
+	}
+	if len(avail.NeedsConfig) > 0 {
+		keys := make([]string, 0, len(avail.NeedsConfig))
+		for _, n := range avail.NeedsConfig {
+			keys = append(keys, n.Key)
+		}
+		writeJSONError(w, http.StatusConflict, "NEEDS_CONFIG",
+			"this version needs a new setting first ("+strings.Join(keys, ", ")+"); run ./scripts/deploy.sh on the server to answer it")
 		return
 	}
 	n, err := h.activeCrisisAlerts(r.Context())

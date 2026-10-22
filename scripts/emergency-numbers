@@ -1,0 +1,22 @@
+# Suggested ambulance numbers by household time zone, for scripts/setup-env.sh.
+# The script always asks the family to confirm. Correct a line if it is wrong
+# where you live. Anything not listed falls back to 112.
+# time zone|number
+Asia/Bahrain|999
+Asia/Riyadh|997
+Asia/Kuwait|112
+Asia/Qatar|999
+Asia/Dubai|998
+Asia/Muscat|9999
+Asia/Amman|911
+Asia/Baghdad|122
+Asia/Beirut|140
+Africa/Cairo|123
+Europe/London|999
+Europe/Dublin|112
+America/New_York|911
+America/Chicago|911
+America/Denver|911
+America/Los_Angeles|911
+America/Toronto|911
+Australia/Sydney|000

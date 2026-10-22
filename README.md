@@ -51,20 +51,19 @@ Phone ──HTTPS──► Cloudflare Access ──tunnel──► 127.0.0.1:300
 ```bash
 git clone <this repository>
 cd BirrCare
-cp .env.example .env      # then edit it, see Configuration
-docker compose up -d --build
+./scripts/deploy.sh       # asks a few questions, writes .env, builds and starts
 ```
 
 - Frontend: <http://127.0.0.1:3000>
 - Backend health check: `curl http://127.0.0.1:8080/api/v1/health` → `{"status":"healthy","service":"birrcare-backend"}`
 
-On first start, with an empty database, the backend creates one Super Admin (id `cg_superadmin`) from `SUPER_ADMIN_USER` / `SUPER_ADMIN_PIN` (defaults `admin` / `1234`). Sign in with that PIN, change it (the app refuses `1234` and repeated digits as a new PIN), then add the family under user management.
+On first start, with an empty database, the backend creates one Super Admin (id `cg_superadmin`) from the name and 4-digit PIN you gave `deploy.sh` (it refuses `1234` and repeated digits). Sign in with that PIN, then add the family under user management.
 
 The database lives in `./data/birrcare.db` on the host (mounted at `/data`).
 
 ## Configuration
 
-Copy `.env.example` to `.env`; Docker Compose reads it and passes the values to the backend container.
+`./scripts/deploy.sh` writes `.env` by asking a few questions (see [docs/DEPLOYMENT.md §3](docs/DEPLOYMENT.md#3-settings-env)); change a value later with `./scripts/setup-env.sh --reconfigure KEY`. Docker Compose reads `.env` and passes the values to the containers.
 
 | Variable | Default | Description |
 |---|---|---|

@@ -29,6 +29,9 @@ services:
       - DOCTOR_PHONE=${DOCTOR_PHONE:-}
       - DISABLE_2FA_FOR=${DISABLE_2FA_FOR:-}
       - PUSH_CONTACT=${PUSH_CONTACT:-}
+      # One-tap switching from the home internet address (issue #29)
+      - TRUSTED_HOME_IP=${TRUSTED_HOME_IP:-}
+      - TRUSTED_HOME_SUBNETS=${TRUSTED_HOME_SUBNETS:-}
     volumes:
       - ./data:/data
 

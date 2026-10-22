@@ -48,33 +48,66 @@ git clone https://github.com/hussainalboori/BirrCare.git ~/birrcare
 cd ~/birrcare
 ```
 
-## 3. Configure `.env`
+## 3. Settings (`.env`)
 
-```bash
-cp .env.example .env
-chmod 600 .env            # it holds the session secret and the first PIN
+You don't edit `.env` by hand. `./scripts/deploy.sh` (step 4) asks the few questions that matter, checks each answer, fills in the rest and writes `.env` (mode `600`):
+
+```
+Household time zone (where the patient lives) [Asia/Bahrain]:
+Name of the first admin (Super Admin) [admin]: Hussain
+4-digit PIN for the first admin:            (hidden, typed twice; 1234 and 1111-style PINs are refused)
+Emergency number to call in a crisis [999]:
+Is 999 the number for an ambulance where the patient lives? [Y/n]
+Doctor's name (Enter to skip):
+Doctor's phone (Enter to skip): +973 3912 3456     → stored as +97339123456
+Cloudflare Access team domain … (Enter to skip):
+…
 ```
 
-Edit `.env`. The values that matter in production:
+Press **Enter** to accept the suggestion in brackets. The time zone is detected from the server, and the emergency number is suggested for that time zone (`scripts/emergency-numbers`; correct it there if it's wrong where you live). Arabic questions: `./scripts/setup-env.sh --lang ar`, or a server whose `LANG` starts with `ar`.
 
-| Variable | Set it to |
-|---|---|
-| `APP_TIMEZONE` | The household's IANA zone, e.g. `Asia/Riyadh`. Decides which day a dose belongs to. Required in production; the backend refuses to start without it to prevent early-morning doses landing on the wrong day. |
-| `SUPER_ADMIN_USER` / `SUPER_ADMIN_PIN` | Name and **non-default** 4-digit PIN for the first account. Only used when the database is empty. |
-| `EMERGENCY_NUMBER` | Local emergency number (e.g. `997` in Saudi Arabia). Shown as a call button on a blood-pressure crisis. It is also built into the app as the fallback for when a phone can't reach the server, so `./scripts/deploy.sh` (which rebuilds) is needed after changing it. If it's empty, the button uses `112` and admins see a red "not configured" banner. |
-| `DOCTOR_NAME`, `DOCTOR_PHONE` | The doctor's call button: on a BP crisis and on partial or vomited doses. Empty hides the button. |
-| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | From step 6, if you want Cloudflare sign-in to map to caregivers by email. Leave empty to use PIN login only. |
-| `SESSION_SECRET` | Optional. Leave empty and one is generated and stored in the database on first boot. If you set it, use `openssl rand -base64 48`. Changing it later signs everyone out. |
+What the script does for you:
 
-Leave these as they are in production:
+- **Generates** `SESSION_SECRET`.
+- **Keeps** `AUTH_DEV_FALLBACK` and `CF_ACCESS_TRUST_EMAIL_HEADER` at `false`. If either is `true`, it stops with an explanation and offers to set it back.
+- **Warns** if `DISABLE_2FA_FOR` is set, and offers to clear it.
+- **Never** prints the PIN or the session secret.
+- **Writes safely:** the previous `.env` goes to `.env.bak-<date>` (the last 5 are kept), and the new file is written to a temporary file first, so an interrupted run never leaves half a file.
+- **Later runs** ask nothing if `.env` is complete. If an update adds a required setting, only that question is asked. Existing values are never changed, and settings you added yourself are kept.
 
-| Variable | Must be | Why |
+### Change a setting later
+
+```bash
+./scripts/setup-env.sh --reconfigure DOCTOR_PHONE     # one setting
+./scripts/setup-env.sh --reconfigure                  # go through every question again
+./scripts/deploy.sh                                    # apply it (rebuilds, restarts)
+```
+
+### When an update needs a new setting
+
+Updates are installed from **Menu → Server** with nobody at the terminal, so they can't ask questions. The server notices beforehand that the new version needs a setting your `.env` doesn't have:
+
+- The app shows "This update needs a new setting: …", and **Install now** is greyed out.
+- To answer it, run `cd ~/birrcare && ./scripts/deploy.sh` once on the server, then install from the app.
+- If such an install is started anyway, nothing is rebuilt and the running version stays up.
+
+### Reference
+
+| Variable | Asked? | Notes |
 |---|---|---|
-| `AUTH_DEV_FALLBACK` | `false` | `true` lets anyone in as the first caregiver. |
-| `CF_ACCESS_TRUST_EMAIL_HEADER` | `false` | The raw email header can be spoofed; the signed JWT is verified instead. |
-| `DISABLE_2FA_FOR` | empty | Break-glass only, see [Lost 2FA phone](#lost-2fa-phone-and-recovery-codes). |
+| `APP_TIMEZONE` | yes | IANA zone, e.g. `Asia/Bahrain`. Decides which day a dose belongs to; the backend refuses to start without it. |
+| `SUPER_ADMIN_USER`, `SUPER_ADMIN_PIN` | first install only | The first account, created when the database is empty. |
+| `EMERGENCY_NUMBER` | yes | Crisis call button. Also built into the app as the offline fallback, so changing it needs `./scripts/deploy.sh` (rebuild). |
+| `DOCTOR_NAME`, `DOCTOR_PHONE` | optional | The doctor's call button; empty hides it. |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | optional | From step 6, to map Cloudflare sign-in to caregivers by email. |
+| `PUSH_CONTACT` | optional | Contact (email or https link) given to push services for lock-screen alerts. |
+| `TRUSTED_HOME_IP`, `TRUSTED_HOME_SUBNETS` | optional | Home internet address for one-tap switching (Menu → Home Devices is more reliable). |
+| `SESSION_SECRET` | generated | Changing it signs everyone out. |
+| `AUTH_DEV_FALLBACK`, `CF_ACCESS_TRUST_EMAIL_HEADER` | never | Must stay `false`. |
+| `DISABLE_2FA_FOR` | never | Break-glass only, see [Lost 2FA phone](#lost-2fa-phone-and-recovery-codes). |
+| `CORS_ALLOWED_ORIGINS` | never | Not needed with the default proxy. |
 
-The full list with defaults is in [`.env.example`](../.env.example) and the [README](../README.md#configuration).
+The questions live in [`scripts/env.schema`](../scripts/env.schema). CI fails if the app reads a setting that has no line there, so an update can't add a setting without its question.
 
 ## 4. First start
 
@@ -82,7 +115,7 @@ The full list with defaults is in [`.env.example`](../.env.example) and the [REA
 ./scripts/deploy.sh
 ```
 
-This builds both images, starts them, and waits until the backend health check and the frontend answer. Expected ending:
+It first asks the questions from step 3, then builds both images, starts them, and waits until the backend health check and the frontend answer. Expected ending:
 
 ```
     ✔ Backend is healthy on http://127.0.0.1:8080

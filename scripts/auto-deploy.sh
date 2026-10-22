@@ -19,10 +19,12 @@ set -euo pipefail
 # can at most ask for "the latest CI-passed main".
 #
 # Files shared with the app (data volume, data/update/):
-#   available.json  host → app   {current_sha, target_sha, ci, checked_at, commits, changes_database}
+#   available.json  host → app   {current_sha, target_sha, ci, checked_at, commits, changes_database,
+#                                 needs_config: settings the new version needs that .env lacks}
 #   policy.json     app  → host  {mode: "manual"|"auto", skipped_sha}
 #   request.json    app  → host  {action: "install", target_sha, requested_by, requested_at}
-#   result.json     host → app   {sha, status: "success"|"failed"|"rejected", started_at, finished_at, log_tail}
+#   result.json     host → app   {sha, status: "success"|"failed"|"rejected"|"needs_config", started_at,
+#                                 finished_at, log_tail, missing}
 #
 # Requirements on the host: git, curl, jq, docker compose.
 #
@@ -50,6 +52,22 @@ write_json() {
   mv -f "$tmp" "$file"
 }
 
+# needs_config_for SHA: settings that version requires but .env doesn't answer
+# (its scripts/env.schema checked by setup-env.sh --check), as a JSON array.
+# Sets NEEDS_CONFIG.
+needs_config_for() {
+  local sha="$1" schema out
+  NEEDS_CONFIG="[]"
+  [ -x ./scripts/setup-env.sh ] || return 0
+  schema="$(mktemp)"
+  if git show "${sha}:scripts/env.schema" >"$schema" 2>/dev/null; then
+    out="$(./scripts/setup-env.sh --check --schema "$schema" 2>/dev/null)" || true
+    NEEDS_CONFIG="$(jq -c '[.missing[] | {key, question_en, question_ar}]' <<<"$out" 2>/dev/null)" || NEEDS_CONFIG="[]"
+    [ -n "$NEEDS_CONFIG" ] || NEEDS_CONFIG="[]"
+  fi
+  rm -f "$schema"
+}
+
 # write_available CURRENT OFFER CI
 write_available() {
   local current="$1" offer="$2" ci="$3" commits="[]" changes_db=false
@@ -67,19 +85,23 @@ write_available() {
     # shellcheck disable=SC2086 # range may hold "-n 20 sha"
     commits="$(git log --format='%h%x09%s%x09%cI' $range |
       jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {sha: .[0], subject: .[1], date: .[2]})')"
+    needs_config_for "$offer"
+  else
+    NEEDS_CONFIG="[]"
   fi
   jq -n \
     --arg current "$current" --arg target "$offer" --arg ci "$ci" --arg checked "$(now_utc)" \
-    --argjson commits "$commits" --argjson changes_db "$changes_db" \
+    --argjson commits "$commits" --argjson changes_db "$changes_db" --argjson needs "$NEEDS_CONFIG" \
     '{current_sha: $current, target_sha: $target, ci: $ci, checked_at: $checked,
-      commits: $commits, changes_database: $changes_db}' |
+      commits: $commits, changes_database: $changes_db, needs_config: $needs}' |
     write_json "$UPDATE_DIR/available.json"
 }
 
-# write_result SHA STATUS STARTED FINISHED LOG_TAIL
+# write_result SHA STATUS STARTED FINISHED LOG_TAIL [MISSING_KEYS_JSON]
 write_result() {
   jq -n --arg sha "$1" --arg status "$2" --arg started "$3" --arg finished "$4" --arg log "$5" \
-    '{sha: $sha, status: $status, started_at: $started, finished_at: $finished, log_tail: $log}' |
+    --argjson missing "${6:-[]}" \
+    '{sha: $sha, status: $status, started_at: $started, finished_at: $finished, log_tail: $log, missing: $missing}' |
     write_json "$UPDATE_DIR/result.json"
 }
 
@@ -139,6 +161,16 @@ deploy() {
     status=success
     echo "$sha" >"$DEPLOYED_FILE"
     DEPLOYED="$sha"
+  elif [ "$rc" -eq 3 ]; then
+    # A new setting has no answer yet (issue #52). Not a broken version: once
+    # someone answers it with ./scripts/deploy.sh, the same version installs.
+    local missing
+    missing="$(grep '^NEEDS_CONFIG ' "$log" | tail -n 1 | cut -d' ' -f2- | jq -c '[.missing[].key]' 2>/dev/null || echo '[]')"
+    write_result "$sha" needs_config "$started" "$(now_utc)" \
+      "This version needs a new setting. Run ./scripts/deploy.sh on the server once to answer it." "${missing:-[]}"
+    rm -f "$UPDATE_DIR/request.processing"
+    write_available "$DEPLOYED" "$sha" success
+    return 1
   else
     # Don't rebuild a broken commit every run; the next push to main retries.
     status=failed
@@ -213,7 +245,13 @@ main() {
     fi
     mv -f "$UPDATE_DIR/request.json" "$UPDATE_DIR/request.processing"
     req_target="$(jq -r '.target_sha // ""' "$UPDATE_DIR/request.processing" 2>/dev/null || true)"
-    if [ "$ci" = success ] && [ "$req_target" = "$target" ]; then
+    if [ "$ci" = success ] && [ "$req_target" = "$target" ] && [ "$NEEDS_CONFIG" != "[]" ]; then
+      echo "auto-deploy: ${target:0:7} needs a new setting first: $(jq -r '[.[].key] | join(", ")' <<<"$NEEDS_CONFIG")"
+      write_result "$req_target" needs_config "" "$(now_utc)" \
+        "This version needs a new setting. Run ./scripts/deploy.sh on the server once to answer it." \
+        "$(jq -c '[.[].key]' <<<"$NEEDS_CONFIG")"
+      rm -f "$UPDATE_DIR/request.processing"
+    elif [ "$ci" = success ] && [ "$req_target" = "$target" ]; then
       deploy "$target" || exit 1
     else
       echo "auto-deploy: refusing install request for '${req_target:0:7}': only the CI-passed origin/${branch} (${target:0:7}) can be installed"
@@ -225,7 +263,11 @@ main() {
   fi
 
   if [ "$mode" = auto ] && [ -n "$offer" ]; then
-    deploy "$target" || exit 1
+    if [ "$NEEDS_CONFIG" != "[]" ]; then
+      echo "auto-deploy: not installing ${target:0:7} automatically: it needs a new setting first"
+    else
+      deploy "$target" || exit 1
+    fi
   fi
 }
 

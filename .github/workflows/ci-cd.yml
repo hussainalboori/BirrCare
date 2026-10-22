@@ -110,6 +110,13 @@ jobs:
       - name: Backup shell tests
         run: bash scripts/tests/backup.test.sh
 
+      # Settings (.env): questions, validation, safe writes, unattended deploys (issue #52)
+      - name: Settings shell tests
+        run: |
+          bash scripts/tests/env-schema.test.sh
+          bash scripts/tests/setup-env.test.sh
+          bash scripts/tests/deploy-config.test.sh
+
       - name: Build Backend Container
         uses: docker/build-push-action@v7
         with:

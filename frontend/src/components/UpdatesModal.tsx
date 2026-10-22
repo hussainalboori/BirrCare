@@ -89,6 +89,9 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
       } else if (code === "IN_PROGRESS") {
         setInstallTarget(target);
         setPhase("installing");
+      } else if (code === "NEEDS_CONFIG") {
+        setMsg(ar ? "يحتاج هذا التحديث إعداداً جديداً على الخادم أولاً." : "This update needs a new setting on the server first.");
+        load();
       } else if (code === "STALE_TARGET") {
         setMsg(ar ? "وصل إصدار أحدث. تم تحديث القائمة، راجعها ثم اضغط تثبيت." : "A newer version arrived. The list is refreshed; check it and press Install again.");
         setPhase("idle");
@@ -142,6 +145,8 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
   const commits = s?.available?.commits ?? [];
   const installedAt = s?.result?.status === "success" && s.result.sha.startsWith(s.version) ? fmt(s.result.finished_at) : "";
   const auto = s?.policy.mode === "auto";
+  // Issue #52: a new required setting must be answered on the server first.
+  const needs = s?.available?.needs_config ?? [];
   const offer = !!s?.update_available && phase !== "installing" && phase !== "done";
 
   return (
@@ -219,7 +224,13 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                     <Ltr>{s.version}</Ltr>
                   </span>
                 </p>
-                {s.result?.log_tail && (
+                {s.result?.status === "needs_config" ? (
+                  <p data-testid="update-failed-needs-config" className="mt-2">
+                    {ar
+                      ? "يحتاج هذا الإصدار إعداداً جديداً. شغّل ./scripts/deploy.sh على الخادم مرة واحدة للإجابة عليه، ثم ثبّت مجدداً."
+                      : "This version needs a new setting. Run ./scripts/deploy.sh on the server once to answer it, then install again."}
+                  </p>
+                ) : s.result?.log_tail && (
                   <pre dir="ltr" className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white/70 p-2 text-xs dark:bg-slate-900/60">{s.result.log_tail}</pre>
                 )}
               </div>
@@ -238,6 +249,24 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                     </li>
                   ))}
                 </ul>
+
+                {needs.length > 0 && (
+                  <div data-testid="update-needs-config" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    <p className="flex gap-2 font-bold">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{ar ? "هذا التحديث يحتاج إعداداً جديداً:" : "This update needs a new setting:"}</span>
+                    </p>
+                    <ul className="mt-1 list-disc ps-6">
+                      {needs.map((n) => (
+                        <li key={n.key}>
+                          <bdi>{ar ? n.question_ar : n.question_en}</bdi>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1">{ar ? "شغّل هذا الأمر على الخادم مرة واحدة للإجابة عليه، ثم ثبّت:" : "Run this on the server once to answer it, then install:"}</p>
+                    <pre dir="ltr" className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white/70 p-2 text-xs dark:bg-slate-900/60">cd ~/birrcare &amp;&amp; ./scripts/deploy.sh</pre>
+                  </div>
+                )}
 
                 {s.available?.changes_database && (
                   <p data-testid="update-db-notice" className="mt-3 flex gap-2 rounded-xl bg-amber-50 p-2.5 text-sm font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
@@ -273,7 +302,7 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                     <button
                       type="button"
                       data-testid="update-install"
-                      disabled={busy}
+                      disabled={busy || needs.length > 0}
                       onClick={() => install(false)}
                       className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-700 px-4 text-base font-bold text-white disabled:opacity-50"
                     >

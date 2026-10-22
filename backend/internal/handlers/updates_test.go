@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,5 +224,31 @@ func TestHealthVersion(t *testing.T) {
 	t.Setenv("GIT_SHA", "8ecc00c1a2b3c4d5e6f7")
 	if v := handlers.Version(); v != "8ecc00c" {
 		t.Errorf("expected short sha 8ecc00c, got %q", v)
+	}
+}
+
+func TestInstallRefusedWhenUpdateNeedsASetting(t *testing.T) {
+	h, _, dir := updatesFixture(t)
+	b, _ := os.ReadFile(filepath.Join(dir, "available.json"))
+	var a map[string]interface{}
+	json.Unmarshal(b, &a)
+	a["needs_config"] = []map[string]string{{"key": "WARD_NAME", "question_en": "Name of the care ward", "question_ar": "اسم جناح الرعاية"}}
+	writeFile(t, dir, "available.json", a)
+
+	rec := callUpdate(h.GetStatus, asRole("sa1", "super_admin"), http.MethodGet, "")
+	var st handlers.UpdateStatus
+	json.NewDecoder(rec.Body).Decode(&st)
+	if !st.UpdateAvailable || len(st.Available.NeedsConfig) != 1 || st.Available.NeedsConfig[0].QuestionEn != "Name of the care ward" {
+		t.Fatalf("status should offer the update with its needed setting: %+v", st.Available)
+	}
+
+	rec = callUpdate(h.Install, asRole("sa1", "super_admin"), http.MethodPost, `{"target_sha":"`+target+`"}`)
+	var body map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&body)
+	if rec.Code != http.StatusConflict || body["error"] != "NEEDS_CONFIG" || !strings.Contains(body["message"].(string), "WARD_NAME") {
+		t.Fatalf("expected 409 NEEDS_CONFIG naming the key, got %d %v", rec.Code, body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "request.json")); err == nil {
+		t.Error("no install request may be written while a setting is missing")
 	}
 }

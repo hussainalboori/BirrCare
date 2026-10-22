@@ -13,18 +13,32 @@ echo "=========================================================="
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-# 0. Pre-flight: the backend refuses to start in production without
-# APP_TIMEZONE (issue #26). Check before rebuilding, so a missing value leaves
-# the running version up instead of replacing it with one that cannot start.
-tz="${APP_TIMEZONE:-}"
-if [ -z "${tz}" ] && [ -f .env ]; then
-  tz="$(grep -E '^[[:space:]]*APP_TIMEZONE=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true)"
+# 0. Settings (.env), issue #52: ask what's missing in a terminal; with nobody
+# there (the Install button in the app), only check. Either way this happens
+# before rebuilding, so a missing setting leaves the running version up.
+SETUP_RC=0
+SETUP_OUT=""
+if [ -t 0 ] || [ -n "${BIRRCARE_SETUP_TTY:-}" ]; then
+  ./scripts/setup-env.sh || SETUP_RC=$?
+else
+  SETUP_OUT="$(./scripts/setup-env.sh --non-interactive)" || SETUP_RC=$?
 fi
-if [ -z "${tz}" ]; then
-  echo "ERROR: APP_TIMEZONE is not set. Add it to .env (e.g. APP_TIMEZONE=Asia/Riyadh)" >&2
-  echo "       and run this script again. Nothing was changed; the running version stays up." >&2
-  exit 1
-fi
+case "${SETUP_RC}" in
+  0) ;;
+  2)
+    # One machine-readable line for scripts/auto-deploy.sh, then the explanation.
+    echo "NEEDS_CONFIG ${SETUP_OUT}"
+    echo "ERROR: this version needs a setting that has no answer yet. Run ./scripts/deploy.sh" >&2
+    echo "       on the server, in a terminal, to answer it. Nothing was changed; the running version stays up." >&2
+    exit 3
+    ;;
+  *)
+    echo "ERROR: the settings in .env are not safe or could not be written (see above)." >&2
+    echo "       Nothing was changed; the running version stays up." >&2
+    exit 1
+    ;;
+esac
+tz="$(grep -E '^APP_TIMEZONE=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true)"
 echo "--> Household time zone: ${tz}"
 
 # 1. Automated Safety Backup of SQLite Database
