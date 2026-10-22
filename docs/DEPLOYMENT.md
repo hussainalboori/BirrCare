@@ -122,13 +122,36 @@ The questions live in [`scripts/env.schema`](../scripts/env.schema). CI fails if
 ./scripts/deploy.sh
 ```
 
-It first asks the questions from step 3, then builds both images, starts them, and waits until the backend health check and the frontend answer. Expected ending:
+It first asks the questions from step 3, then shows seven short steps. The full output (Docker's build lines and so on) goes to `data/logs/deploy-<date>.log`:
 
 ```
-    ✔ Backend is healthy on http://127.0.0.1:8080
-    ✔ Frontend is healthy on http://127.0.0.1:3000
- ✔ Birrcare successfully deployed and verified!
+[1/7] Checks ................... ✔ 13 GB free
+[2/7] Settings ................. ✔ time zone Asia/Bahrain
+[3/7] Database backup .......... ✔ data/backups/birrcare_backup_20261022_091500.db
+[4/7] Building ................. ✔ version 1fa215d · 3 min 12 s
+[5/7] Starting ................. ✔
+[6/7] Health check ............. ✔ version 1fa215d is answering
+[7/7] Clean-up ................. ✔ disk 31% used
+      ✔ reachable from the internet: https://care.example.com
+✔ Done in 3 min 40 s. Open https://care.example.com
 ```
+
+What it checks before changing anything:
+
+- Docker is installed and running, and your user can use it.
+- At least 3 GB of disk is free. If not, it clears old build leftovers and checks again.
+- No other deploy or update is running at the same time.
+
+If any check fails, it stops with the fix, and the running version stays up.
+
+**If the new version doesn't come up within 2 minutes, it goes back by itself:**
+
+1. It starts the previous version again from the images it kept, and exits with "The update failed, so it was rolled back…" and the app's error.
+2. If the previous version doesn't start with the updated database either, it also puts back the database copy from step 3. The database from the failed attempt is kept as `data/birrcare.db.failed-<date>`.
+
+Updates installed from **Menu → Server** run the same script, so they roll back the same way.
+
+The last line checks the app through its public address (`PUBLIC_URL`, asked in step 3, optional). The app can work on the server while the tunnel or DNS is broken; this shows it at once.
 
 Check it yourself:
 
@@ -485,6 +508,14 @@ Everything recorded after the backup was taken is lost, so tell the family which
 
 ## 11. Roll back a bad update
 
+`deploy.sh` already rolls back by itself when a new version doesn't start (§4). To go back on purpose, e.g. a version starts but behaves wrongly:
+
+```bash
+./scripts/deploy.sh rollback      # previous version, kept from the last deploy; the database is not changed
+```
+
+If that older version can't read the database the newer one changed, roll back the code and the database together, as below.
+
 Updates can change the database layout. Migrations only move forward: a table is rebuilt once and older code may not read the new layout. So roll back the **code and the database together**, using the snapshot `deploy.sh` took just before the bad update:
 
 ```bash
@@ -505,14 +536,16 @@ With manual updates (the default) the app will offer the bad commit again, becau
 
 | Task | Command |
 |---|---|
-| Status | `docker compose ps` |
-| Backend logs | `docker compose logs -f --tail=100 birrcare-backend` |
-| Frontend logs | `docker compose logs -f --tail=100 birrcare-frontend` |
-| Updater logs | `journalctl --user -u birrcare-deploy.service -n 50` |
-| Restart | `docker compose restart` |
-| Stop / start | `docker compose down` / `./scripts/deploy.sh` |
-| Health | `curl -s http://127.0.0.1:8080/api/v1/health` |
-| Free disk from old builds | `docker image prune -f && docker builder prune -f` |
+| Everything at a glance (version, containers, disk, backups, updater, timers) | `./scripts/deploy.sh status` |
+| App logs | `./scripts/deploy.sh logs` (or `logs backend` / `logs frontend`, add `-f` to follow) |
+| Restart without rebuilding | `./scripts/deploy.sh restart` |
+| Go back to the previous version | `./scripts/deploy.sh rollback` |
+| Deploy the current code | `./scripts/deploy.sh` (`--verbose` shows every line) |
+| Past deploys | `ls data/logs/` |
+| Updater logs | `journalctl --user -u birrcare-deploy.service -n 50`, or `~/.local/state/birrcare/updater.log` with cron |
+| Stop | `docker compose down` |
+
+Add `--lang ar` to any of them for Arabic messages.
 
 ## Troubleshooting
 

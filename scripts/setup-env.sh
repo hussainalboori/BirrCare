@@ -216,6 +216,10 @@ validate() {
       done
       [ -n "$ok" ] && return 0
       REASON="$(t "give IP addresses separated by commas, e.g. 203.0.113.7" "أدخل عناوين IP مفصولة بفواصل، مثل 203.0.113.7")" ;;
+    https-url)
+      x="${v%/}"
+      if [[ "$x" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then NORM="$x"; return 0; fi
+      REASON="$(t "give the address like https://care.example.com" "أدخل العنوان مثل https://care.example.com")" ;;
     origins)
       local o2 ok2=1
       for o2 in ${v//,/ }; do [[ "$o2" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || ok2=""; done

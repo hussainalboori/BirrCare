@@ -1,5 +1,7 @@
 services:
   birrcare-backend:
+    # Named, so deploy.sh can keep the previous image and roll back to it.
+    image: birrcare-backend:local
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -36,6 +38,7 @@ services:
       - ./data:/data
 
   birrcare-frontend:
+    image: birrcare-frontend:local
     build:
       context: ./frontend
       dockerfile: Dockerfile

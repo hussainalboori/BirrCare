@@ -10,8 +10,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Set by Docker Compose / the scripts, not asked: they never go in .env.
 EXEMPT="APP_ENV PORT DB_PATH PHOTO_DIR UPDATE_DIR BACKUP_DIR GIT_SHA"
+# Read by the host scripts only (deploy.sh), never by a container.
+HOST_ONLY="PUBLIC_URL"
 KINDS="ask secret generate locked default"
-VALIDATORS="tz pin4 phone name text domain aud email-or-url ips cidrs origins secret48 false-only empty-in-normal-runs"
+VALIDATORS="tz pin4 phone name text domain aud email-or-url ips cidrs origins https-url secret48 false-only empty-in-normal-runs"
 
 # check BACKEND_DIR SCHEMA EXAMPLE COMPOSE → prints problems, returns 1 if any.
 check() {
@@ -48,6 +50,7 @@ check() {
   done
   # Every setting must reach the containers.
   for key in $keys; do
+    case " $HOST_ONLY " in *" $key "*) continue ;; esac
     grep -q "\${${key}" "$compose" || { echo "$key is in the schema but docker-compose.yml never passes it to a container"; problems=$((problems + 1)); }
   done
   [ "$problems" -eq 0 ]

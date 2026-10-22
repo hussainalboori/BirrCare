@@ -14,7 +14,8 @@ setup() {
   cp "$ROOT/.env.example" "$W/repo/"
   : >"$W/docker-calls"
   printf '#!/usr/bin/env bash\necho "$*" >>"%s/docker-calls"\n' "$W" >"$W/bin/docker"
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$W/bin/curl"
+  # The app answers its health check as the version being deployed.
+  printf '#!/usr/bin/env bash\ncase "${@: -1}" in *8080/api/v1/health) echo '"'"'{"version":"0000000"}'"'"' ;; esac\nexit 0\n' >"$W/bin/curl"
   printf '#!/usr/bin/env bash\necho 0000000\n' >"$W/bin/git"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$W/bin/sqlite3"
   # An existing install: the first-account questions don't apply.
@@ -31,7 +32,7 @@ ENV
 }
 
 run() {
-  (cd "$W/repo" && PATH="$W/bin:$PATH" bash ./scripts/deploy.sh </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+  (cd "$W/repo" && PATH="$W/bin:$PATH" BIRRCARE_MIN_FREE_GB=0 BIRRCARE_HEALTH_TIMEOUT=3 bash ./scripts/deploy.sh </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 }
 
 check() {
