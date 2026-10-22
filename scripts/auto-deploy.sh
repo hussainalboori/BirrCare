@@ -196,7 +196,7 @@ main() {
 
   for cmd in git curl jq docker; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-      echo "auto-deploy: '$cmd' is required but not installed" >&2
+      echo "auto-deploy: '$cmd' is required but not installed; run once: sudo ./scripts/install-deps.sh" >&2
       exit 1
     fi
   done

@@ -51,7 +51,8 @@ Phone ──HTTPS──► Cloudflare Access ──tunnel──► 127.0.0.1:300
 ```bash
 git clone <this repository>
 cd BirrCare
-./scripts/deploy.sh       # asks a few questions, writes .env, builds and starts
+sudo ./scripts/install-deps.sh   # once: Docker, git, curl, jq, optional backup tools, timers
+./scripts/deploy.sh              # asks a few questions, writes .env, builds and starts (no sudo)
 ```
 
 - Frontend: <http://127.0.0.1:3000>

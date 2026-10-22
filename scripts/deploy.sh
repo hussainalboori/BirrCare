@@ -13,6 +13,15 @@ echo "=========================================================="
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
+# Tools: installed once with sudo ./scripts/install-deps.sh.
+for cmd in docker curl; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "ERROR: '$cmd' is not installed. Run this once (it asks for your password one time):" >&2
+    echo "       sudo ./scripts/install-deps.sh" >&2
+    exit 1
+  fi
+done
+
 # 0. Settings (.env), issue #52: ask what's missing in a terminal; with nobody
 # there (the Install button in the app), only check. Either way this happens
 # before rebuilding, so a missing setting leaves the running version up.

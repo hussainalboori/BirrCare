@@ -107,7 +107,7 @@ main() {
   fi
 
   for cmd in curl jq restic; do
-    command -v "$cmd" >/dev/null 2>&1 || { echo "backup: '$cmd' is required but not installed" >&2; exit 1; }
+    command -v "$cmd" >/dev/null 2>&1 || { echo "backup: '$cmd' is required but not installed; run once: sudo ./scripts/install-deps.sh" >&2; exit 1; }
   done
 
   # One run at a time: the 6-hour schedule and "Back up now" can meet.

@@ -20,33 +20,40 @@ Phone ──HTTPS──► Cloudflare Access (email login) ──► Cloudflare 
 
 ## 1. Requirements
 
-On the host (any 64-bit Linux, e.g. Ubuntu 24.04, Debian 12 or Raspberry Pi OS on a Pi 4/5):
+Any 64-bit Linux with apt works, e.g. Ubuntu 24.04, Debian 12 or Raspberry Pi OS on a Pi 4/5. You also need:
 
-| Need | Why |
-|---|---|
-| Docker Engine with the Compose plugin (`docker compose`) | Builds and runs both services. |
-| The deploying user in the `docker` group | So the scripts and the systemd timer can run Docker without `sudo`. |
-| `git`, `curl`, `jq` | Used by `scripts/auto-deploy.sh`. |
-| `sqlite3` | **Install it.** `deploy.sh` uses `sqlite3 .backup` for a consistent snapshot of the live database. Without it the script falls back to `cp`, which can copy a half-written database while the backend is running. |
-| `cloudflared` | The Cloudflare Tunnel connector. |
-| ~2 GB free disk | Docker images and build cache, plus the database and backups. |
-| Outbound HTTPS from the host | Lock-screen alerts are sent to Apple's and Google's push services. |
+- about 2 GB of free disk, for the Docker images plus the database and backups;
+- outbound HTTPS from the host, because lock-screen alerts go through Apple's and Google's push services;
+- `cloudflared`, the Cloudflare Tunnel connector (§5). It can run on this server or on another machine on the same network.
 
-```bash
-# Debian/Ubuntu example
-sudo apt install -y git curl jq sqlite3
-# Docker: https://docs.docker.com/engine/install/  then:
-sudo usermod -aG docker "$USER"   # log out and back in afterwards
-```
+The tools are installed by one script (step 2).
 
-## 2. Get the code
-
-The automatic updater's systemd unit expects the checkout at **`~/birrcare`**:
+## 2. Get the code and install the tools
 
 ```bash
 git clone https://github.com/hussainalboori/BirrCare.git ~/birrcare
 cd ~/birrcare
+sudo ./scripts/install-deps.sh
 ```
+
+**Run it once, with `sudo`.** It asks for your password one time and installs everything in that one run. Afterwards `deploy.sh`, updates from the app and backups all run as your normal user and never ask for a password. It checks what's already there and asks before each step:
+
+| It asks | Why |
+|---|---|
+| Install **Docker** (from Docker's official signed packages)? | Required: builds and runs the app. Skipped if Docker and `docker compose` are already installed. |
+| Install **restic** and **rclone**? | For encrypted off-site backups to Google Drive / R2 / B2 (§9). Say no if you'll set backups up later. |
+| Install **sqlite3**? | A safe database copy before an update when the app is stopped. |
+| *(git, curl, jq)* | Always needed; installed if missing, shown in the list. |
+| Go ahead? | Shows the full list first. Nothing is installed before you say yes. |
+| Let your user run Docker **without sudo**? | Adds you to the `docker` group. Log out and back in afterwards. |
+| Keep your **timers running** when nobody is logged in? | `loginctl enable-linger`, for the update and backup timers. Some containers refuse it; then cron is used. |
+| Install the **update and backup timers**? | systemd timers (or cron if linger isn't allowed), pointed at this checkout. Old BirrCare cron lines are replaced, and your other cron jobs are kept. |
+
+`--yes` accepts every suggestion without questions. On a system without apt, it lists what to install by hand.
+
+> Don't give your user password-less `sudo` (a `NOPASSWD` rule) to avoid the prompt. Anything running as that user could then become root without asking. Running the installer once with `sudo` is enough; nothing else needs it.
+
+The systemd units expect the checkout at `~/birrcare`; the installer rewrites them for wherever you cloned it.
 
 ## 3. Settings (`.env`)
 
@@ -234,7 +241,7 @@ Nothing installs by itself unless you switch on **Automatic updates** on the sam
 
 It is pull-based on purpose. Nothing on GitHub can run code on your host; the host only runs what is on `main`, and only after CI succeeded. The app never deploys either: it writes a request into `data/update/`, and the host checks it. It installs only if the request names exactly the latest CI-passed `main`.
 
-Install the systemd **user** units:
+`sudo ./scripts/install-deps.sh` (step 2) installs these timers for you. To do it by hand, install the systemd **user** units:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -316,7 +323,7 @@ A dead disk or SD card, a lost server or ransomware must not take the medication
 
 ### Setup
 
-**1. Install restic and rclone on the server.** With root: `sudo apt install restic rclone`. Without root, download the official Linux builds from <https://github.com/restic/restic/releases> and <https://rclone.org/downloads/> into `~/.local/bin/`.
+**1. Install restic and rclone on the server.** Run `sudo ./scripts/install-deps.sh` and answer **yes** to "restic and rclone". (Without root: download the official Linux builds from <https://github.com/restic/restic/releases> and <https://rclone.org/downloads/> into `~/.local/bin/`.)
 
 **2. Make a Google OAuth client** (one time, on a laptop, in <https://console.cloud.google.com/>):
 
@@ -370,7 +377,7 @@ cat ~/birrcare/data/backup/status.json
 
 The first run also does the restore test. **Menu → Server** should now show "Backups are working".
 
-**6. Let it run at the chosen times.** The host asks the app every 5 minutes whether a backup is due. With systemd user units (needs `loginctl enable-linger`, see §8):
+**6. Let it run at the chosen times.** The host asks the app every 5 minutes whether a backup is due. `sudo ./scripts/install-deps.sh` already installed this timer if you said yes to the timers. By hand, with systemd user units (needs `loginctl enable-linger`, see §8):
 
 ```bash
 cp ~/birrcare/scripts/systemd/birrcare-backup.{service,timer,path} ~/.config/systemd/user/

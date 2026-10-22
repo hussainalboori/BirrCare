@@ -116,6 +116,7 @@ jobs:
           bash scripts/tests/env-schema.test.sh
           bash scripts/tests/setup-env.test.sh
           bash scripts/tests/deploy-config.test.sh
+          bash scripts/tests/install-deps.test.sh
 
       - name: Build Backend Container
         uses: docker/build-push-action@v7
