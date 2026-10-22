@@ -149,11 +149,19 @@ run() {
 
 STEP=0
 TOTAL=7
+STEP_LABEL=""
 step() {
   STEP=$((STEP + 1))
-  local label="$1" dots=".........................."
-  printf '[%d/%d] %s %s ' "$STEP" "$TOTAL" "$label" "${dots:0:$((24 - ${#label} > 2 ? 24 - ${#label} : 2))}"
+  STEP_LABEL="$1"
+  step_prefix
 }
+step_prefix() {
+  [ -n "$STEP_LABEL" ] || return 0
+  local dots=".........................."
+  printf '[%d/%d] %s %s ' "$STEP" "$TOTAL" "$STEP_LABEL" "${dots:0:$((24 - ${#STEP_LABEL} > 2 ? 24 - ${#STEP_LABEL} : 2))}"
+}
+# Wipes the "waiting…" countdown and writes the step's name back.
+clear_wait() { if [ -n "$IS_TTY" ]; then printf '\r\033[K'; step_prefix; fi; }
 done_step() { printf '%s %s\n' "$(mark_ok)" "${1:-}"; }
 fail_step() { printf '%s %s\n' "$(mark_bad)" "${1:-}"; }
 
@@ -210,14 +218,14 @@ wait_healthy() {
       elif ! curl -fsS --max-time 5 -o /dev/null "$(frontend_url)" 2>/dev/null; then
         HEALTH_PROBLEM="$(t "the website (frontend) is not answering" "الموقع (الواجهة) لا يستجيب")"
       else
-        [ -n "$IS_TTY" ] && printf '\r\033[K'
+        clear_wait
         return 0
       fi
     else
       HEALTH_PROBLEM="$(t "the backend is not answering" "الخادم الخلفي لا يستجيب")"
     fi
     if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
-      [ -n "$IS_TTY" ] && printf '\r\033[K'
+      clear_wait
       return 1
     fi
     [ -n "$IS_TTY" ] && printf '\r[%d/%d] %s %s' "$STEP" "$TOTAL" "$(t "Health check" "فحص السلامة")" "$(t "waiting for the app… ${waited} s" "بانتظار التطبيق… ${waited} ث")"
@@ -240,6 +248,7 @@ backend_running() {
 recover() {
   local why="$1"
   fail_step "$why"
+  STEP_LABEL="" # the step line is finished; recovery messages follow on their own
   {
     echo "--- health problem: $why"
     docker compose logs --tail=60 birrcare-backend birrcare-frontend 2>&1 || true
