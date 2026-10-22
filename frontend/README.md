@@ -55,7 +55,7 @@ npx playwright install chromium webkit
 
 ## Typography & Bilingual Support
 
-Fonts are loaded locally using `next/font`:
+Fonts are bundled in `public/fonts/` and loaded with `@font-face` (`src/app/fonts.css`), so builds and phones never fetch them from Google:
 - **Arabic:** [Tajawal](https://fonts.google.com/specimen/Tajawal) (`dir="rtl"`)
 - **English:** [Inter](https://fonts.google.com/specimen/Inter) (`dir="ltr"`)
 

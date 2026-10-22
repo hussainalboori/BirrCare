@@ -93,12 +93,19 @@ Every API response carries hardened security headers: `X-Content-Type-Options: n
 | `MEDICATIONS_UPDATED` | Medication catalogue, dosing slots, or stock levels changed. |
 | `PRN_LOGGED`, `PRN_VOIDED` | An as-needed PRN dose was recorded or voided. |
 | `VITAL_LOGGED` | Blood pressure, pulse, SpO₂, temperature, or blood sugar was saved. |
-| `VITALS_CORRECTED` | An earlier vitals reading was superseded by a corrected record. |
+| `VITAL_CORRECTED` | An earlier vitals reading was superseded by a corrected record. |
 | `CARE_EVENT_LOGGED` | Bedside care was recorded (repositioning, fluid, bowel movement). |
 | `INSULIN_LOGGED`, `INSULIN_PLANS_UPDATED` | An insulin dose was recorded or a plan was modified. |
 | `NOTE_ADDED` | A shift handover note was saved. |
 | `CAREGIVER_SWITCHED`, `CAREGIVERS_UPDATED` | A profile was switched or caregiver user accounts were updated. |
 | `SHIFT_UPDATED`, `DUTY_UPDATED` | Roster assignments or active duty status changed. |
+| `DUTY_PASSED`, `DUTY_ACCEPTED`, `DUTY_REMINDER` | Duty was passed to a sibling, accepted, or is still not accepted after 15 minutes. |
+| `STOCK_UPDATED` | A medicine's stock count changed (low-stock warnings). |
+| `CARE_OVERDUE` | Repositioning is overdue (sent to the caregiver on duty). |
+| `EMERGENCY_CARD_OPENED` | Someone opened the paramedics' emergency card. |
+| `UPDATE_AVAILABLE`, `UPDATE_STARTING` | A new version is offered (Super Admin), or an install is starting (everyone sees a banner). |
+
+Events that also create an alert (crisis BP, low BP, alertness, F.A.S.T., vomited dose, dose override…) carry the alert's id as the SSE `id:` and an `alert_id` in the payload, so a phone that missed them gets them again from `GET /api/v1/alerts/unacked`.
 
 ---
 
@@ -172,6 +179,9 @@ Lists or revokes paired household devices (Admin only).
 ### `GET /api/v1/settings/home-location` & `PUT /api/v1/settings/home-location`
 Reads or updates the home GPS coordinates and radius (meters) used for geofenced 1-tap switching.
 
+### `POST /api/v1/auth/verify-admin-pin` (Admin)
+Checks the signed-in admin's own PIN before a destructive action: `{"pin": "4829"}` → `{"status": "verified"}`, or `403 INCORRECT_PIN`. Rate-limited like the PIN keypad.
+
 ### `POST /api/v1/auth/2fa/setup`, `POST /api/v1/auth/2fa/enable`, `POST /api/v1/auth/2fa/disable`
 Sets up, enables, or disables TOTP two-factor authentication for Super Admins. Enabling returns 8 one-time backup recovery codes.
 
@@ -217,6 +227,12 @@ Creates a new scheduled medication.
   "refill_threshold_days": 4
 }
 ```
+
+### `PUT /api/v1/medications/{id}` (Admin)
+Edits a medicine (names, dosage, instructions, slots, days, times, photo, interval, PRN limits). The change is audited with the values before and after.
+
+### `DELETE /api/v1/medications/{id}` (Admin)
+Deactivates a medicine; its history stays. **Always requires the admin's own PIN** in the `X-Admin-PIN` header, wherever the device is (`403 ADMIN_PIN_REQUIRED` / `INCORRECT_ADMIN_PIN`).
 
 ### `PUT /api/v1/medications/{id}/schedule` (Admin)
 Updates dosing slots, clock times, and days of week for a medication.
@@ -367,8 +383,8 @@ Evaluates whether a patient has been in the same position for over 2 hours and i
 
 ## Insulin Tracking
 
-### `GET /api/v1/insulin/plans` & `POST /api/v1/insulin/plans` (Admin)
-Configures doctor-prescribed insulin plans: either fixed dosage or sliding-scale correction based on blood sugar.
+### `GET /api/v1/insulin/plans`, `POST /api/v1/insulin/plans` & `PUT /api/v1/insulin/plans/{id}` (Admin)
+Creates and edits doctor-prescribed insulin plans: either a fixed dose or a sliding-scale correction based on blood sugar.
 
 ### `GET /api/v1/insulin/status`
 Returns each plan's last injection time, dose given, and interval lock status.
@@ -401,6 +417,18 @@ Logs shift handover summaries with structured status tags:
 }
 ```
 *Tags like `pain` and `swallowing_difficulty` automatically set `urgent_flag: true`.*
+
+### Shift roster (changes: Super Admin)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/shifts` | Lists the shift definitions (name, start and end time, colour). |
+| `POST` | `/api/v1/shifts` | Creates a shift. |
+| `PUT` / `DELETE` | `/api/v1/shifts/{id}` | Edits or removes a shift. |
+| `POST` | `/api/v1/shifts/presets` | Replaces the shifts with a preset pattern: `4h`, `8h`, `12h` or `24h` shifts. |
+| `GET` | `/api/v1/shifts/assignments?date=YYYY-MM-DD` | Who covers which shift on that day (default: today). |
+| `POST` | `/api/v1/shifts/assignments` | Assigns a caregiver to a shift on a date. |
+| `DELETE` | `/api/v1/shifts/assignments/{id}` | Removes an assignment. |
 
 ### `GET /api/v1/shifts/current-duty`
 Identifies which sibling is on duty right now.
@@ -474,7 +502,11 @@ Super Admins can manage server maintenance directly from **Menu → Server**:
 | `PUT` | `/api/v1/admin/update/policy` | Sets update mode: `"manual"` (install on click) or `"auto"` (install upon passing CI). |
 | `GET` | `/api/v1/admin/backup/status` | Reports off-site restic backup status, storage destinations, and test restore health. |
 | `POST` | `/api/v1/admin/backup/run` | Triggers an immediate off-site backup. |
-| `PUT` | `/api/v1/admin/backup/schedule` | Configures automated daily backup times and retention policy. |
+| `PUT` | `/api/v1/admin/backup/schedule` | Sets the backup times (1–6 a day, household time), "wait while the app is in use", and retention (`history` or `latest`). |
+
+`POST /api/v1/admin/update/install` answers `409` with `NEEDS_CONFIG` (the new version needs a setting the server's `.env` lacks), `ACTIVE_CRISIS` (an emergency alert from the last 30 minutes is unacknowledged; send `confirm_during_alert: true` to install anyway), `STALE_TARGET` (a newer version is on offer) or `IN_PROGRESS`.
+
+**Host-only endpoints.** `POST /internal/backup/snapshot`, `/internal/backup/verify` and `/internal/backup/due` are used by `scripts/backup.sh` on the server itself. They live outside `/api/v1`, so neither the website proxy nor the tunnel forwards them; they accept only local callers without proxy headers and need the shared secret in `data/backup/secret`.
 
 ---
 
@@ -497,3 +529,10 @@ Birrcare returns errors in JSON format:
 - `DOSE_TOO_SOON`: Blocked by minimum safety interval between doses.
 - `HYPO_NO_INSULIN`: Correction insulin rejected because blood sugar is below 3.9 mmol/L.
 - `PIN_REQUIRED`: 1-tap profile switch rejected because device is outside the home network.
+- `PRN_TOO_SOON` / `PRN_LIMIT`: an as-needed dose is inside its minimum gap, or the 24-hour maximum is reached.
+- `INSULIN_TOO_SOON`: inside the insulin plan's minimum interval.
+- `ALREADY_VOIDED`: the dose entry was already cancelled.
+- `ADMIN_PIN_REQUIRED` / `INCORRECT_ADMIN_PIN`: a destructive admin action needs the admin's own PIN.
+- `NEEDS_CONFIG`, `ACTIVE_CRISIS`, `STALE_TARGET`, `IN_PROGRESS`: see Server Updates above.
+
+Errors use HTTP status codes consistently: `400` invalid input, `401` not signed in, `403` not allowed, `404` not found, `409` conflicts with the current state (locks, duplicates), `413` upload too large, `429` too many PIN attempts (with `Retry-After`).

@@ -33,19 +33,19 @@ To run the interactive prompts in Arabic:
 ## Environment Variables Reference
 
 ### 1. Initial Admin Account (Database Seed)
-These values are only used on the very first boot when the database is empty. Once initialized, accounts and credentials are managed in **Menu → Users**.
+These values are only used on the very first start, when the database is empty; `setup-env.sh` asks for them only then. Afterwards, accounts and PINs are managed in **Menu → User Management**.
 
 | Variable | Default | Description |
 |---|---|---|
-| `SUPER_ADMIN_USER` | `admin` | Initial Super Admin username. |
-| `SUPER_ADMIN_PIN` | `1234` | Initial 4-digit PIN for the Super Admin account. Change this immediately upon first login. |
+| `SUPER_ADMIN_USER` | `admin` | Name of the first Super Admin account. |
+| `SUPER_ADMIN_PIN` | asked | 4-digit PIN for that account, typed twice and hidden. `1234`, wrong lengths and repeated digits (`7777`) are refused. Once you've signed in, you can remove this line from `.env`. |
 
 ### 2. Household & Patient Care Settings
 
 | Variable | Default | Description |
 |---|---|---|
 | `APP_TIMEZONE` | Detected | **Required in production.** The IANA time zone where the patient resides (e.g., `Asia/Riyadh`, `Asia/Bahrain`). This ensures scheduled doses, midnight cutoffs, and doctor reports align with local time. |
-| `EMERGENCY_NUMBER` | `@emergency-for-tz` | **Required.** The emergency ambulance number to call during a hypertensive crisis (e.g., `997`, `999`, `112`). Embedded in every page so it works even offline. |
+| `EMERGENCY_NUMBER` | Suggested for your time zone | **Required.** The ambulance number for the crisis call button, e.g. `999` (Bahrain), `997` (Saudi Arabia); you confirm the suggestion during setup (`scripts/emergency-numbers`). It is also sent inside every page, so the button works offline; `112` is the last fallback. After changing it, `./scripts/deploy.sh restart`. |
 | `DOCTOR_NAME` | Empty | Optional name of the treating neurologist or primary care physician. Displayed on crisis alerts. |
 | `DOCTOR_PHONE` | Empty | Optional phone number for the attending physician. Enables a one-tap call button during crisis alerts and adverse drug events. |
 
@@ -80,15 +80,20 @@ Birrcare is designed to be hosted locally and accessed through a Cloudflare Tunn
 
 | Variable | Default | Description |
 |---|---|---|
-| `SESSION_SECRET` | Auto-generated | Cryptographic secret (at least 32 characters) used to sign session cookies. Generated automatically on first setup. Changing it signs everyone out. |
+| `SESSION_SECRET` | Generated | Secret used to sign session cookies. `setup-env.sh` generates a 64-character one; changing it signs everyone out. Never shown on screen and never included in backups. |
 | `DISABLE_2FA_FOR` | Empty | **Emergency Break-Glass Only:** If a Super Admin loses both their authenticator app and backup recovery codes, set this to their caregiver ID (`cg_superadmin`), restart once, remove it, and restart again. |
-| `PUBLIC_URL` | Empty | Public internet URL of your application (e.g., `https://care.example.com`). Used by `deploy.sh` to verify end-to-end tunnel connectivity after updates. |
 
-### 7. Development & Testing Settings
+### 7. Deployment Check
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_DEV_FALLBACK` | `false` | When `true`, unauthenticated requests automatically act as the first admin. **Never enable in production.** |
+| `PUBLIC_URL` | Empty | Public address of the app (e.g. `https://care.example.com`). After every deploy, `deploy.sh` checks that the new version answers there too, so a broken tunnel or DNS shows up at once. Used by the host scripts only; it isn't passed to the containers. |
+
+### 8. Development & Testing Settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_DEV_FALLBACK` | `false` | When `true`, unauthenticated requests act as the first active caregiver. **Never enable in production:** `setup-env.sh` refuses to continue while it is `true`. (Running the backend directly without `APP_ENV=production`, it is on unless you set it to `false`.) |
 | `CORS_ALLOWED_ORIGINS` | Localhost | Comma-separated list of browser origins permitted to make cross-origin requests. Not needed when using the built-in Next.js proxy. |
 
 ---
@@ -105,3 +110,20 @@ These variables are defined inside `docker-compose.yml` and pre-configured for t
 | `INTERNAL_BACKEND_URL` | frontend | `http://birrcare-backend:8080` | Private Docker network URL where Next.js forwards `/api/v1/*`. |
 | `NEXT_PUBLIC_API_URL` | frontend | `/api/v1` | Browser-side API endpoint prefix. |
 | `NODE_ENV` | frontend | `production` | Optimizes Next.js runtime performance and asset delivery. |
+| `EMERGENCY_NUMBER` | frontend | from `.env` | Sent inside every page as the offline fallback for the crisis call button. |
+| `GIT_SHA` | both (build) | the commit | The version reported by `/api/v1/health`; set by `deploy.sh` or CI. |
+
+The backend also keeps uploaded medicine photos in `data/photos/`, updater files in `data/update/` and backup files in `data/backup/`, next to the database (override with `PHOTO_DIR`, `UPDATE_DIR`, `BACKUP_DIR`).
+
+---
+
+## When an Update Needs a New Setting
+
+Updates are installed from **Menu → Server** with nobody at the terminal, so they can't ask questions. Before you press Install, the server checks whether the new version needs a setting your `.env` doesn't have:
+- If so, the app shows "This update needs a new setting: …" and Install is disabled.
+- Run `./scripts/deploy.sh` on the server once to answer it, then install from the app.
+- An install started anyway stops before rebuilding, and the running version stays up.
+
+## Adding a New Setting (Developers)
+
+Every setting the app reads must be described in [`scripts/env.schema`](../scripts/env.schema): one line `KEY|kind|required|default|validator|question (en)|question (ar)`. Add it to `.env.example` too, pass it to the container in `docker-compose.yml`, and read it by name with `os.Getenv("KEY")`. CI (`scripts/tests/env-schema.test.sh`) fails otherwise, so no setting ships without its question.
