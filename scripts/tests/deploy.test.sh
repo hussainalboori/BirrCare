@@ -230,6 +230,22 @@ check "public down: still exit 0" "$(cat "$W/rc")" "0"
 check "public down: warned" "$(out_has 'check the tunnel / DNS')" "1"
 rm -rf "$W"
 
+# 9b. Never with sudo; and files left behind by an earlier sudo run are explained.
+setup
+printf '#!/usr/bin/env bash\n[ "$1" = "-u" ] && [ $# -eq 1 ] && { echo 0; exit 0; }\n/usr/bin/id "$@"\n' >"$W/bin/id"
+chmod +x "$W/bin/id"
+(cd "$R" && env PATH="$W/bin:$PATH" SUDO_USER=runner BIRRCARE_MIN_FREE_GB=0 bash ./scripts/deploy.sh </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+check "sudo: refused" "$(cat "$W/rc")" "1"
+check "sudo: tells to run as the user" "$(out_has "Don't run this with sudo. Run it as runner")" "1"
+check "sudo: nothing built" "$(dcalls 'compose build')" "0"
+rm -f "$W/bin/id"
+chmod 400 "$R/.env"
+run
+check "root-owned files: refused" "$(cat "$W/rc")" "1"
+check "root-owned files: one-time fix shown" "$(out_has 'sudo chown -R')" "1"
+chmod 600 "$R/.env"
+rm -rf "$W"
+
 # 10. status
 setup
 run status

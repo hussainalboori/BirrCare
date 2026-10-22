@@ -56,6 +56,7 @@ AUTH_DEV_FALLBACK=false
 CORS_ALLOWED_ORIGINS=
 TRUSTED_HOME_IP=
 TRUSTED_HOME_SUBNETS=
+WEB_BIND=127.0.0.1
 PUBLIC_URL=
 MY_OWN_SETTING=keep me
 EOF
@@ -66,7 +67,7 @@ EOF
 # Answers for a fresh install: time zone, admin name, PIN twice, emergency
 # (Enter = suggestion) and its confirmation, doctor name and phone, then Enter
 # for the Cloudflare domain, push contact, home IP and public address.
-FRESH_ANSWERS=$'Asia/Bahrain\nHussain\n4829\n4829\n\ny\nDr Ahmed\n+973 3912-3456\n\n\n\n\n'
+FRESH_ANSWERS=$'Asia/Bahrain\nHussain\n4829\n4829\n\ny\nDr Ahmed\n+973 3912-3456\n\n\n\n\n\n'
 
 # 1. Fresh install.
 setup
@@ -91,7 +92,7 @@ rm -rf "$W"
 
 # 2. PIN rules: 1234, 11111, 7777 refused with a reason; 4829 twice accepted.
 setup
-run $'Asia/Bahrain\nHussain\n1234\n1234\n11111\n11111\n7777\n7777\n4829\n4829\n\ny\n\n\n\n\n\n\n'
+run $'Asia/Bahrain\nHussain\n1234\n1234\n11111\n11111\n7777\n7777\n4829\n4829\n\ny\n\n\n\n\n\n\n\n'
 check "pin: exit code" "$(cat "$W/rc")" "0"
 check "pin: 1234 refused" "$(grep -c '1234 is the first PIN anyone tries' "$W/out")" "1"
 check "pin: 5 digits refused" "$(grep -c 'exactly 4 digits' "$W/out")" "1"
@@ -103,7 +104,7 @@ rm -rf "$W"
 
 # 3. Time zone: a typo is refused, the right name accepted.
 setup
-run $'Asia/Riyad\nAsia/Riyadh\nHussain\n4829\n4829\n\ny\n\n\n\n\n\n\n'
+run $'Asia/Riyad\nAsia/Riyadh\nHussain\n4829\n4829\n\ny\n\n\n\n\n\n\n\n'
 check "tz: typo refused" "$(grep -c 'not a known time zone' "$W/out")" "1"
 check "tz: accepted" "$(val APP_TIMEZONE)" "Asia/Riyadh"
 check "tz: Saudi number suggested" "$(val EMERGENCY_NUMBER)" "997"
@@ -111,7 +112,7 @@ rm -rf "$W"
 
 # 4. Phone: "abc" refused, then accepted with spaces and dashes removed.
 setup
-run $'Asia/Bahrain\nHussain\n4829\n4829\n\ny\n\nabc\n+973 3912-3456\n\n\n\n\n'
+run $'Asia/Bahrain\nHussain\n4829\n4829\n\ny\n\nabc\n+973 3912-3456\n\n\n\n\n\n'
 check "phone: abc refused" "$(grep -c 'use digits only' "$W/out")" "1"
 check "phone: stored" "$(val DOCTOR_PHONE)" "+97339123456"
 rm -rf "$W"
@@ -203,6 +204,27 @@ run $'+97317000000\n' --reconfigure DOCTOR_PHONE
 check "reconfigure: exit 0" "$(cat "$W/rc")" "0"
 check "reconfigure: changed" "$(val DOCTOR_PHONE)" "+97317000000"
 check "reconfigure: others kept" "$(val APP_TIMEZONE)/$(val EMERGENCY_NUMBER)" "Asia/Bahrain/999"
+rm -rf "$W"
+
+# 12b. Friendly answers: a place name for the time zone, a mail typo caught,
+#      a bare domain for the public address, the website reachable on the LAN.
+setup
+run $'Bahrain (GMT+3)\nHussain\n4829\n4829\n\ny\n\n\n\nhussainalboori@gmil.com\nhussainalboori@gmail.com\n\n0.0.0.0\nbirrcare.example.org\n'
+check "friendly: exit 0" "$(cat "$W/rc")" "0"
+check "friendly: place name → time zone" "$(val APP_TIMEZONE)" "Asia/Bahrain"
+check "friendly: mail typo caught" "$(grep -c 'did you mean hussainalboori@gmail.com' "$W/out")" "1"
+check "friendly: corrected mail kept" "$(val PUSH_CONTACT)" "mailto:hussainalboori@gmail.com"
+check "friendly: website on the LAN" "$(val WEB_BIND)" "0.0.0.0"
+check "friendly: https added" "$(val PUBLIC_URL)" "https://birrcare.example.org"
+rm -rf "$W"
+
+# 12c. Existing installs get WEB_BIND=127.0.0.1 without a question (as before).
+setup
+full_env
+grep -v '^WEB_BIND=' "$W/.env" >"$W/tmp" && cat "$W/tmp" >"$W/.env"
+(bash "$SCRIPT" --env "$W/.env" --db "$W/birrcare.db" --non-interactive </dev/null >"$W/stdout" 2>"$W/out") && echo 0 >"$W/rc" || echo $? >"$W/rc"
+check "web bind default: no question needed" "$(cat "$W/rc")" "0"
+check "web bind default: this server only" "$(val WEB_BIND)" "127.0.0.1"
 rm -rf "$W"
 
 # 13. Arabic questions.

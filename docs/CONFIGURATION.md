@@ -83,10 +83,11 @@ Birrcare is designed to be hosted locally and accessed through a Cloudflare Tunn
 | `SESSION_SECRET` | Generated | Secret used to sign session cookies. `setup-env.sh` generates a 64-character one; changing it signs everyone out. Never shown on screen and never included in backups. |
 | `DISABLE_2FA_FOR` | Empty | **Emergency Break-Glass Only:** If a Super Admin loses both their authenticator app and backup recovery codes, set this to their caregiver ID (`cg_superadmin`), restart once, remove it, and restart again. |
 
-### 7. Deployment Check
+### 7. Network & Deployment Check
 
 | Variable | Default | Description |
 |---|---|---|
+| `WEB_BIND` | `127.0.0.1` | Where the website listens. `127.0.0.1`: only this server (the Cloudflare connector runs here). `0.0.0.0`: also the local network, needed when the connector runs on another machine; otherwise Cloudflare shows *502 Bad gateway*. The backend always stays on `127.0.0.1`. After changing it, run `./scripts/deploy.sh restart`. |
 | `PUBLIC_URL` | Empty | Public address of the app (e.g. `https://care.example.com`). After every deploy, `deploy.sh` checks that the new version answers there too, so a broken tunnel or DNS shows up at once. Used by the host scripts only; it isn't passed to the containers. |
 
 ### 8. Development & Testing Settings

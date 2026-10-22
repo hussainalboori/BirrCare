@@ -170,6 +170,18 @@ validate() {
   case "$kind" in
     tz)
       if [[ "$v" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+)+$ ]] && [ -f "${TZ_DIR}/${v}" ]; then return 0; fi
+      # People type a place ("Bahrain", "Bahrain (GMT+3)", "riyadh"): use the
+      # time zone with that name, when exactly one matches.
+      local place match
+      place="$(printf '%s' "$v" | sed -E 's/\(.*\)//; s/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/_/g')"
+      if [ -n "$place" ] && [ -d "$TZ_DIR" ] && [[ "$place" =~ ^[A-Za-z_-]+$ ]]; then
+        match="$(cd "$TZ_DIR" && find . -maxdepth 2 -type f -iname "$place" 2>/dev/null |
+          sed 's#^\./##' | grep '/' | grep -vE '^(posix|right|Etc|SystemV)/' || true)"
+        if [ -n "$match" ] && [ "$(printf '%s\n' "$match" | wc -l | tr -d ' ')" = 1 ]; then
+          NORM="$match"
+          return 0
+        fi
+      fi
       REASON="$(t "not a known time zone (examples: Asia/Bahrain, Asia/Riyadh, Europe/London)" "ليست منطقة زمنية معروفة (أمثلة: Asia/Bahrain، Asia/Riyadh)")" ;;
     pin4)
       if ! [[ "$v" =~ ^[0-9]{4}$ ]]; then
@@ -202,6 +214,18 @@ validate() {
       if [[ "$x" =~ ^[a-f0-9]{64}$ ]]; then NORM="$x"; return 0; fi
       REASON="$(t "the AUD tag is 64 letters and digits (Access → Applications → your app → Overview)" "رمز AUD مكوّن من 64 حرفاً ورقماً")" ;;
     email-or-url)
+      # Catch the usual typos in the big mail providers.
+      case "${v##*@}" in
+        gmil.com | gmial.com | gmai.com | gamil.com | gmail.co | gmail.con | gnail.com) x="gmail.com" ;;
+        hotmial.com | hotmal.com | hotmail.co) x="hotmail.com" ;;
+        outlok.com | outllook.com | outlook.co) x="outlook.com" ;;
+        yahooo.com | yaho.com) x="yahoo.com" ;;
+        *) x="" ;;
+      esac
+      if [ -n "$x" ] && [[ "$v" == *@* ]]; then
+        REASON="$(t "did you mean ${v%@*}@${x}?" "هل تقصد ${v%@*}@${x}؟")"
+        return 1
+      fi
       if [[ "$v" =~ ^mailto:[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || [[ "$v" =~ ^https://[^[:space:]]+$ ]]; then return 0; fi
       if [[ "$v" =~ ^[^@[:space:]:]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then NORM="mailto:$v"; return 0; fi
       REASON="$(t "give an email address or an https:// link" "أدخل بريداً إلكترونياً أو رابط https://")" ;;
@@ -216,8 +240,14 @@ validate() {
       done
       [ -n "$ok" ] && return 0
       REASON="$(t "give IP addresses separated by commas, e.g. 203.0.113.7" "أدخل عناوين IP مفصولة بفواصل، مثل 203.0.113.7")" ;;
+    bind)
+      case "$v" in 127.0.0.1 | 0.0.0.0) return 0 ;; esac
+      if valid_ipv4 "$v"; then return 0; fi
+      REASON="$(t "use 127.0.0.1 (this server only) or 0.0.0.0 (also the local network)" "استخدم 127.0.0.1 (هذا الخادم فقط) أو 0.0.0.0 (والشبكة المحلية أيضاً)")" ;;
     https-url)
       x="${v%/}"
+      # A bare address gets https:// (people type the domain they see).
+      case "$x" in http://*) x="https://${x#http://}" ;; https://*) ;; *) x="https://$x" ;; esac
       if [[ "$x" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then NORM="$x"; return 0; fi
       REASON="$(t "give the address like https://care.example.com" "أدخل العنوان مثل https://care.example.com")" ;;
     origins)

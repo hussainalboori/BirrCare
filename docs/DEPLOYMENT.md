@@ -124,6 +124,8 @@ The questions live in [`scripts/env.schema`](../scripts/env.schema). For the com
 ./scripts/deploy.sh
 ```
 
+Run it as your normal user, **never with `sudo`**. Files it creates must belong to you, so that updates and backups can use them. If an earlier run used `sudo`, it stops and shows the one-time fix (`sudo chown -R $USER: .env data`).
+
 It first asks the questions from step 3, then shows seven short steps. The full output (Docker's build lines and so on) goes to `data/logs/deploy-<date>.log`:
 
 ```
@@ -183,6 +185,8 @@ The database is created and migrated automatically on first start. On later star
 > **Logging in over plain HTTP:** with `APP_ENV=production` (set by `docker-compose.yml`) session cookies are `Secure`. Browsers accept them on `https://` and on `http://localhost` / `http://127.0.0.1`, but **not** on `http://<LAN-IP>:3000`. Use the tunnel's HTTPS address, or an SSH tunnel to the host for local testing (`ssh -L 3000:127.0.0.1:3000 host`, then open `http://localhost:3000`).
 
 ## 5. Cloudflare Tunnel
+
+> **Connector on another machine?** If `cloudflared` doesn't run on this server, for example one connector in another container serving several apps, answer `0.0.0.0` to the setup question *"Where may the website be reached?"* (`WEB_BIND`). In the tunnel's public hostname, use `http://<this server's LAN IP>:3000`. With the default `127.0.0.1`, only a connector on this server can reach the app, and Cloudflare shows **502 Bad gateway**. To change it later: `./scripts/setup-env.sh --reconfigure WEB_BIND`, then `./scripts/deploy.sh restart`.
 
 Create a tunnel that points your subdomain at the frontend:
 

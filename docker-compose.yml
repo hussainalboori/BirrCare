@@ -47,7 +47,10 @@ services:
     container_name: birrcare_frontend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      # 127.0.0.1 = this machine only (a Cloudflare connector on this server).
+      # 0.0.0.0 = also the local network (a connector on another machine);
+      # set by setup-env.sh as WEB_BIND.
+      - "${WEB_BIND:-127.0.0.1}:3000:3000"
     environment:
       - INTERNAL_BACKEND_URL=http://birrcare-backend:8080
       - NEXT_PUBLIC_API_URL=/api/v1

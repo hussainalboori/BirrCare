@@ -61,7 +61,16 @@ fi
 HEALTH_TIMEOUT="${BIRRCARE_HEALTH_TIMEOUT:-120}"
 MIN_FREE_GB="${BIRRCARE_MIN_FREE_GB:-3}"
 BACKEND_URL="http://127.0.0.1:8080"
-FRONTEND_URL="http://127.0.0.1:3000"
+# The website listens where WEB_BIND says (chosen in step 2 on a first
+# install, so this is looked up when needed, not now).
+frontend_url() {
+  local bind
+  bind="$(grep -m1 '^WEB_BIND=' .env 2>/dev/null | cut -d= -f2- | tr -d "\"' " || true)"
+  case "$bind" in
+    "" | 127.0.0.1 | 0.0.0.0) printf 'http://127.0.0.1:3000' ;;
+    *) printf 'http://%s:3000' "$bind" ;;
+  esac
+}
 # Where CI publishes the images: ghcr.io/<GitHub owner of this checkout>.
 registry_prefix() {
   if [ -n "${BIRRCARE_REGISTRY:-}" ]; then
@@ -89,6 +98,30 @@ IS_TTY=""
 mark_ok() { if [ -n "$IS_TTY" ]; then printf '\033[32m✔\033[0m'; else printf '✔'; fi; }
 mark_bad() { if [ -n "$IS_TTY" ]; then printf '\033[31m✖\033[0m'; else printf '✖'; fi; }
 mark_warn() { if [ -n "$IS_TTY" ]; then printf '\033[33m⚠\033[0m'; else printf '⚠'; fi; }
+
+# ---------------------------------------------------------------------------
+# Run as the normal user, never with sudo
+# ---------------------------------------------------------------------------
+# Files made under sudo belong to root, and then the updater, the backups and
+# the next deploy (which run as the normal user) can't use them.
+if [ "$(id -u)" = "0" ] && [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  err "$(t "Don't run this with sudo. Run it as ${SUDO_USER}:" "لا تشغّل هذا باستخدام sudo. شغّله كمستخدم ${SUDO_USER}:")"
+  err "  ./scripts/deploy.sh${CMD:+ $([ "$CMD" = deploy ] || echo "$CMD")}"
+  err "$(t "(Only scripts/install-deps.sh needs sudo, once.)" "(فقط scripts/install-deps.sh يحتاج sudo، مرة واحدة.)")"
+  exit 1
+fi
+if [ "$(id -u)" != "0" ]; then
+  not_mine=""
+  for f in .env data data/logs data/backups; do
+    if [ -e "$f" ] && [ ! -w "$f" ]; then not_mine="${not_mine} ${f}"; fi
+  done
+  if [ -n "$not_mine" ]; then
+    err "$(t "These belong to another user (probably from an earlier run with sudo):${not_mine}" "هذه تخص مستخدماً آخر (غالباً من تشغيل سابق باستخدام sudo):${not_mine}")"
+    err "$(t "Give them back to $(id -un) once, then run this again:" "أعدها إلى $(id -un) مرة واحدة، ثم أعد التشغيل:")"
+    err "  sudo chown -R $(id -un): .env data"
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Log and steps
@@ -174,7 +207,7 @@ wait_healthy() {
       version="$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
       if [ -n "$want" ] && [ "$want" != "dev" ] && [ "$version" != "$want" ]; then
         HEALTH_PROBLEM="$(t "the backend still answers as version ${version:-?}, not ${want}" "الخادم الخلفي ما زال يعمل بالإصدار ${version:-?} وليس ${want}")"
-      elif ! curl -fsS --max-time 5 -o /dev/null "${FRONTEND_URL}" 2>/dev/null; then
+      elif ! curl -fsS --max-time 5 -o /dev/null "$(frontend_url)" 2>/dev/null; then
         HEALTH_PROBLEM="$(t "the website (frontend) is not answering" "الموقع (الواجهة) لا يستجيب")"
       else
         [ -n "$IS_TTY" ] && printf '\r\033[K'
