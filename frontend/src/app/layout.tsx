@@ -14,6 +14,7 @@ import { AlertCenter, EmergencySetupBanner, TimezoneMismatchBanner } from "@/com
 import { Navigation } from "@/components/Navigation";
 import { ThemeKeeper } from "@/components/ThemePicker";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { NewVersionBanner } from "@/components/NewVersionBanner";
 import { EmergencyDefaultProvider } from "@/lib/emergencyDefault";
 import { cleanEmergencyNumber } from "@/lib/emergencyNumber";
 import { THEME_COLORS, THEME_COOKIE, THEME_SCRIPT, parseThemeMode, themeClasses } from "@/lib/theme";
@@ -72,6 +73,8 @@ export default async function RootLayout({
             <EmergencySetupBanner />
             <TimezoneMismatchBanner />
             <UpdateBanner />
+            {/* The version this page was loaded from (read at request time, like the emergency number). */}
+            <NewVersionBanner pageVersion={process.env.GIT_SHA || ""} />
             <AlertCenter />
             <SseToast />
             <OutboxBar />

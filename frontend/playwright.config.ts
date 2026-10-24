@@ -25,7 +25,8 @@ export default defineConfig({
         url: "http://127.0.0.1:3100",
         reuseExistingServer: false,
         timeout: 120_000,
-        // The household's emergency number, sent in every page as the offline fallback.
-        env: { EMERGENCY_NUMBER: "999" },
+        // The household's emergency number, sent in every page as the offline fallback,
+        // and the version the pages say they were loaded from.
+        env: { EMERGENCY_NUMBER: "999", GIT_SHA: "aaaaaaa1111111111111111111111111111111" },
       },
 });
