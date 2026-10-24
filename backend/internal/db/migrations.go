@@ -264,7 +264,10 @@ CREATE TABLE IF NOT EXISTS insulin_logs (
     blood_sugar REAL,
     vital_id TEXT REFERENCES vitals_logs(id),
     reason TEXT,            -- required when units differ from the scale or the interval lock is overridden
-    scale_snapshot TEXT     -- the plan as it was, so later scale edits never rewrite history
+    scale_snapshot TEXT,    -- the plan as it was, so later scale edits never rewrite history
+    voided_at TEXT,
+    voided_by TEXT REFERENCES caregivers(id),
+    void_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS care_events (
@@ -1071,6 +1074,15 @@ func Migrate(database *sql.DB) error {
 		BEFORE DELETE ON medication_logs
 		BEGIN SELECT RAISE(ABORT, 'medication logs cannot be deleted: void the dose instead'); END;
 
+		CREATE TRIGGER IF NOT EXISTS insulin_logs_voided_once
+		BEFORE UPDATE OF voided_at, voided_by, void_reason ON insulin_logs
+		WHEN OLD.voided_at IS NOT NULL
+		BEGIN SELECT RAISE(ABORT, 'this injection was already voided'); END;
+
+		CREATE TRIGGER IF NOT EXISTS insulin_logs_no_delete
+		BEFORE DELETE ON insulin_logs
+		BEGIN SELECT RAISE(ABORT, 'insulin logs cannot be deleted: void the injection instead'); END;
+
 		CREATE TRIGGER IF NOT EXISTS vitals_no_delete
 		BEFORE DELETE ON vitals_logs
 		BEGIN SELECT RAISE(ABORT, 'vitals logs cannot be deleted: post a correction instead'); END;
@@ -1201,6 +1213,21 @@ func Migrate(database *sql.DB) error {
 			}
 		}
 	}
+
+	for _, c := range []struct{ col, def string }{
+		{"voided_at", "TEXT"},
+		{"voided_by", "TEXT REFERENCES caregivers(id)"},
+		{"void_reason", "TEXT"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('insulin_logs') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE insulin_logs ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding insulin_logs.%s: %w", c.col, err)
+			}
+		}
+	}
+	_, _ = database.Exec(`CREATE INDEX IF NOT EXISTS idx_insulin_logs_voided ON insulin_logs(plan_id, voided_at, given_at DESC)`)
 
 	if err := seedSuperAdmin(database); err != nil {
 		return fmt.Errorf("failed seeding super admin: %w", err)

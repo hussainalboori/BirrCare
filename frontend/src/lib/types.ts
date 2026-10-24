@@ -371,6 +371,9 @@ export interface InsulinLog {
   scale_units: number | null;
   blood_sugar: number | null;
   reason?: string;
+  voided_at?: string;
+  void_reason?: string;
+  voided_by_name?: string;
 }
 
 export interface InsulinPlanStatus {

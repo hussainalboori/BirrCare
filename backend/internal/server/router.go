@@ -249,6 +249,8 @@ func NewRouter(o Options) http.Handler {
 				api.Delete("/insulin/plans/{id}", insulinHandler.DeletePlan)
 				api.Get("/insulin/status", insulinHandler.GetStatus)
 				api.Post("/insulin/log", insulinHandler.LogInsulin)
+				api.Post("/insulin/log/{id}/void", insulinHandler.VoidInsulinLog)
+				api.Delete("/insulin/log/{id}", insulinHandler.VoidInsulinLog)
 
 				// Handover Notes
 				api.Get("/handovers", handoverHandler.ListHandovers)

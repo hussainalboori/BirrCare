@@ -6,18 +6,27 @@ import { InsulinPlanStatus, InsulinLog } from "@/lib/types";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
-import { canManageMedications, isViewer } from "@/lib/permissions";
+import { canManageMedications, canTakeActions, isViewer } from "@/lib/permissions";
 import { HYPO_THRESHOLD, lookupInsulinScale } from "@/lib/clinical";
 import { formatTime, formatShortDate, parseServerTime } from "@/lib/datetime";
 import { BloodSugarBadge } from "./BloodSugarBadge";
 import { CrisisActions } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { firstName } from "@/lib/actor";
-import { Syringe, Lock, AlertTriangle, Check, Minus, Plus, Loader2, Ban, Clock } from "lucide-react";
+import { Syringe, Lock, AlertTriangle, Check, Minus, Plus, Loader2, Ban, Clock, Undo2, RotateCcw } from "lucide-react";
 
 type Mode = "normal" | "adjust" | "hold";
 
 const fmtUnits = (u: number) => String(Number(u.toFixed(1)));
+
+const UNDO_SECONDS = 10;
+
+const CANCEL_REASONS = [
+  { ar: "نقرة خطأ", en: "Mis-tap" },
+  { ar: "تكرار غير مقصود", en: "Duplicate entry" },
+  { ar: "أمر الطبيب", en: "Doctor's instruction" },
+  { ar: "جرعة غير صحيحة", en: "Incorrect dose" },
+];
 
 const ADJUST_REASONS = {
   ar: ["الطبيب قال بالهاتف", "أكلت أقل من المعتاد", "أكلت أكثر من المعتاد"],
@@ -48,6 +57,22 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [undo, setUndo] = useState<{ logId: string; until: number } | null>(null);
+  const [undoLeft, setUndoLeft] = useState(0);
+  const [cancelLog, setCancelLog] = useState<InsulinLog | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [voiding, setVoiding] = useState(false);
+
+  // 10-second instant undo timer
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setInterval(() => {
+      const left = Math.ceil((undo.until - Date.now()) / 1000);
+      if (left <= 0) setUndo(null);
+      else setUndoLeft(left);
+    }, 200);
+    return () => clearInterval(timer);
+  }, [undo]);
 
   // Re-evaluate the interval lock as time passes, without a refetch.
   useEffect(() => {
@@ -81,6 +106,40 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
     setMode("adjust");
   };
 
+  const canUndoLog = (l: InsulinLog) => {
+    if (!currentCaregiver) return false;
+    if (!canTakeActions(currentCaregiver.role)) return false;
+    const isOwn = l.caregiver_id === currentCaregiver.id;
+    const loggedTime = new Date(l.given_at).getTime();
+    const isRecent = !isNaN(loggedTime) && now - loggedTime <= 10 * 60_000;
+    return isOwn && isRecent;
+  };
+
+  const voidEntry = async (logId: string, voidReason: string) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setVoiding(true);
+    setError(null);
+    try {
+      await fetchApi(`/insulin/log/${encodeURIComponent(logId)}/void`, {
+        method: "POST",
+        body: JSON.stringify({ reason: voidReason || "Undo" }),
+      });
+      haptic(40);
+      setUndo(null);
+      setCancelLog(null);
+      setCancelReason("");
+      setDone(ar ? "تم إلغاء تسجيل الإبرة" : "Injection entry cancelled");
+      setTimeout(() => setDone(null), 5000);
+      onLogged();
+    } catch (err: any) {
+      setError(err?.data?.message || err?.message || (ar ? "تعذر إلغاء الإبرة" : "Failed to cancel injection"));
+    } finally {
+      inFlightRef.current = false;
+      setVoiding(false);
+    }
+  };
+
   const submit = async (body: { status: "given" | "held"; units?: number; reason?: string; override_interval?: boolean }) => {
     if (!currentCaregiver) {
       openPinModal();
@@ -91,7 +150,7 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
     setSubmitting(true);
     setError(null);
     try {
-      await fetchApi("/insulin/log", {
+      const res = await fetchApi<any>("/insulin/log", {
         method: "POST",
         body: JSON.stringify({
           plan_id: plan.id,
@@ -100,6 +159,9 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
         }),
       });
       haptic(40);
+      if (res?.log_id) {
+        setUndo({ logId: res.log_id, until: Date.now() + UNDO_SECONDS * 1000 });
+      }
       setDone(
         body.status === "given"
           ? ar ? `تم تسجيل ${fmtUnits(body.units || 0)} وحدة` : `Recorded ${fmtUnits(body.units || 0)} units`
@@ -196,26 +258,111 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
         </div>
       </div>
 
+      {/* 10-second instant undo banner */}
+      {undo && (
+        <div role="status" className="mb-3 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/15 p-3 text-sm font-bold text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+          <span>{ar ? "تم تسجيل الإبرة بنجاح" : "Injection recorded successfully"}</span>
+          <button
+            type="button"
+            onClick={() => voidEntry(undo.logId, "Undo")}
+            disabled={voiding}
+            className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-2 text-xs font-black text-white hover:bg-amber-700 active:scale-95 disabled:opacity-50"
+          >
+            <Undo2 className="h-4 w-4" />
+            <span>{ar ? "تراجع" : "Undo"}</span> ({undoLeft})
+          </button>
+        </div>
+      )}
+
       {/* Last injection: the 3 AM question, answered first */}
       <div className="mb-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
         {last_given ? (
-          <p className="font-semibold text-slate-800 dark:text-slate-100">
-            {ar ? "آخر إبرة: " : "Last injection: "}
-            <Ltr className="font-black">{fmtUnits(last_given.units)}</Ltr>
-            {ar ? " وحدة بواسطة " : " units by "}
-            <bdi>{last_given.caregiver_name}</bdi>
-            {ar ? " " : " "}
-            {formatShortDate(last_given.given_at, locale)} <Ltr>{formatTime(last_given.given_at, locale)}</Ltr>
-            {last_given.blood_sugar != null && (
-              <span className="text-slate-500 dark:text-slate-400">
-                {" "}({ar ? "السكر " : "sugar "}<Ltr>{last_given.blood_sugar.toFixed(1)}</Ltr>)
-              </span>
+          <div>
+            <p className="font-semibold text-slate-800 dark:text-slate-100">
+              {ar ? "آخر إبرة: " : "Last injection: "}
+              <Ltr className="font-black">{fmtUnits(last_given.units)}</Ltr>
+              {ar ? " وحدة بواسطة " : " units by "}
+              <bdi>{last_given.caregiver_name}</bdi>
+              {ar ? " " : " "}
+              {formatShortDate(last_given.given_at, locale)} <Ltr>{formatTime(last_given.given_at, locale)}</Ltr>
+              {last_given.blood_sugar != null && (
+                <span className="text-slate-500 dark:text-slate-400">
+                  {" "}({ar ? "السكر " : "sugar "}<Ltr>{last_given.blood_sugar.toFixed(1)}</Ltr>)
+                </span>
+              )}
+            </p>
+            {!cancelLog && (canUndoLog(last_given) || isAdmin) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCancelLog(last_given);
+                  setCancelReason(canUndoLog(last_given) ? (ar ? "نقرة خطأ" : "Mis-tap") : "");
+                }}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 active:scale-95 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>{ar ? "إلغاء هذه الإبرة (تراجع)" : "Cancel injection (Undo)"}</span>
+              </button>
             )}
-          </p>
+          </div>
         ) : (
           <p className="text-slate-500 dark:text-slate-400">{ar ? "لا توجد إبرة مسجلة بعد" : "No injection recorded yet"}</p>
         )}
       </div>
+
+      {/* In-page Cancel panel */}
+      {cancelLog && (
+        <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/40">
+          <p className="mb-2 text-sm font-bold text-rose-900 dark:text-rose-200">
+            {ar ? "إلغاء تسجيل الإبرة (يبقى موثقاً في سجل المراجعة):" : "Cancel injection entry (retained in audit log):"}
+          </p>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {CANCEL_REASONS.map((r) => (
+              <button
+                key={r.en}
+                type="button"
+                onClick={() => setCancelReason(ar ? r.ar : r.en)}
+                className={`min-h-12 rounded-xl border px-3 text-sm font-semibold active:scale-95 ${
+                  cancelReason === (ar ? r.ar : r.en)
+                    ? "border-rose-600 bg-rose-600 text-white"
+                    : "border-rose-300 bg-white text-rose-800 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-300"
+                }`}
+              >
+                {ar ? r.ar : r.en}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            maxLength={500}
+            placeholder={ar ? "أو اكتب السبب (مطلوب بعد 10 دقائق)" : "Or write the reason (required after 10m)"}
+            className="mb-2 min-h-12 w-full rounded-xl border border-rose-300 bg-white px-3 text-base text-slate-900 focus:border-rose-600 focus:outline-none dark:border-rose-800 dark:bg-slate-900 dark:text-white"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCancelLog(null);
+                setCancelReason("");
+              }}
+              className="min-h-12 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-300"
+            >
+              {ar ? "رجوع" : "Back"}
+            </button>
+            <button
+              type="button"
+              disabled={voiding || (!canUndoLog(cancelLog) && !cancelReason.trim())}
+              onClick={() => voidEntry(cancelLog.id, cancelReason.trim())}
+              className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-rose-600 text-sm font-bold text-white hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+            >
+              {voiding ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              <span>{ar ? "تأكيد الإلغاء" : "Confirm cancellation"}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {locked && (
         <div role="status" className="mb-3 flex items-start gap-2 rounded-2xl border-2 border-amber-400 bg-amber-50 p-3 text-sm font-bold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
@@ -449,27 +596,75 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
         </>
       ) : null}
 
-      {recent.length > 0 && <History logs={recent} />}
+      {recent.length > 0 && (
+        <History
+          logs={recent}
+          onCancel={(l) => {
+            setCancelLog(l);
+            setCancelReason(canUndoLog(l) ? (ar ? "نقرة خطأ" : "Mis-tap") : "");
+          }}
+          canUndoLog={canUndoLog}
+          isAdmin={isAdmin}
+        />
+      )}
     </section>
   );
 }
 
-function History({ logs }: { logs: InsulinLog[] }) {
+function History({
+  logs,
+  onCancel,
+  canUndoLog,
+  isAdmin,
+}: {
+  logs: InsulinLog[];
+  onCancel: (l: InsulinLog) => void;
+  canUndoLog: (l: InsulinLog) => boolean;
+  isAdmin: boolean;
+}) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
   return (
     <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100 text-xs dark:divide-slate-800 dark:border-slate-800">
-      {logs.map((l) => (
-        <li key={l.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-2 text-slate-600 dark:text-slate-300">
-          <Ltr className="font-mono text-slate-400">{formatShortDate(l.given_at, locale)} {formatTime(l.given_at, locale)}</Ltr>
-          {l.blood_sugar != null && <Ltr className="font-semibold text-blue-700 dark:text-blue-300">{l.blood_sugar.toFixed(1)} mmol/L</Ltr>}
-          <span className={`font-bold ${l.status === "given" ? "text-slate-900 dark:text-white" : "text-slate-400"}`}>
-            {l.status === "given" ? <><Ltr>{fmtUnits(l.units)}</Ltr>{ar ? " وحدة" : " u"}</> : ar ? "لم تُعطَ" : "not given"}
-          </span>
-          <bdi className="text-slate-400">{l.caregiver_name}</bdi>
-          {l.reason && <span className="w-full text-amber-700 dark:text-amber-400">↳ <bdi>{l.reason}</bdi></span>}
-        </li>
-      ))}
+      {logs.map((l) => {
+        const isVoided = !!l.voided_at;
+        return (
+          <li key={l.id} className="py-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-300 ${isVoided ? "line-through opacity-60" : ""}`}>
+                <Ltr className="font-mono text-slate-400">{formatShortDate(l.given_at, locale)} {formatTime(l.given_at, locale)}</Ltr>
+                {l.blood_sugar != null && <Ltr className="font-semibold text-blue-700 dark:text-blue-300">{l.blood_sugar.toFixed(1)} mmol/L</Ltr>}
+                <span className={`font-bold ${l.status === "given" ? "text-slate-900 dark:text-white" : "text-slate-400"}`}>
+                  {l.status === "given" ? <><Ltr>{fmtUnits(l.units)}</Ltr>{ar ? " وحدة" : " u"}</> : ar ? "لم تُعطَ" : "not given"}
+                </span>
+                <bdi className="text-slate-400">{l.caregiver_name}</bdi>
+                {isVoided && (
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-xs font-bold text-rose-800 no-underline dark:bg-rose-950 dark:text-rose-300">
+                    {ar ? "ملغاة" : "Cancelled"}
+                  </span>
+                )}
+              </div>
+              {!isVoided && (canUndoLog(l) || isAdmin) && (
+                <button
+                  type="button"
+                  onClick={() => onCancel(l)}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>{ar ? "تراجع" : "Undo"}</span>
+                </button>
+              )}
+            </div>
+            {l.reason && <p className="mt-0.5 text-amber-700 dark:text-amber-400">↳ <bdi>{l.reason}</bdi></p>}
+            {isVoided && l.void_reason && (
+              <p className="mt-0.5 text-rose-600 dark:text-rose-400">
+                ↳ {ar ? "سبب الإلغاء: " : "Void reason: "}<bdi>{l.void_reason}</bdi>
+                {l.voided_by_name && <> ({l.voided_by_name})</>}
+              </p>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

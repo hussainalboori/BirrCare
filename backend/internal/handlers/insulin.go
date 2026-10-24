@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -87,6 +88,9 @@ type InsulinLog struct {
 	ScaleUnits    *float64 `json:"scale_units"`
 	BloodSugar    *float64 `json:"blood_sugar"`
 	Reason        string   `json:"reason,omitempty"`
+	VoidedAt      string   `json:"voided_at,omitempty"`
+	VoidReason    string   `json:"void_reason,omitempty"`
+	VoidedByName  string   `json:"voided_by_name,omitempty"`
 }
 
 // LookupScale returns the doctor's units for a reading, or nil when the reading
@@ -424,10 +428,12 @@ func actorOf(c *models.Caregiver) models.ActorInfo {
 
 const insulinLogSelect = `
 	SELECT l.id, l.plan_id, p.name_ar, p.name_en, l.caregiver_id, c.name, COALESCE(c.avatar_color, ''),
-	       COALESCE(l.given_at, ''), l.status, l.units, l.scale_units, l.blood_sugar, COALESCE(l.reason, '')
+	       COALESCE(l.given_at, ''), l.status, l.units, l.scale_units, l.blood_sugar, COALESCE(l.reason, ''),
+	       COALESCE(l.voided_at, ''), COALESCE(l.void_reason, ''), COALESCE(vc.name, '')
 	FROM insulin_logs l
 	JOIN insulin_plans p ON p.id = l.plan_id
-	JOIN caregivers c ON c.id = l.caregiver_id`
+	JOIN caregivers c ON c.id = l.caregiver_id
+	LEFT JOIN caregivers vc ON vc.id = l.voided_by`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -436,8 +442,10 @@ type rowScanner interface {
 func scanInsulinLog(s rowScanner) (InsulinLog, error) {
 	var l InsulinLog
 	var scaleUnits, sugar sql.NullFloat64
+	var voidedAt, voidReason, voidedByName sql.NullString
 	err := s.Scan(&l.ID, &l.PlanID, &l.PlanNameAr, &l.PlanNameEn, &l.CaregiverID, &l.CaregiverName, &l.AvatarColor,
-		&l.GivenAt, &l.Status, &l.Units, &scaleUnits, &sugar, &l.Reason)
+		&l.GivenAt, &l.Status, &l.Units, &scaleUnits, &sugar, &l.Reason,
+		&voidedAt, &voidReason, &voidedByName)
 	if err != nil {
 		return l, err
 	}
@@ -450,6 +458,15 @@ func scanInsulinLog(s rowScanner) (InsulinLog, error) {
 		l.BloodSugar = &v
 	}
 	l.GivenAt = sqliteToRFC3339(l.GivenAt)
+	if voidedAt.Valid && voidedAt.String != "" {
+		l.VoidedAt = sqliteToRFC3339(voidedAt.String)
+	}
+	if voidReason.Valid {
+		l.VoidReason = voidReason.String
+	}
+	if voidedByName.Valid {
+		l.VoidedByName = voidedByName.String
+	}
 	return l, nil
 }
 
@@ -482,7 +499,7 @@ func (h *InsulinHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			st.Recent = append(st.Recent, l)
-			if st.LastGiven == nil && l.Status == "given" {
+			if st.LastGiven == nil && l.Status == "given" && l.VoidedAt == "" {
 				lc := l
 				st.LastGiven = &lc
 			}
@@ -618,7 +635,7 @@ func (h *InsulinHandler) LogInsulin(w http.ResponseWriter, r *http.Request) {
 	// The single pooled connection belongs to tx until Commit/Rollback: use tx only.
 	if req.Status == "given" && !req.OverrideInterval {
 		last, err := scanInsulinLog(tx.QueryRow(insulinLogSelect+
-			` WHERE l.plan_id = ? AND l.status = 'given' ORDER BY l.given_at DESC LIMIT 1`, plan.ID))
+			` WHERE l.plan_id = ? AND l.status = 'given' AND l.voided_at IS NULL ORDER BY l.given_at DESC LIMIT 1`, plan.ID))
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			tx.Rollback()
 			internalError(w, "failed to check last insulin", err)
@@ -719,7 +736,7 @@ func fmtSugar(s *float64) string {
 
 // insulinLogsSince is used by the doctor export.
 func insulinLogsSince(database *sql.DB, since string) ([]InsulinLog, error) {
-	rows, err := database.Query(insulinLogSelect+` WHERE l.given_at >= ? ORDER BY l.given_at DESC LIMIT 200`, since)
+	rows, err := database.Query(insulinLogSelect+` WHERE l.given_at >= ? AND l.voided_at IS NULL ORDER BY l.given_at DESC LIMIT 200`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -733,4 +750,117 @@ func insulinLogsSince(database *sql.DB, since string) ([]InsulinLog, error) {
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+func (h *InsulinHandler) VoidInsulinLog(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "Select your profile and enter your PIN")
+		return
+	}
+	if !auth.CanTakeActions(caregiver) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Viewers cannot change insulin entries")
+		return
+	}
+	logID := chi.URLParam(r, "id")
+	if logID == "" {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_ID", "missing insulin log id")
+		return
+	}
+
+	var req VoidDoseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PAYLOAD", "invalid request payload")
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if len(req.Reason) > maxInsulinReason {
+		writeJSONError(w, http.StatusBadRequest, "REASON_TOO_LONG", "reason is too long")
+		return
+	}
+
+	var loggedBy, givenAt, planID, status, nameAr, nameEn string
+	var units float64
+	var voidedAt sql.NullString
+	err := h.DB.QueryRowContext(r.Context(), `
+		SELECT l.caregiver_id, COALESCE(l.given_at, ''), l.voided_at, l.plan_id, l.status, l.units, p.name_ar, p.name_en
+		FROM insulin_logs l
+		JOIN insulin_plans p ON p.id = l.plan_id
+		WHERE l.id = ?`, logID).Scan(&loggedBy, &givenAt, &voidedAt, &planID, &status, &units, &nameAr, &nameEn)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSONError(w, http.StatusNotFound, "LOG_NOT_FOUND", "insulin log not found")
+		return
+	} else if err != nil {
+		internalError(w, "failed to look up insulin log", err)
+		return
+	}
+	if voidedAt.Valid && voidedAt.String != "" {
+		writeJSONError(w, http.StatusConflict, "ALREADY_VOIDED", "this injection was already cancelled")
+		return
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	tapped, err := time.Parse(sqliteTimeLayout, givenAt)
+	if err != nil {
+		tapped, err = time.Parse(time.RFC3339, givenAt)
+	}
+	ownUndo := err == nil && loggedBy == caregiver.ID && now.Sub(tapped) <= undoWindow
+	if !ownUndo {
+		if !auth.CanManageMedications(caregiver) {
+			writeJSONError(w, http.StatusForbidden, "VOID_NOT_ALLOWED",
+				"Only the person who recorded it can cancel within 10 minutes; after that, ask an admin")
+			return
+		}
+		if req.Reason == "" {
+			writeJSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "Write why this injection is being cancelled")
+			return
+		}
+	}
+	if req.Reason == "" {
+		req.Reason = "Undo"
+	}
+
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE insulin_logs SET voided_at = ?, voided_by = ?, void_reason = ? WHERE id = ? AND voided_at IS NULL`,
+		now.Format(sqliteTimeLayout), caregiver.ID, req.Reason, logID)
+	if err != nil {
+		internalError(w, "failed to cancel insulin log", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeJSONError(w, http.StatusConflict, "ALREADY_VOIDED", "this injection was already cancelled")
+		return
+	}
+
+	auditDetail := fmt.Sprintf("Cancelled %s injection of %s (%.1f units, recorded by %s). Reason: %s",
+		status, nameEn, units, loggedBy, req.Reason)
+	if err := audit.Record(tx, caregiver.ID, "INSULIN_VOIDED", "insulin_log", logID, auditDetail); err != nil {
+		internalError(w, "failed to write audit trail", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit insulin log cancellation", err)
+		return
+	}
+
+	h.Broker.Broadcast("INSULIN_VOIDED", actorOf(caregiver), map[string]interface{}{
+		"log_id":  logID,
+		"plan_id": planID,
+		"action":  "voided",
+		"reason":  req.Reason,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Insulin injection cancelled successfully",
+		"log_id":  logID,
+	})
 }

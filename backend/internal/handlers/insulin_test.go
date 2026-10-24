@@ -259,3 +259,98 @@ func TestDeleteInsulinPlan(t *testing.T) {
 		t.Fatalf("expected plan with logs to have is_active=0, got %d", isActive)
 	}
 }
+
+func voidInsulin(t *testing.T, h *handlers.InsulinHandler, who *models.Caregiver, logID, reason string) (int, map[string]interface{}) {
+	t.Helper()
+	body, _ := json.Marshal(handlers.VoidDoseRequest{Reason: reason})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/insulin/log/"+logID+"/void", bytes.NewReader(body))
+	r := chi.NewRouteContext()
+	r.URLParams.Add("id", logID)
+	req = req.WithContext(context.WithValue(authContext(req.Context(), who), chi.RouteCtxKey, r))
+	rec := httptest.NewRecorder()
+	h.VoidInsulinLog(rec, req)
+	var out map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func TestVoidInsulinLog(t *testing.T) {
+	h, planID := setupInsulin(t)
+
+	// 1. Log a dose
+	recLog := call(h.LogInsulin, insCaregiver, handlers.LogInsulinRequest{
+		PlanID: planID, Status: "given", Units: 4, BloodSugar: f(12),
+	})
+	if recLog.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for log, got %d", recLog.Code)
+	}
+	var logOut map[string]interface{}
+	json.Unmarshal(recLog.Body.Bytes(), &logOut)
+	logID := logOut["log_id"].(string)
+
+	// Status shows last_given and next_allowed_at is locked
+	reqStatus := httptest.NewRequest(http.MethodGet, "/api/v1/insulin/status", nil)
+	recStatus := httptest.NewRecorder()
+	h.GetStatus(recStatus, reqStatus)
+	var statuses []handlers.PlanStatus
+	json.Unmarshal(recStatus.Body.Bytes(), &statuses)
+	if len(statuses) != 1 || statuses[0].LastGiven == nil || statuses[0].NextAllowedAt == "" {
+		t.Fatalf("expected status with last_given and next_allowed_at, got: %+v", statuses)
+	}
+
+	// 2. Viewer cannot void
+	if code, _ := voidInsulin(t, h, insViewer, logID, ""); code != http.StatusForbidden {
+		t.Fatalf("viewer void: want 403, got %d", code)
+	}
+
+	// 3. Different caregiver cannot void someone else's log
+	otherCaregiver := &models.Caregiver{ID: "cg_other", Name: "Other", Role: models.RoleCaregiver}
+	if code, _ := voidInsulin(t, h, otherCaregiver, logID, ""); code != http.StatusForbidden {
+		t.Fatalf("other caregiver void: want 403, got %d", code)
+	}
+
+	// 4. Admin voiding someone else's log requires a reason
+	if code, out := voidInsulin(t, h, insAdmin, logID, ""); code != http.StatusBadRequest || out["error"] != "REASON_REQUIRED" {
+		t.Fatalf("admin void without reason: want 400 REASON_REQUIRED, got %d %+v", code, out)
+	}
+
+	// 5. Original caregiver can undo within 10 minutes (own undo)
+	if code, out := voidInsulin(t, h, insCaregiver, logID, ""); code != http.StatusOK {
+		t.Fatalf("caregiver own undo: want 200, got %d %+v", code, out)
+	}
+
+	// 6. Voiding again returns 409 ALREADY_VOIDED
+	if code, _ := voidInsulin(t, h, insCaregiver, logID, ""); code != http.StatusConflict {
+		t.Fatalf("voiding twice: want 409, got %d", code)
+	}
+
+	// 7. Status now reflects that the plan is unlocked
+	recStatus2 := httptest.NewRecorder()
+	h.GetStatus(recStatus2, reqStatus)
+	var statuses2 []handlers.PlanStatus
+	json.Unmarshal(recStatus2.Body.Bytes(), &statuses2)
+	if statuses2[0].LastGiven != nil || statuses2[0].NextAllowedAt != "" {
+		t.Fatalf("expected plan to be unlocked after void, got: %+v", statuses2[0])
+	}
+
+	// 8. Caregiver can log a new dose now that the mis-tap was voided
+	recLog2 := call(h.LogInsulin, insCaregiver, handlers.LogInsulinRequest{
+		PlanID: planID, Status: "given", Units: 4, BloodSugar: f(12),
+	})
+	if recLog2.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for second log after void, got %d: %s", recLog2.Code, recLog2.Body.String())
+	}
+
+	// 9. Check audit trail
+	var auditCount int
+	h.DB.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE action = 'INSULIN_VOIDED'").Scan(&auditCount)
+	if auditCount != 1 {
+		t.Fatalf("want 1 INSULIN_VOIDED audit log, got %d", auditCount)
+	}
+
+	// 10. Check immutability trigger
+	if _, err := h.DB.Exec("DELETE FROM insulin_logs WHERE id = ?", logID); err == nil {
+		t.Fatal("expected DELETE FROM insulin_logs to be rejected by trigger")
+	}
+}
+
