@@ -30,7 +30,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 	rows, err := h.DB.QueryContext(r.Context(), `
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, image_url,
 		       prn_min_hours, prn_max_per_24h, stock_units, units_per_dose, refill_threshold_days,
-		       COALESCE(is_critical, 0), created_at
+		       COALESCE(is_critical, 0), created_at, COALESCE(photo_urls, '[]')
 		FROM medications
 		WHERE is_active = 1 AND is_prn = 1
 		ORDER BY name_ar ASC
@@ -56,13 +56,14 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 		var instAr, instEn, imgURL sql.NullString
 		var minHours, stock sql.NullFloat64
 		var max24h sql.NullInt64
-		var createdAtStr string
+		var createdAtStr, photosJSON string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &imgURL,
 			&minHours, &max24h, &stock, &m.UnitsPerDose, &m.RefillThresholdDays,
-			&m.IsCritical, &createdAtStr); err != nil {
+			&m.IsCritical, &createdAtStr, &photosJSON); err != nil {
 			continue
 		}
+		m.PhotoURLs = parsePhotoURLs(photosJSON)
 		m.IsPRN = true
 		m.FrequencySlots = []string{}
 		m.DaysOfWeek = allDaysOfWeek

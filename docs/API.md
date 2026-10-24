@@ -228,8 +228,10 @@ Creates a new scheduled medication.
 }
 ```
 
+Optional `"photo_urls": [...]`: up to 6 photos uploaded to `/medications/photos` (box front, back, the pill…); repeats are dropped and the first becomes `image_url` (the main photo) unless one is given.
+
 ### `PUT /api/v1/medications/{id}` (Admin)
-Edits a medicine (names, dosage, instructions, slots, days, times, photo, interval, PRN limits). The change is audited with the values before and after.
+Edits a medicine (names, dosage, instructions, slots, days, times, photos, interval, PRN limits). Sending `photo_urls` replaces the list; `image_url` then picks the main photo (default: the first; none if the list is empty). The change is audited with the values before and after.
 
 ### `DELETE /api/v1/medications/{id}` (Admin)
 Deactivates a medicine; its history stays. **Always requires the admin's own PIN** in the `X-Admin-PIN` header, wherever the device is (`403 ADMIN_PIN_REQUIRED` / `INCORRECT_ADMIN_PIN`).

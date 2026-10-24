@@ -66,6 +66,8 @@ type Medication struct {
 	DaysOfWeek     []string          `json:"days_of_week"`    // e.g., ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 	SlotTimes      map[string]string `json:"slot_times"`      // e.g., {"morning": "08:00", "evening": "20:00"}
 	ImageURL       string            `json:"image_url,omitempty"`
+	// PhotoURLs are all the uploaded photos (box, back, pill); ImageURL is the main one.
+	PhotoURLs []string `json:"photo_urls"`
 	// MinHoursBetween is the doctor's minimum gap between doses; nil = automatic
 	// (derived from the schedule), 0 = no interval lock.
 	MinHoursBetween *float64 `json:"min_hours_between"`

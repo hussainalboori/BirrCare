@@ -77,6 +77,8 @@ export interface Medication {
   days_of_week?: string[];
   slot_times?: Record<string, string>;
   image_url?: string;
+  /** Every uploaded photo (box, back, the pill); image_url is the main one. */
+  photo_urls?: string[];
   /** Doctor's minimum hours between doses; null = automatic, 0 = no lock. */
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */

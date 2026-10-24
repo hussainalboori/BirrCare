@@ -47,6 +47,9 @@ const DAYS_LIST = [
 
 const ALL_DAY_IDS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
+// The box front and back, the leaflet, the pill… (the server allows 6).
+const MAX_PHOTOS = 6;
+
 const PILL_PRESETS = [
   { id: "aspirin", url: "/meds/aspirin.svg", labelAr: "أسبرين (أصفر)", labelEn: "Aspirin (Yellow)" },
   { id: "clopidogrel", url: "/meds/clopidogrel.svg", labelAr: "بلافيكس (وردي)", labelEn: "Plavix (Pink)" },
@@ -76,6 +79,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [instAr, setInstAr] = useState("");
   const [instEn, setInstEn] = useState("");
   const [imageUrl, setImageUrl] = useState("/meds/pill-default.svg");
+  // Every uploaded photo (box front, back, the pill); imageUrl is the main one.
+  const [photos, setPhotos] = useState<string[]>([]);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [selectedSlots, setSelectedSlots] = useState<string[]>(["morning"]);
@@ -130,6 +135,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstAr("");
     setInstEn("");
     setImageUrl("/meds/pill-default.svg");
+    setPhotos([]);
     setSelectedSlots(["morning"]);
     setDaysOfWeek(ALL_DAY_IDS);
     setMinHours("");
@@ -159,6 +165,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setInstAr(med.instructions_ar || "");
     setInstEn(med.instructions_en || "");
     setImageUrl(med.image_url || "/meds/pill-default.svg");
+    setPhotos(med.photo_urls || []);
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setIsCritical(!!med.is_critical);
     setTrackStock(med.stock_units != null);
@@ -243,6 +250,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             image_url: imageUrl.trim() || undefined,
+            photo_urls: photos,
             is_critical: isCritical,
             ...prnPayload,
             ...stockPayload(),
@@ -259,6 +267,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             instructions_ar: instAr.trim() || undefined,
             instructions_en: instEn.trim() || undefined,
             image_url: imageUrl.trim() || undefined,
+            photo_urls: photos,
             is_critical: isCritical,
             ...prnPayload,
             ...stockPayload(),
@@ -739,31 +748,83 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                   <span>
                     {photoBusy
                       ? locale === "ar" ? "جارٍ رفع الصورة..." : "Uploading photo..."
-                      : locale === "ar" ? "التقط أو اختر صورة للعلبة" : "Take or choose a photo of the box"}
+                      : photos.length
+                        ? locale === "ar" ? `أضف صورة أخرى (${photos.length} من ${MAX_PHOTOS})` : `Add another photo (${photos.length} of ${MAX_PHOTOS})`
+                        : locale === "ar" ? "التقط أو اختر صوراً (العلبة، الخلف، الحبة)" : "Take or choose photos (box, back, the pill)"}
                   </span>
                   <input
                     type="file"
                     accept="image/*"
+                    multiple
                     data-testid="med-photo-input"
                     className="sr-only"
                     onChange={async (e) => {
-                      const file = e.target.files?.[0];
+                      const files = Array.from(e.target.files || []);
                       e.target.value = "";
-                      if (!file) return;
+                      if (!files.length) return;
                       setPhotoError("");
-                      setPhotoBusy(true);
-                      try {
-                        setImageUrl(await uploadMedicinePhoto(file));
-                      } catch {
-                        setPhotoError(locale === "ar" ? "تعذر رفع الصورة، جرّب صورة أخرى" : "Could not upload the photo, try another one");
-                      } finally {
-                        setPhotoBusy(false);
+                      const room = MAX_PHOTOS - photos.length;
+                      if (files.length > room) {
+                        setPhotoError(
+                          locale === "ar" ? `حدّ الصور ${MAX_PHOTOS} لكل دواء` : `At most ${MAX_PHOTOS} photos per medicine`,
+                        );
                       }
+                      setPhotoBusy(true);
+                      let failed = false;
+                      for (const file of files.slice(0, Math.max(0, room))) {
+                        try {
+                          const url = await uploadMedicinePhoto(file);
+                          setPhotos((prev) => (prev.includes(url) ? prev : [...prev, url]));
+                          // The first real photo becomes the main one instead of a drawn pill.
+                          setImageUrl((prev) => (!prev || prev.startsWith("/meds/") ? url : prev));
+                        } catch {
+                          failed = true;
+                        }
+                      }
+                      if (failed) setPhotoError(locale === "ar" ? "تعذر رفع صورة، جرّب صورة أخرى" : "Could not upload a photo, try another one");
+                      setPhotoBusy(false);
                     }}
                   />
                 </label>
                 {photoError && (
                   <p role="alert" className="mb-2 text-sm font-semibold text-rose-700 dark:text-rose-300">{photoError}</p>
+                )}
+
+                {photos.length > 0 && (
+                  <ul className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="med-photo-list">
+                    {photos.map((url) => {
+                      const isMain = imageUrl === url;
+                      return (
+                        <li key={url} className={`rounded-xl border-2 p-1.5 ${isMain ? "border-amber-500" : "border-slate-200 dark:border-slate-700"}`}>
+                          <img src={url} alt="" className="mb-1.5 h-20 w-full rounded-lg object-cover" />
+                          {isMain ? (
+                            <p className="mb-1 text-center text-xs font-bold text-amber-800 dark:text-amber-300">
+                              {locale === "ar" ? "الصورة الرئيسية" : "Main photo"}
+                            </p>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setImageUrl(url)}
+                              className="mb-1 min-h-11 w-full rounded-lg bg-amber-50 text-xs font-bold text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+                            >
+                              {locale === "ar" ? "اجعلها الرئيسية" : "Make it the main one"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const rest = photos.filter((p) => p !== url);
+                              setPhotos(rest);
+                              if (isMain) setImageUrl(rest[0] || "/meds/pill-default.svg");
+                            }}
+                            className="min-h-11 w-full rounded-lg border border-slate-200 text-xs font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200"
+                          >
+                            {locale === "ar" ? "احذف" : "Remove"}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
 
                 {/* Custom URL input */}

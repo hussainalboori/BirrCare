@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS medications (
     days_of_week TEXT DEFAULT '["sun","mon","tue","wed","thu","fri","sat"]',
     slot_times TEXT DEFAULT '{"morning":"08:00","afternoon":"14:00","evening":"20:00","bedtime":"22:30","night":"02:00"}',
     image_url TEXT,
+    photo_urls TEXT NOT NULL DEFAULT '[]', -- every uploaded photo (box, back, pill); image_url is the main one
     is_prn INTEGER NOT NULL DEFAULT 0,
     prn_min_hours REAL,
     prn_max_per_24h INTEGER,
@@ -1110,6 +1111,20 @@ func Migrate(database *sql.DB) error {
 		`
 		if _, err := database.Exec(migrationSQL); err != nil {
 			return fmt.Errorf("failed migrating handover_notes table: %w", err)
+		}
+	}
+
+	// Several photos per medicine (box front, back, the pill): photo_urls. A
+	// medicine that already has an uploaded photo keeps it as the first one.
+	var photoCols int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = 'photo_urls'").Scan(&photoCols)
+	if photoCols == 0 {
+		if _, err := database.Exec(`ALTER TABLE medications ADD COLUMN photo_urls TEXT NOT NULL DEFAULT '[]'`); err != nil {
+			return fmt.Errorf("failed adding medications.photo_urls: %w", err)
+		}
+		if _, err := database.Exec(`UPDATE medications SET photo_urls = json_array(image_url)
+			WHERE image_url LIKE '/api/v1/medications/photos/%'`); err != nil {
+			return fmt.Errorf("failed copying medicine photos: %w", err)
 		}
 	}
 

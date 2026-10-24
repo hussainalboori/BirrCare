@@ -103,7 +103,7 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
-		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h
+		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]')
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -120,13 +120,14 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var isPRNInt int
 		var prnMinHours sql.NullFloat64
 		var prnMax24h sql.NullInt64
-		var slotsJSON string
+		var slotsJSON, photosJSON string
 		var createdAtStr string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON); err != nil {
 			continue
 		}
+		m.PhotoURLs = parsePhotoURLs(photosJSON)
 		m.IsPRN = isPRNInt == 1
 		if prnMinHours.Valid {
 			v := prnMinHours.Float64
@@ -182,6 +183,8 @@ type CreateMedicationRequest struct {
 	DaysOfWeek     []string          `json:"days_of_week,omitempty"`
 	SlotTimes      map[string]string `json:"slot_times,omitempty"`
 	ImageURL       string            `json:"image_url,omitempty"`
+	// PhotoURLs: every uploaded photo, at most maxMedPhotos; the main one goes in ImageURL.
+	PhotoURLs []string `json:"photo_urls,omitempty"`
 	// Doctor's minimum hours between doses; omitted/null = automatic.
 	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report.
@@ -233,6 +236,15 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	photos, perr := validatePhotoURLs(req.PhotoURLs)
+	if perr != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_PHOTOS", perr.Error())
+		return
+	}
+	if req.ImageURL == "" && len(photos) > 0 {
+		req.ImageURL = photos[0]
+	}
+	photosJSON, _ := json.Marshal(photos)
 
 	days := req.DaysOfWeek
 	if len(days) == 0 {
@@ -271,9 +283,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -335,6 +347,8 @@ type UpdateMedicationRequest struct {
 	DaysOfWeek     []string          `json:"days_of_week,omitempty"`
 	SlotTimes      map[string]string `json:"slot_times,omitempty"`
 	ImageURL       string            `json:"image_url,omitempty"`
+	// PhotoURLs, when sent, replaces the whole list (nil = unchanged).
+	PhotoURLs *[]string `json:"photo_urls,omitempty"`
 	IsActive       *bool             `json:"is_active,omitempty"`
 	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
@@ -407,18 +421,19 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		DaysOfWeek      string
 		SlotTimes       string
 		ImageURL        string
+		PhotoURLs       string
 		MinHoursBetween sql.NullFloat64
 		IsCritical      bool
 		IsActive        bool
 	}
 	err = tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
-		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''),
+		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
 		       min_hours_between, is_critical, is_active
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&before.NameAr, &before.NameEn, &before.Dosage, &before.InstructionsAr, &before.InstructionsEn, &before.FrequencySlots,
-		&before.DaysOfWeek, &before.SlotTimes, &before.ImageURL,
+		&before.DaysOfWeek, &before.SlotTimes, &before.ImageURL, &before.PhotoURLs,
 		&before.MinHoursBetween, &before.IsCritical, &before.IsActive,
 	)
 	if err == sql.ErrNoRows {
@@ -445,6 +460,25 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		internalError(w, "failed to update medication", err)
 		return
+	}
+
+	// The photo list replaces the old one; the main photo is the one chosen,
+	// else the first photo, else none (a removed photo never stays the main one).
+	if req.PhotoURLs != nil {
+		photos, perr := validatePhotoURLs(*req.PhotoURLs)
+		if perr != nil {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_PHOTOS", perr.Error())
+			return
+		}
+		main := req.ImageURL
+		if main == "" && len(photos) > 0 {
+			main = photos[0]
+		}
+		photosJSON, _ := json.Marshal(photos)
+		if _, err := tx.Exec(`UPDATE medications SET photo_urls = ?, image_url = NULLIF(?, '') WHERE id = ?`, string(photosJSON), main, medID); err != nil {
+			internalError(w, "failed to update medicine photos", err)
+			return
+		}
 	}
 
 	if req.DaysOfWeek != nil && len(req.DaysOfWeek) > 0 {
@@ -539,18 +573,19 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		DaysOfWeek      string
 		SlotTimes       string
 		ImageURL        string
+		PhotoURLs       string
 		MinHoursBetween sql.NullFloat64
 		IsCritical      bool
 		IsActive        bool
 	}
 	if err := tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
-		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''),
+		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
 		       min_hours_between, is_critical, is_active
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&after.NameAr, &after.NameEn, &after.Dosage, &after.InstructionsAr, &after.InstructionsEn, &after.FrequencySlots,
-		&after.DaysOfWeek, &after.SlotTimes, &after.ImageURL,
+		&after.DaysOfWeek, &after.SlotTimes, &after.ImageURL, &after.PhotoURLs,
 		&after.MinHoursBetween, &after.IsCritical, &after.IsActive,
 	); err != nil {
 		internalError(w, "failed to query updated medication", err)
@@ -567,6 +602,7 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"days_of_week":    before.DaysOfWeek,
 		"slot_times":      before.SlotTimes,
 		"image_url":       before.ImageURL,
+		"photo_urls":      before.PhotoURLs,
 		"is_critical":     before.IsCritical,
 		"is_active":       before.IsActive,
 	}
@@ -584,6 +620,7 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"days_of_week":    after.DaysOfWeek,
 		"slot_times":      after.SlotTimes,
 		"image_url":       after.ImageURL,
+		"photo_urls":      after.PhotoURLs,
 		"is_critical":     after.IsCritical,
 		"is_active":       after.IsActive,
 	}
@@ -826,7 +863,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 
 	// 1. Fetch all active medications including days_of_week and slot_times
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0)
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0), COALESCE(photo_urls, '[]')
 		FROM medications WHERE is_active = 1
 	`)
 	if err != nil {
@@ -840,11 +877,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		var m models.Medication
 		var instAr, instEn, imgURL, daysJSON, timesJSON sql.NullString
 		var minHours sql.NullFloat64
-		var slotsJSON, createdAtStr string
+		var slotsJSON, createdAtStr, photosJSON string
 		var isPRN int
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours, &isPRN); err != nil {
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours, &isPRN, &photosJSON); err != nil {
 			continue
 		}
+		m.PhotoURLs = parsePhotoURLs(photosJSON)
 		if isPRN == 1 {
 			continue // PRN medications are rendered in their dedicated dashboard section
 		}
@@ -1470,4 +1508,37 @@ func (h *MedicationHandler) VoidDose(w http.ResponseWriter, r *http.Request) {
 		"log_id":    logID,
 		"voided_at": now.Format(time.RFC3339),
 	})
+}
+
+// maxMedPhotos: the box front and back, the leaflet, the pill… enough to
+// recognise it, small enough to show on a phone.
+const maxMedPhotos = 6
+
+// validatePhotoURLs keeps uploaded medicine photos only, without repeats.
+func validatePhotoURLs(urls []string) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, u := range urls {
+		name := strings.TrimPrefix(u, PhotoURLPrefix)
+		if name == u || !photoNameRe.MatchString(name) {
+			return nil, fmt.Errorf("photo %q was not uploaded to /medications/photos", u)
+		}
+		if !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	if len(out) > maxMedPhotos {
+		return nil, fmt.Errorf("at most %d photos per medicine", maxMedPhotos)
+	}
+	return out, nil
+}
+
+func parsePhotoURLs(s string) []string {
+	var out []string
+	_ = json.Unmarshal([]byte(s), &out)
+	if out == nil {
+		out = []string{}
+	}
+	return out
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { MedPhotoGallery, medPhotoList } from "@/components/MedPhotoGallery";
 import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { MedicationLog, ScheduledDose } from "@/lib/types";
@@ -306,6 +307,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const altName = locale === "ar" ? medication.name_en : medication.name_ar;
   const instructions = locale === "ar" ? medication.instructions_ar : medication.instructions_en;
   const pillImage = medication.image_url || "/meds/pill-default.svg";
+  const photos = medPhotoList(medication.image_url, medication.photo_urls);
 
   // Format timestamp for display (handles RFC3339 and raw SQLite UTC strings)
   const formattedTime = formatTime(log?.taken_at, locale);
@@ -376,6 +378,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
               <div className="absolute inset-0 bg-slate-900/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
                 <ZoomIn className="h-4 w-4 text-white drop-shadow" />
               </div>
+              {photos.length > 1 && (
+                <span className="absolute bottom-0.5 end-0.5 rounded-md bg-slate-900/80 px-1 text-xs font-bold text-white" data-testid="med-photo-count">
+                  {photos.length}
+                </span>
+              )}
             </button>
 
             <div className="flex-1 min-w-0">
@@ -889,16 +896,9 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
               <X className="h-5 w-5" />
             </button>
 
-            {/* Pill Image */}
-            <div className="mx-auto mb-4 flex h-44 w-44 items-center justify-center rounded-2xl bg-slate-50 dark:bg-slate-800/80 p-3 border border-slate-100 dark:border-slate-700 shadow-inner">
-              <img
-                src={pillImage}
-                alt={medName}
-                className="h-full w-full object-contain drop-shadow-md"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = "/meds/pill-default.svg";
-                }}
-              />
+            {/* Every photo: the main one first, then the box, the back, the pill… */}
+            <div className="pt-8">
+              <MedPhotoGallery photos={photos} alt={medName} ar={locale === "ar"} />
             </div>
 
             {/* Badges */}
