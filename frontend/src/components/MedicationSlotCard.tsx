@@ -356,33 +356,38 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900"
         }`}
       >
-        <div className="flex items-start justify-between gap-3">
+        {/* On a phone the action goes under the name (full width), so a long
+            name like "أبيكسابان (إليكويس)" is not squeezed into a narrow column. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {/* Pill Thumbnail & Info */}
           <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Clickable Pill Photo Thumbnail */}
+            {/* Clickable photo, big enough to see, with the word "Enlarge" under it */}
             <button
               type="button"
               onClick={() => setIsZoomOpen(true)}
-              title={locale === "ar" ? "اضغط لتكبير صورة الحبة والتحقق منها" : "Click to enlarge & verify pill appearance"}
               aria-label={locale === "ar" ? `تكبير صورة ${medName}` : `Enlarge ${medName} photo`}
-              className="group relative shrink-0 h-13 w-13 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-1 overflow-hidden transition-all hover:scale-105 active:scale-95 hover:border-emerald-400 dark:hover:border-emerald-500 shadow-2xs"
+              data-testid="med-photo-thumb"
+              className="group relative flex w-18 shrink-0 flex-col items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-2xs transition-all hover:border-emerald-400 active:scale-95 dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-emerald-500"
             >
-              <img
-                src={pillImage}
-                alt=""
-                className="h-full w-full object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = "/meds/pill-default.svg";
-                }}
-              />
-              <div className="absolute inset-0 bg-slate-900/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                <ZoomIn className="h-4 w-4 text-white drop-shadow" />
-              </div>
-              {photos.length > 1 && (
-                <span className="absolute bottom-0.5 end-0.5 rounded-md bg-slate-900/80 px-1 text-xs font-bold text-white" data-testid="med-photo-count">
-                  {photos.length}
-                </span>
-              )}
+              <span className="relative block h-16 w-full overflow-hidden rounded-lg">
+                <img
+                  src={pillImage}
+                  alt=""
+                  className="h-full w-full object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = "/meds/pill-default.svg";
+                  }}
+                />
+                {photos.length > 1 && (
+                  <span className="absolute bottom-0.5 end-0.5 rounded-md bg-slate-900/80 px-1 text-xs font-bold text-white" data-testid="med-photo-count">
+                    {photos.length}
+                  </span>
+                )}
+              </span>
+              <span className="flex items-center gap-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                <ZoomIn className="h-3.5 w-3.5" />
+                {locale === "ar" ? "كبّر" : "Enlarge"}
+              </span>
             </button>
 
             <div className="flex-1 min-w-0">
@@ -432,9 +437,9 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
           </div>
 
           {/* Action Button / Double-Dose Locked Badge */}
-          <div className="shrink-0">
+          <div className="w-full sm:w-auto sm:shrink-0">
             {queued ? (
-              <div role="status" data-testid="dose-queued" className="flex max-w-44 flex-col items-end gap-1">
+              <div role="status" data-testid="dose-queued" className="flex flex-col items-stretch gap-1 sm:max-w-44 sm:items-end">
                 <span className="rounded-xl border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
                   {ar ? "محفوظة على هذا الهاتف — لم تُرسل بعد" : "Saved on this phone — not sent yet"}
                 </span>
@@ -467,7 +472,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 onClick={() => handleLogDose()}
                 disabled={isSubmitting}
                 aria-busy={isSubmitting}
-                className={`flex min-h-12 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all active:scale-95 shadow-sm ${
+                className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all active:scale-95 shadow-sm sm:w-auto ${
                   isSubmitting
                     ? "bg-slate-300 text-slate-600 cursor-not-allowed dark:bg-slate-700 dark:text-slate-300"
                     : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"

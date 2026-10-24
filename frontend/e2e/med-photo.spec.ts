@@ -145,4 +145,46 @@ test("ar: the dose card opens every photo with Next / Previous", async ({ page, 
   await gallery.getByRole("button", { name: "السابقة" }).click();
   await expect(gallery).toContainText("3 من 3");
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+
+  // Full screen: the photo fills the screen and zooms in to read the box.
+  await gallery.getByRole("button", { name: "ملء الشاشة", exact: true }).click();
+  const full = page.getByTestId("med-photo-fullscreen");
+  const box = await full.boundingBox();
+  expect(box?.width).toBe(375);
+  expect(box?.height).toBe(844);
+  await expect(full).toContainText("3 من 3");
+  const img = full.locator("img");
+  const before = (await img.boundingBox())!.width;
+  await full.getByRole("button", { name: "تكبير", exact: true }).click();
+  await full.getByRole("button", { name: "تكبير", exact: true }).click();
+  expect((await img.boundingBox())!.width).toBeGreaterThan(before * 2.5);
+  await full.getByRole("button", { name: "تصغير" }).click();
+  await full.getByRole("button", { name: "التالية" }).click();
+  await expect(full).toContainText("1 من 3");
+  await full.getByRole("button", { name: "إغلاق" }).click();
+  await expect(full).toHaveCount(0);
+  // Back in the card's pop-up, still open.
+  await expect(gallery).toBeVisible();
+});
+
+test("the card thumbnail is big and says Enlarge", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 844 });
+  await page.context().addCookies([{ name: "birrcare_lang", value: "en", url: baseURL! }]);
+  const med = { id: "m1", name_ar: "إليكويس", name_en: "Eliquis", dosage: "5 mg", frequency_slots: ["morning"], image_url: photoUrl(1), photo_urls: [photoUrl(1)], is_active: true, created_at: "2026-10-01T00:00:00Z" };
+  await page.route("**/api/v1/**", async (route) => {
+    const p = new URL(route.request().url()).pathname.replace(/^\/api\/v1/, "");
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+    if (p.startsWith("/events/stream")) return route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: connected\ndata: {}\n\n" });
+    if (p === "/auth/me") return json({ id: "c1", name: "Hussain", role: "caregiver", avatar_color: "#059669", preferred_lang: "en", is_active: true, created_at: "2026-10-01T00:00:00Z" });
+    if (p.startsWith("/medications/photos/")) return route.fulfill({ status: 200, contentType: "image/jpeg", body: TINY_JPEG });
+    if (p.startsWith("/medications/schedule")) return json({ date: "2026-10-21", schedule: [{ slot: "morning", medication: med }] });
+    return json([]);
+  });
+  await page.goto("/");
+  const thumb = page.getByTestId("med-photo-thumb").first();
+  await expect(thumb).toContainText("Enlarge");
+  expect((await thumb.boundingBox())!.width).toBeGreaterThanOrEqual(64);
+  await thumb.click();
+  await expect(page.getByTestId("med-photo-gallery")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });
