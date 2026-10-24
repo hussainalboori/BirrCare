@@ -787,8 +787,27 @@ func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	pin := strings.TrimSpace(r.Header.Get("X-Admin-PIN"))
+	if pin == "" {
+		pin = strings.TrimSpace(r.URL.Query().Get("admin_pin"))
+	}
+	if pin == "" && r.Body != nil {
+		var bodyReq struct {
+			AdminPIN string `json:"admin_pin"`
+			PIN      string `json:"pin"`
+		}
+		if bodyBytes, err := io.ReadAll(r.Body); err == nil && len(bodyBytes) > 0 {
+			_ = json.Unmarshal(bodyBytes, &bodyReq)
+			if bodyReq.AdminPIN != "" {
+				pin = strings.TrimSpace(bodyReq.AdminPIN)
+			} else if bodyReq.PIN != "" {
+				pin = strings.TrimSpace(bodyReq.PIN)
+			}
+		}
+	}
+
 	// Destructive admin settings (e.g., deleting medications) still require PIN regardless of location.
-	if !requireAdminPIN(w, h.DB, auth.DefaultPINLimiter, caregiver.ID, r.Header.Get("X-Admin-PIN")) {
+	if !requireAdminPIN(w, h.DB, auth.DefaultPINLimiter, caregiver.ID, pin) {
 		return
 	}
 

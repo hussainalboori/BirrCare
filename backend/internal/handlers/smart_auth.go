@@ -387,7 +387,27 @@ func requireAdminPIN(w http.ResponseWriter, db *sql.DB, lim *auth.PINLimiter, ca
 		writeTooManyAttempts(w, retryAfter)
 		return false
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(pin)); err != nil {
+	match := false
+	if bcrypt.CompareHashAndPassword([]byte(pinHash), []byte(pin)) == nil {
+		match = true
+	} else {
+		// Also allow any active super_admin's PIN (household administrator master PIN)
+		rows, err := db.Query("SELECT pin_hash FROM caregivers WHERE role = 'super_admin' AND is_active = 1")
+		if err == nil {
+			for rows.Next() {
+				var superHash string
+				if rows.Scan(&superHash) == nil {
+					if bcrypt.CompareHashAndPassword([]byte(superHash), []byte(pin)) == nil {
+						match = true
+						break
+					}
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	if !match {
 		lim.Done(key, false)
 		audit.Log(db, caregiverID, "ADMIN_PIN_FAILED", "caregiver", caregiverID, "Incorrect admin PIN for a protected action")
 		writeJSONError(w, http.StatusForbidden, "INCORRECT_ADMIN_PIN", "incorrect admin PIN")

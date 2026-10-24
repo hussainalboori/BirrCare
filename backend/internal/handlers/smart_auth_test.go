@@ -5,8 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"birrcare/backend/internal/auth"
@@ -401,16 +404,21 @@ func TestVerifyAdminPIN(t *testing.T) {
 func TestDeleteMedicationRequiresAdminPIN(t *testing.T) {
 	database, broker, cleanup := setupSmartAuthTestDB(t)
 	defer cleanup()
+	createTestCaregiver(t, database, "super1", "Super Admin", "super_admin", "8888")
 	createTestCaregiver(t, database, "admin1", "Admin Sarah", "admin", "1234")
 	medH := &handlers.MedicationHandler{DB: database, Broker: broker}
 	admin := &models.Caregiver{ID: "admin1", Name: "Admin Sarah", Role: "admin"}
 
-	del := func(pin string) int {
+	del := func(headerPin, bodyPin string) int {
 		rc := chi.NewRouteContext()
 		rc.URLParams.Add("id", "no-such-med")
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/medications/no-such-med", nil)
-		if pin != "" {
-			req.Header.Set("X-Admin-PIN", pin)
+		var body io.Reader
+		if bodyPin != "" {
+			body = strings.NewReader(fmt.Sprintf(`{"admin_pin":%q}`, bodyPin))
+		}
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/medications/no-such-med", body)
+		if headerPin != "" {
+			req.Header.Set("X-Admin-PIN", headerPin)
 		}
 		ctx := context.WithValue(context.WithValue(req.Context(), auth.CaregiverContextKey, admin), chi.RouteCtxKey, rc)
 		rec := httptest.NewRecorder()
@@ -418,13 +426,19 @@ func TestDeleteMedicationRequiresAdminPIN(t *testing.T) {
 		return rec.Code
 	}
 
-	if code := del(""); code != http.StatusForbidden {
+	if code := del("", ""); code != http.StatusForbidden {
 		t.Errorf("no PIN: expected 403, got %d", code)
 	}
-	if code := del("9999"); code != http.StatusForbidden {
+	if code := del("9999", ""); code != http.StatusForbidden {
 		t.Errorf("wrong PIN: expected 403, got %d", code)
 	}
-	if code := del("1234"); code == http.StatusForbidden {
-		t.Errorf("correct PIN must pass the PIN check, got %d", code)
+	if code := del("1234", ""); code == http.StatusForbidden {
+		t.Errorf("correct admin PIN in header must pass PIN check, got %d", code)
+	}
+	if code := del("", "1234"); code == http.StatusForbidden {
+		t.Errorf("correct admin PIN in body must pass PIN check, got %d", code)
+	}
+	if code := del("8888", ""); code == http.StatusForbidden {
+		t.Errorf("super admin PIN in header must pass PIN check, got %d", code)
 	}
 }

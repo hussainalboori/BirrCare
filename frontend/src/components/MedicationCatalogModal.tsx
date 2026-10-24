@@ -108,6 +108,12 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     night: "02:00",
   });
 
+  // Deletion state: in-page confirmation with admin PIN (no window.prompt/confirm/alert)
+  const [medToDelete, setMedToDelete] = useState<Medication | null>(null);
+  const [adminPin, setAdminPin] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const loadMeds = async () => {
     setLoading(true);
     setError(null);
@@ -289,28 +295,49 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     }
   };
 
-  const handleDeleteMedication = async (med: Medication) => {
-    const medName = locale === "ar" ? med.name_ar : med.name_en;
-    if (!confirm(locale === "ar" ? `هل تريد تعطيل دواء ${medName}؟` : `Deactivate ${medName}?`)) return;
+  const handleOpenDelete = (med: Medication) => {
+    setMedToDelete(med);
+    setAdminPin("");
+    setDeleteError(null);
+  };
 
-    // Destructive Admin Settings Guard:
-    // Prompt for admin PIN to protect against accidental medication deletion on shared/unlocked bedside tablets.
-    const pin = window.prompt(
-      locale === "ar"
-        ? `لحماية سلامة المريض، يرجى إدخال الرمز السري للمشرف لتعطيل ${medName}:`
-        : `For patient safety, please enter your Admin PIN to deactivate ${medName}:`
-    );
-    if (!pin) return;
+  const handleConfirmDelete = async () => {
+    if (!medToDelete) return;
+    const trimmedPin = adminPin.trim();
+    if (!trimmedPin) {
+      setDeleteError(
+        locale === "ar"
+          ? "يرجى إدخال الرمز السري للمشرف للمتابعة"
+          : "Please enter your admin PIN to continue"
+      );
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteError(null);
 
     try {
-      await fetchApi(`/medications/${med.id}`, {
+      await fetchApi(`/medications/${medToDelete.id}`, {
         method: "DELETE",
-        headers: { "X-Admin-PIN": pin },
+        headers: { "X-Admin-PIN": trimmedPin },
+        body: JSON.stringify({ admin_pin: trimmedPin, pin: trimmedPin }),
       });
+      setMedToDelete(null);
+      setAdminPin("");
+      if (editingMed?.id === medToDelete.id) {
+        setShowForm(false);
+        setEditingMed(null);
+      }
       await loadMeds();
       onUpdated?.();
     } catch (err: any) {
-      alert(err.message || (locale === "ar" ? "فشل التعطيل: الرمز السري غير صحيح" : "Failed to deactivate: Invalid PIN"));
+      const msg =
+        err.data?.message ||
+        err.message ||
+        (locale === "ar" ? "فشل التعطيل: الرمز السري غير صحيح" : "Failed to deactivate: Invalid PIN");
+      setDeleteError(msg);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -868,25 +895,39 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
               </div>
 
               {/* ACTIONS */}
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditingMed(null);
-                  }}
-                  className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
-                  {locale === "ar" ? "إلغاء" : "Cancel"}
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex items-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 px-4 py-2 text-xs font-bold text-white shadow-sm active:scale-95 disabled:opacity-50"
-                >
-                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  <span>{locale === "ar" ? "حفظ الدواء" : "Save Prescription"}</span>
-                </button>
+              <div className="flex items-center justify-between gap-2">
+                {editingMed ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDelete(editingMed)}
+                    className="flex min-h-12 items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/40 transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    <span>{locale === "ar" ? "تعطيل هذا الدواء" : "Deactivate Medication"}</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForm(false);
+                      setEditingMed(null);
+                    }}
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {locale === "ar" ? "إلغاء" : "Cancel"}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="flex items-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 px-4 py-2 text-xs font-bold text-white shadow-sm active:scale-95 disabled:opacity-50"
+                  >
+                    {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    <span>{locale === "ar" ? "حفظ الدواء" : "Save Prescription"}</span>
+                  </button>
+                </div>
               </div>
             </form>
           )}
@@ -997,7 +1038,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                         <Edit2 className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => handleDeleteMedication(med)}
+                        onClick={() => handleOpenDelete(med)}
                         title={locale === "ar" ? "تعطيل الدواء" : "Deactivate Prescription"}
                         aria-label={locale === "ar" ? "تعطيل الدواء" : "Deactivate Prescription"}
                         className="flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-300 hover:text-rose-600 dark:border-slate-700 dark:hover:text-rose-400 transition-colors"
@@ -1012,6 +1053,92 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
           )}
         </div>
       </div>
+
+      {/* In-page Admin PIN Confirmation Modal for Medication Deactivation */}
+      {medToDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  {locale === "ar" ? "تأكيد تعطيل الدواء" : "Confirm Deactivation"}
+                </h4>
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {locale === "ar" ? medToDelete.name_ar : medToDelete.name_en}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+              {locale === "ar"
+                ? "لحماية الوالد وتفادي الإيقاف العرضي، يرجى إدخال الرمز السري للمشرف لتعطيل هذا الدواء. سيتوقف ظهوره في جدول الجرعات اليومي مع الاحتفاظ بسجل الجرعات السابقة."
+                : "For patient safety against accidental taps, please enter your Admin PIN to deactivate this medication. It will be removed from future schedules while keeping dose history intact."}
+            </p>
+
+            <div className="space-y-1.5 mb-4">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                {locale === "ar" ? "الرمز السري للمشرف (PIN)" : "Admin PIN"}
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={8}
+                autoFocus
+                value={adminPin}
+                onChange={(e) => {
+                  setAdminPin(e.target.value);
+                  setDeleteError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleConfirmDelete();
+                  }
+                }}
+                placeholder="••••"
+                className="w-full min-h-12 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-base text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-rose-500 focus:outline-hidden focus:ring-1 focus:ring-rose-500 text-center tracking-widest font-mono"
+              />
+              {deleteError && (
+                <p className="text-xs font-medium text-rose-600 dark:text-rose-400 mt-1">
+                  {deleteError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMedToDelete(null);
+                  setAdminPin("");
+                  setDeleteError(null);
+                }}
+                disabled={deleting}
+                className="min-h-12 rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+              >
+                {locale === "ar" ? "إلغاء" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="flex min-h-12 items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-bold text-white shadow-sm disabled:opacity-50 transition-colors"
+              >
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                <span>{locale === "ar" ? "تعطيل الدواء" : "Deactivate"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
