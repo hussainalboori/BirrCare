@@ -7,6 +7,7 @@ import { fetchApi } from "@/lib/api";
 import { Ltr } from "./Ltr";
 import { X, Plus, Trash2, Loader2, AlertTriangle, Pencil, Clock, Check } from "lucide-react";
 import { autoIntervalHours } from "@/lib/clinical";
+import { parseNumberInput } from "@/lib/numbers";
 
 interface RowDraft {
   min: string;
@@ -76,7 +77,7 @@ const fromPlan = (p: InsulinPlan): Draft => {
   };
 };
 
-const num = (s: string) => (s.trim() === "" ? NaN : Number(s.replace(",", ".")));
+const num = (s: string) => parseNumberInput(s);
 
 interface Props {
   plans: InsulinPlan[];

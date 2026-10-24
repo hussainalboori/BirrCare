@@ -6,6 +6,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
 import { canManageMedications, canTakeActions } from "@/lib/permissions";
 import { formatTime, parseServerTime } from "@/lib/datetime";
+import { parseNumberInput } from "@/lib/numbers";
 import type { VitalsLog } from "@/lib/types";
 import { Ltr } from "./Ltr";
 import { Pencil } from "lucide-react";
@@ -88,11 +89,11 @@ export function CorrectVital({ vital, onDone }: { vital: VitalsLog; onDone: () =
         method: "POST",
         body: JSON.stringify({
           vital_type: vital.vital_type,
-          ...(hasBP ? { systolic: Number(sys), diastolic: Number(dia) } : {}),
-          ...(pulse.trim() ? { pulse: Number(pulse) } : {}),
-          ...(hasSugar && sugar.trim() ? { blood_sugar: Number(sugar) } : {}),
-          ...(hasSpO2 && spo2.trim() ? { spo2: Number(spo2) } : {}),
-          ...(hasTemp && tempC.trim() ? { temperature_c: Number(tempC) } : {}),
+          ...(hasBP ? { systolic: parseNumberInput(sys), diastolic: parseNumberInput(dia) } : {}),
+          ...(pulse.trim() ? { pulse: parseNumberInput(pulse) } : {}),
+          ...(hasSugar && sugar.trim() ? { blood_sugar: parseNumberInput(sugar) } : {}),
+          ...(hasSpO2 && spo2.trim() ? { spo2: parseNumberInput(spo2) } : {}),
+          ...(hasTemp && tempC.trim() ? { temperature_c: parseNumberInput(tempC) } : {}),
           ...(vital.alertness_level ? { alertness_level: vital.alertness_level } : {}),
           reason,
         }),

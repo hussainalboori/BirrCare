@@ -8,6 +8,7 @@ import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
 import { canManageMedications, canTakeActions, isViewer } from "@/lib/permissions";
 import { HYPO_THRESHOLD, lookupInsulinScale } from "@/lib/clinical";
+import { parseNumberInput } from "@/lib/numbers";
 import { formatTime, formatShortDate, parseServerTime } from "@/lib/datetime";
 import { BloodSugarBadge } from "./BloodSugarBadge";
 import { CrisisActions } from "./CrisisActions";
@@ -45,7 +46,7 @@ interface Props {
 export function InsulinPlanCard({ status, onLogged }: Props) {
   const { locale } = useLanguage();
   const { currentCaregiver, openPinModal } = useCaregiver();
-  const { plan, last_given, next_allowed_at, recent } = status;
+  const { plan, last_given, next_allowed_at, recent = [] } = status;
   const ar = locale === "ar";
 
   const [sugarStr, setSugarStr] = useState("");
@@ -82,7 +83,7 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
 
   const name = ar ? plan.name_ar : plan.name_en;
   const notes = ar ? plan.notes_ar : plan.notes_en;
-  const sugar = sugarStr.trim() === "" ? NaN : Number(sugarStr.replace(",", "."));
+  const sugar = parseNumberInput(sugarStr);
   const hasSugar = Number.isFinite(sugar) && sugar >= 1 && sugar <= 45;
   const isHypo = hasSugar && sugar < HYPO_THRESHOLD;
   const expected: number | null =

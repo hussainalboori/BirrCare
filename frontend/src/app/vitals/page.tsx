@@ -22,6 +22,7 @@ import { VitalsLog, AlertnessLevel, VitalKind } from "@/lib/types";
 import { ALERTNESS_METAS, classifyBloodPressure, classifyBloodSugar, BloodSugarTiming } from "@/lib/clinical";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { parseNumberInput } from "@/lib/numbers";
 import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import {
@@ -216,7 +217,7 @@ export default function VitalsPage() {
     const kind = selectedKind || "full";
 
     if (kind === "bp" || kind === "full") {
-      const sys = Number(systolic), dia = Number(diastolic), pul = Number(pulse);
+      const sys = parseNumberInput(systolic), dia = parseNumberInput(diastolic), pul = parseNumberInput(pulse);
       const inRange = (v: number, lo: number, hi: number) => Number.isInteger(v) && v >= lo && v <= hi;
       // Pulse is optional: in a crisis nobody should be stopped for not counting it.
       if (!inRange(sys, 50, 300) || !inRange(dia, 30, 200) || dia >= sys || (pulse.trim() !== "" && !inRange(pul, 30, 220))) {
@@ -232,8 +233,8 @@ export default function VitalsPage() {
     }
 
     // Issue #22: oxygen and temperature, when entered.
-    const spo2Val = spo2.trim() === "" ? undefined : Number(spo2);
-    const tempVal = tempC.trim() === "" ? undefined : Number(tempC);
+    const spo2Val = spo2.trim() === "" ? undefined : parseNumberInput(spo2);
+    const tempVal = tempC.trim() === "" ? undefined : parseNumberInput(tempC);
     if ((kind === "spo2" && spo2Val === undefined) || (kind === "temp" && tempVal === undefined)) {
       alert(locale === "ar" ? "أدخل القراءة أولاً" : "Enter the reading first");
       return;
@@ -241,7 +242,7 @@ export default function VitalsPage() {
     if (
       (spo2Val !== undefined && (!Number.isInteger(spo2Val) || spo2Val < 50 || spo2Val > 100)) ||
       (tempVal !== undefined && (isNaN(tempVal) || tempVal < 30 || tempVal > 43)) ||
-      (kind === "spo2" && pulse.trim() !== "" && !(Number.isInteger(Number(pulse)) && Number(pulse) >= 30 && Number(pulse) <= 220))
+      (kind === "spo2" && pulse.trim() !== "" && !(Number.isInteger(parseNumberInput(pulse)) && parseNumberInput(pulse) >= 30 && parseNumberInput(pulse) <= 220))
     ) {
       alert(
         locale === "ar"
@@ -255,7 +256,7 @@ export default function VitalsPage() {
     setIsSubmitting(true);
 
     try {
-      const sugarVal = bloodSugar.trim() ? parseFloat(bloodSugar) : undefined;
+      const sugarVal = bloodSugar.trim() ? parseNumberInput(bloodSugar) : undefined;
       const combinedNotes =
         (kind === "sugar" || kind === "full") && sugarTiming !== "random" && sugarVal
           ? `[${sugarTiming === "fasting" ? (locale === "ar" ? "صائم" : "Fasting") : (locale === "ar" ? "بعد الأكل" : "Post-meal")}] ${notes.trim()}`
@@ -267,9 +268,9 @@ export default function VitalsPage() {
       };
 
       if (kind === "bp") {
-        payload.systolic = Number(systolic);
-        payload.diastolic = Number(diastolic);
-        if (pulse.trim() !== "") payload.pulse = Number(pulse);
+        payload.systolic = parseNumberInput(systolic);
+        payload.diastolic = parseNumberInput(diastolic);
+        if (pulse.trim() !== "") payload.pulse = parseNumberInput(pulse);
       } else if (kind === "sugar") {
         if (!sugarVal || isNaN(sugarVal)) {
           alert(locale === "ar" ? "يرجى إدخال قيمة صحيحة لسكر الدم" : "Please enter a valid blood sugar reading");
@@ -284,13 +285,13 @@ export default function VitalsPage() {
         payload.alertness_level = alertness;
       } else if (kind === "spo2") {
         payload.spo2 = spo2Val;
-        if (pulse.trim() !== "") payload.pulse = Number(pulse);
+        if (pulse.trim() !== "") payload.pulse = parseNumberInput(pulse);
       } else if (kind === "temp") {
         payload.temperature_c = tempVal;
       } else if (kind === "full") {
-        payload.systolic = Number(systolic);
-        payload.diastolic = Number(diastolic);
-        if (pulse.trim() !== "") payload.pulse = Number(pulse);
+        payload.systolic = parseNumberInput(systolic);
+        payload.diastolic = parseNumberInput(diastolic);
+        if (pulse.trim() !== "") payload.pulse = parseNumberInput(pulse);
         if (spo2Val !== undefined) payload.spo2 = spo2Val;
         if (tempVal !== undefined) payload.temperature_c = tempVal;
         // Only what was actually measured / tapped: no sugar or alertness is invented.
