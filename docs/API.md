@@ -381,6 +381,35 @@ Evaluates whether a patient has been in the same position for over 2 hours and i
 
 ---
 
+## Bruises & Bleeding Signs
+
+For a patient on a blood thinner. Bleeding signs alert every sibling (alert kind `bleeding`, push "Bleeding sign reported").
+
+### `GET /api/v1/bruises?days=30`
+The last 1–365 days (default 30), newest first.
+
+### `POST /api/v1/bruises`
+```json
+{
+  "body_part": "arm_left",
+  "size": "medium",
+  "change": "new",
+  "bleeding_signs": ["gums"],
+  "photo_url": "/api/v1/bruises/photos/<uuid>.jpg",
+  "notes": "Bumped the door",
+  "client_request_id": "…"
+}
+```
+- **body_part:** `arm_left`, `arm_right`, `hand_left`, `hand_right`, `leg_left`, `leg_right`, `belly`, `chest`, `back`, `face_head`, `other`.
+- **size:** `small` (coin), `medium` (palm), `large`. **change:** `new`, `same`, `bigger`, `smaller`.
+- **bleeding_signs:** `gums`, `nose`, `urine`, `stool`, `vomit`, `head_knock`, `cut_wont_stop`.
+- A body part or at least one bleeding sign is required (`EMPTY_REPORT`). Viewers get `403`.
+
+### `POST /api/v1/bruises/photos` & `GET /api/v1/bruises/photos/{name}`
+Upload the photo first (JPEG/PNG body, as for medicine photos); it is re-saved as a JPEG without phone metadata in `data/photos/bruises/` and served to signed-in caregivers only.
+
+---
+
 ## Insulin Tracking
 
 ### `GET /api/v1/insulin/plans`, `POST /api/v1/insulin/plans` & `PUT /api/v1/insulin/plans/{id}` (Admin)
@@ -407,6 +436,8 @@ Records an insulin administration:
 ## Shift Coordination & Handover Notes
 
 ### `GET /api/v1/handovers` & `POST /api/v1/handovers`
+`GET` returns the latest notes (`?limit=`, default 20), or with `?date=YYYY-MM-DD` every note of that household day (the Report page). Reports sent from the Report page are notes with `"shift_type": "report"`; any number can be sent per day.
+
 Logs shift handover summaries with structured status tags:
 ```json
 {

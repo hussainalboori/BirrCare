@@ -502,3 +502,18 @@ export interface PRNExportLog {
   caregiver_name: string;
 }
 
+
+/** A bruise or bleeding sign (patient on a blood thinner). */
+export interface BruiseLog {
+  id: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  created_at: string;
+  body_part?: string;
+  size?: string;
+  change?: string;
+  bleeding_signs: string[];
+  photo_url?: string;
+  notes?: string;
+}

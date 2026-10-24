@@ -14,6 +14,7 @@ import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { tagLabel } from "@/lib/handoverTags";
+import { bleedingAdvice, bleedingLabel } from "@/lib/bruises";
 import { daysLeftText } from "@/lib/stockText";
 import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft } from "lucide-react";
 
@@ -28,7 +29,7 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding";
   created_by_name?: string;
   payload: Record<string, unknown>;
   created_at: string;
@@ -244,6 +245,13 @@ export function AlertCenter() {
         title = ar ? "لم تُحفظ نسخة احتياطية منذ أكثر من يوم" : "No off-site backup for more than a day";
         advice = ar ? "افتح القائمة ← الخادم لمعرفة السبب." : "Open Menu → Server to see why.";
       }
+      break;
+    }
+    case "bleeding": {
+      // A bleeding sign was reported (patient on a blood thinner).
+      const signs = Array.isArray(p.bleeding_signs) ? (p.bleeding_signs as string[]) : [];
+      title = <>{ar ? "علامة نزيف" : "Bleeding sign"}: {signs.map((s) => bleedingLabel(s, ar)).join(" · ")}</>;
+      advice = bleedingAdvice(signs, ar);
       break;
     }
     case "vomited":

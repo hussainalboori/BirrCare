@@ -123,6 +123,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "سوائل منخفضة اليوم — افتح رعاية بر"
 		}
 	}
+	if kind == "bleeding" {
+		body = "Bleeding sign reported — open Birrcare"
+		if ar {
+			body = "تم الإبلاغ عن علامة نزيف — افتح رعاية بر"
+		}
+	}
 	if kind == "bp_crisis" || kind == "bp_low" {
 		body = "Blood pressure alert — open Birrcare"
 		if ar {

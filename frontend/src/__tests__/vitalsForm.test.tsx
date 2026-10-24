@@ -10,7 +10,7 @@ vi.mock("@/context/LanguageContext", () => ({ useLanguage: () => ({ locale: "en"
 vi.mock("@/context/CaregiverContext", () => ({
   useCaregiver: () => ({ currentCaregiver: { id: "c1", name: "Hussain", role: "caregiver", avatar_color: "#059669" }, allCaregivers: [], openPinModal: () => {} }),
 }));
-vi.mock("@/hooks/useLiveSync", () => ({ useLiveSync: () => ({ status: "connected" }) }));
+vi.mock("@/hooks/useLiveSync", () => ({ useLiveSync: () => ({ status: "connected" }), RESYNC_EVENT: "birrcare:resync" }));
 vi.mock("@/components/CaregiverHeader", () => ({ CaregiverHeader: () => null }));
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));

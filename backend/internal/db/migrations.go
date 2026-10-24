@@ -107,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -278,6 +278,22 @@ CREATE TABLE IF NOT EXISTS care_events (
 
 CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
+
+-- Bruises and bleeding signs (she takes a strong blood thinner): where on the
+-- body, size, how it changes, an optional photo, and bleeding signs to watch.
+CREATE TABLE IF NOT EXISTS bruise_logs (
+    id TEXT PRIMARY KEY,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    body_part TEXT,
+    size TEXT CHECK (size IN ('small', 'medium', 'large')),
+    change TEXT CHECK (change IN ('new', 'same', 'bigger', 'smaller')),
+    bleeding_signs TEXT NOT NULL DEFAULT '[]',
+    photo_url TEXT,
+    notes TEXT,
+    client_request_id TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_bruise_logs_time ON bruise_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_plan ON insulin_logs(plan_id, given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_insulin_logs_date ON insulin_logs(given_at DESC);
 CREATE INDEX IF NOT EXISTS idx_med_logs_date ON medication_logs(scheduled_date);
@@ -890,6 +906,34 @@ func Migrate(database *sql.DB) error {
 			PRAGMA foreign_keys = ON;
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts for backup_failed: %w", err)
+		}
+	}
+
+	// Migrate alerts for bleeding: a bleeding sign was reported (blood thinner).
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'bleeding'") {
+		log.Println("Migrating alerts: adding bleeding kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v10;
+			CREATE TABLE alerts_v10 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v10 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v10 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for bleeding: %w", err)
 		}
 	}
 

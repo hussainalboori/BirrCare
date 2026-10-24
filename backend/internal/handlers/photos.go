@@ -64,56 +64,13 @@ func (h *PhotoHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := io.ReadAll(r.Body) // capped by the router's body limit
-	if err != nil {
-		writeJSONError(w, http.StatusRequestEntityTooLarge, "PHOTO_TOO_LARGE", "photo is too large")
+	p, ok := savePhoto(w, r, h.Dir)
+	if !ok {
 		return
 	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || (format != "jpeg" && format != "png") {
-		writeJSONError(w, http.StatusBadRequest, "NOT_A_PHOTO", "send a JPEG or PNG photo")
-		return
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > maxPhotoPixels {
-		writeJSONError(w, http.StatusBadRequest, "PHOTO_TOO_BIG", "photo dimensions are too large")
-		return
-	}
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "NOT_A_PHOTO", "the photo could not be read")
-		return
-	}
+	name := p.Name
 
-	if err := os.MkdirAll(h.Dir, 0o755); err != nil {
-		internalError(w, "failed creating photo folder", err)
-		return
-	}
-	name := uuid.New().String() + ".jpg"
-	tmp, err := os.CreateTemp(h.Dir, ".upload-*")
-	if err != nil {
-		internalError(w, "failed saving photo", err)
-		return
-	}
-	if err := jpeg.Encode(tmp, img, &jpeg.Options{Quality: photoQuality}); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		internalError(w, "failed saving photo", err)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		internalError(w, "failed saving photo", err)
-		return
-	}
-	_ = os.Chmod(tmp.Name(), 0o644)
-	if err := os.Rename(tmp.Name(), filepath.Join(h.Dir, name)); err != nil {
-		os.Remove(tmp.Name())
-		internalError(w, "failed saving photo", err)
-		return
-	}
-
-	audit.Log(h.DB, me.ID, "UPLOAD_MED_PHOTO", "medication_photo", name,
-		fmt.Sprintf("%dx%d %s, %d bytes", cfg.Width, cfg.Height, format, len(data)))
+	audit.Log(h.DB, me.ID, "UPLOAD_MED_PHOTO", "medication_photo", name, p.describe())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -123,12 +80,17 @@ func (h *PhotoHandler) Upload(w http.ResponseWriter, r *http.Request) {
 // Serve: GET /medications/photos/{name}. Signed-in caregivers only; a photo
 // never changes under its name, so the phone may keep it.
 func (h *PhotoHandler) Serve(w http.ResponseWriter, r *http.Request) {
+	servePhoto(w, r, h.Dir)
+}
+
+// servePhoto sends {name} from dir (names are always "<uuid>.jpg").
+func servePhoto(w http.ResponseWriter, r *http.Request, dir string) {
 	name := chi.URLParam(r, "name")
 	if !photoNameRe.MatchString(name) {
 		http.NotFound(w, r)
 		return
 	}
-	f, err := os.Open(filepath.Join(h.Dir, name))
+	f, err := os.Open(filepath.Join(dir, name))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -137,4 +99,69 @@ func (h *PhotoHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	io.Copy(w, f)
+}
+
+type savedPhoto struct {
+	Name          string
+	Width, Height int
+	Format        string
+	Bytes         int
+}
+
+func (p savedPhoto) describe() string {
+	return fmt.Sprintf("%dx%d %s, %d bytes", p.Width, p.Height, p.Format, p.Bytes)
+}
+
+// savePhoto checks the request body is a real JPEG/PNG photo and stores it in
+// dir as a fresh JPEG (no phone metadata). On failure it has answered already.
+func savePhoto(w http.ResponseWriter, r *http.Request, dir string) (savedPhoto, bool) {
+	data, err := io.ReadAll(r.Body) // capped by the router's body limit
+	if err != nil {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "PHOTO_TOO_LARGE", "photo is too large")
+		return savedPhoto{}, false
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || (format != "jpeg" && format != "png") {
+		writeJSONError(w, http.StatusBadRequest, "NOT_A_PHOTO", "send a JPEG or PNG photo")
+		return savedPhoto{}, false
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > maxPhotoPixels {
+		writeJSONError(w, http.StatusBadRequest, "PHOTO_TOO_BIG", "photo dimensions are too large")
+		return savedPhoto{}, false
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "NOT_A_PHOTO", "the photo could not be read")
+		return savedPhoto{}, false
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		internalError(w, "failed creating photo folder", err)
+		return savedPhoto{}, false
+	}
+	name := uuid.New().String() + ".jpg"
+	tmp, err := os.CreateTemp(dir, ".upload-*")
+	if err != nil {
+		internalError(w, "failed saving photo", err)
+		return savedPhoto{}, false
+	}
+	if err := jpeg.Encode(tmp, img, &jpeg.Options{Quality: photoQuality}); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		internalError(w, "failed saving photo", err)
+		return savedPhoto{}, false
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		internalError(w, "failed saving photo", err)
+		return savedPhoto{}, false
+	}
+	_ = os.Chmod(tmp.Name(), 0o644)
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
+		os.Remove(tmp.Name())
+		internalError(w, "failed saving photo", err)
+		return savedPhoto{}, false
+	}
+
+	return savedPhoto{Name: name, Width: cfg.Width, Height: cfg.Height, Format: format, Bytes: len(data)}, true
 }

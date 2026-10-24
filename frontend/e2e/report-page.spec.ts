@@ -19,15 +19,17 @@ test("medicines page is medicines only; trackers are on Vitals & Tracker", async
   await page.setViewportSize({ width: 375, height: 800 });
   await open(page, baseURL!, "/");
   await expect(page.getByTestId("seems-off")).toBeVisible();
-  await expect(page.getByTestId("reposition-card")).toHaveCount(0);
+  await expect(page.getByTestId("bruise-card")).toHaveCount(0);
   await expect(page.getByTestId("fluid-bowel-card")).toHaveCount(0);
 
   const vitals = page.locator("nav").getByRole("link", { name: "المؤشرات والمتابعة" });
   await vitals.click();
   await expect(page).toHaveURL(/\/vitals$/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("المؤشرات والمتابعة");
-  await expect(page.getByTestId("reposition-card")).toBeVisible();
+  await expect(page.getByTestId("bruise-card")).toBeVisible();
   await expect(page.getByTestId("fluid-bowel-card")).toBeVisible();
+  // She walks and moves by herself: no repositioning timer.
+  await expect(page.getByTestId("reposition-card")).toHaveCount(0);
   await expect(vitals).toHaveAttribute("aria-current", "page");
 
   await page.locator("nav").getByRole("link", { name: "التقرير" }).click();

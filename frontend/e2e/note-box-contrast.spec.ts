@@ -17,7 +17,8 @@ for (const [path, label] of [["/handovers", "Extra note"], ["/vitals?quick=bp", 
       return json([]);
     });
     await page.goto(path);
-    const box = label ? page.getByRole("textbox", { name: label }) : page.locator("textarea").first();
+    // The reading form's note box (the bruise card below has its own).
+    const box = label ? page.getByRole("textbox", { name: label }) : page.getByPlaceholder(/^BP notes/);
     await box.click();
     await box.fill("She ate half her lunch");
     const c = await box.evaluate((el) => {

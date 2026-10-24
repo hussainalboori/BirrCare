@@ -67,6 +67,7 @@ func TestMessageIsGenericOnTheLockScreen(t *testing.T) {
 		"bp_low":        {"en": "Blood pressure alert — open Birrcare", "ar": "تنبيه ضغط الدم — افتح رعاية بر"},
 		"alertness":     {"en": "Health alert — open Birrcare", "ar": "تنبيه صحي — افتح رعاية بر"},
 		"fast_positive": {"en": "Health alert — open Birrcare", "ar": "تنبيه صحي — افتح رعاية بر"},
+		"bleeding":      {"en": "Bleeding sign reported — open Birrcare", "ar": "تم الإبلاغ عن علامة نزيف — افتح رعاية بر"},
 	}
 	for kind, langs := range cases {
 		for lang, body := range langs {

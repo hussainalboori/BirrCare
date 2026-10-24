@@ -48,3 +48,14 @@ export async function uploadMedicinePhoto(file: File): Promise<string> {
   });
   return res.image_url;
 }
+
+/** Uploads a bruise photo (kept private, like medicine photos) and returns its photo_url. */
+export async function uploadBruisePhoto(file: File): Promise<string> {
+  const blob = await shrinkPhoto(file);
+  const res = await fetchApi<{ photo_url: string }>("/bruises/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: blob,
+  });
+  return res.photo_url;
+}
