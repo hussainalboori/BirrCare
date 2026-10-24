@@ -8,12 +8,12 @@ import { canManageMedications, canTakeActions, isViewer } from "@/lib/permission
 import { firstName } from "@/lib/actor";
 import { TAG_CHOICES, isUrgentTag, tagLabel } from "@/lib/handoverTags";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
-import { formatTime, localDateString } from "@/lib/datetime";
+import { formatShortDate, formatTime, localDateString } from "@/lib/datetime";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
 import { VoiceNoteButton } from "@/components/VoiceNoteButton";
 import { Ltr } from "@/components/Ltr";
 import type { HandoverNote, SSEEvent } from "@/lib/types";
-import { AlertTriangle, ArrowRightLeft, Calendar, Check, ClipboardList, Loader2, Pencil, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Calendar, Check, ClipboardList, Clock, Loader2, Pencil, Send, Trash2, X } from "lucide-react";
 
 /** Notes sent from this page are stored as handover notes of this kind. */
 export const REPORT_KIND = "report";
@@ -525,8 +525,9 @@ export function DayReports() {
                   ) : (
                     <>
                       <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                        <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-sm font-black text-slate-900 dark:bg-slate-800 dark:text-white">
-                          <Ltr>{formatTime(n.created_at, locale)}</Ltr>
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-0.5 text-sm font-black text-slate-900 dark:bg-slate-800 dark:text-white">
+                          <Clock className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+                          <Ltr>{formatShortDate(n.created_at, locale)} • {formatTime(n.created_at, locale)}</Ltr>
                         </span>
                         <span
                           className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white"

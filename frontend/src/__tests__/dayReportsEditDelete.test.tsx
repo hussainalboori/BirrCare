@@ -58,6 +58,7 @@ describe("DayReports edit and delete", () => {
     await waitFor(() => {
       expect(screen.getByText("تعديل")).toBeTruthy();
       expect(screen.getByText("حذف")).toBeTruthy();
+      expect(screen.getByText(/24/)).toBeTruthy();
     });
   });
 
