@@ -6,7 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { HandoverNote, ShiftType, Shift, CurrentDutyStatus } from "@/lib/types";
-import { canTakeActions, isViewer } from "@/lib/permissions";
+import { canManageMedications, canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { firstName, saveAs } from "@/lib/actor";
 import { TAG_CHOICES, isUrgentTag, tagLabel } from "@/lib/handoverTags";
@@ -14,7 +14,7 @@ import { VoiceNoteButton } from "@/components/VoiceNoteButton";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
-import { ClipboardList, AlertTriangle, Clock, Send, Loader2, ArrowRightLeft, Check } from "lucide-react";
+import { ClipboardList, AlertTriangle, Clock, Send, Loader2, ArrowRightLeft, Check, Pencil, Trash2, X } from "lucide-react";
 
 export default function HandoversPage() {
   const { t, locale } = useLanguage();
@@ -38,6 +38,86 @@ export default function HandoversPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [passTo, setPassTo] = useState<string | null>(null);
   const tagUrgent = tags.some(isUrgentTag);
+
+  // Edit note state
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editTags, setEditTags] = useState<string[]>([]);
+  const [editSummary, setEditSummary] = useState<string>("");
+  const [editUrgentFlag, setEditUrgentFlag] = useState<boolean>(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  // Delete note state
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
+  const [deleteDeleting, setDeleteDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const startEdit = (n: HandoverNote) => {
+    setEditingNoteId(n.id);
+    setEditTags(n.tags ? [...n.tags] : []);
+    setEditSummary(n.summary || "");
+    setEditUrgentFlag(!!n.urgent_flag);
+    setEditError("");
+    setDeletingNoteId(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingNoteId(null);
+    setEditTags([]);
+    setEditSummary("");
+    setEditUrgentFlag(false);
+    setEditError("");
+  };
+
+  const saveEdit = async (id: string) => {
+    setEditError("");
+    if (!editSummary.trim() && editTags.length === 0) {
+      setEditError(ar ? "اختر شيئاً واحداً على الأقل أو اكتب ما حدث" : "Tap at least one item or write what happened");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await fetchApi(`/handovers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          summary: editSummary.trim(),
+          urgent_flag: editUrgentFlag || editTags.some(isUrgentTag),
+          tags: editTags,
+        }),
+      });
+      setEditingNoteId(null);
+      loadHandovers();
+    } catch (err) {
+      setEditError((err as Error).message || (ar ? "فشل حفظ التعديل" : "Failed to save changes"));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const startDelete = (id: string) => {
+    setDeletingNoteId(id);
+    setDeleteError("");
+    setEditingNoteId(null);
+  };
+
+  const cancelDelete = () => {
+    setDeletingNoteId(null);
+    setDeleteError("");
+  };
+
+  const confirmDelete = async (id: string) => {
+    setDeleteDeleting(true);
+    setDeleteError("");
+    try {
+      await fetchApi(`/handovers/${id}`, { method: "DELETE" });
+      setDeletingNoteId(null);
+      loadHandovers();
+    } catch (err) {
+      setDeleteError((err as Error).message || (ar ? "فشل حذف الملاحظة" : "Failed to delete note"));
+    } finally {
+      setDeleteDeleting(false);
+    }
+  };
 
   const loadHandovers = useCallback(async () => {
     try {
@@ -420,6 +500,13 @@ export default function HandoversPage() {
             notesList.map((note) => {
               const dateStr = formatShortDate(note.created_at, locale);
               const timeStr = formatTime(note.created_at, locale);
+              const canModify = Boolean(
+                currentCaregiver &&
+                canTakeActions(currentCaregiver.role) &&
+                (currentCaregiver.id === note.caregiver_id || canManageMedications(currentCaregiver.role))
+              );
+              const isEditing = editingNoteId === note.id;
+              const isDeleting = deletingNoteId === note.id;
 
               return (
                 <div
@@ -430,82 +517,249 @@ export default function HandoversPage() {
                       : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white shadow-xs"
-                        style={{ backgroundColor: note.avatar_color || "#059669" }}
-                      >
-                        {note.caregiver_name?.slice(0, 1)}
-                      </span>
-                      <span className="text-xs font-bold text-slate-900 dark:text-white">
-                        {note.caregiver_name}
-                      </span>
-                      {(() => {
-                        const matchedShift = activeShifts.find((s) => s.id === note.shift_type);
-                        const label = matchedShift
-                          ? `${locale === "ar" ? matchedShift.name_ar : matchedShift.name_en} (${matchedShift.start_time} - ${matchedShift.end_time})`
-                          : (t.shifts as Record<string, string>)[note.shift_type] || note.shift_type;
-                        return (
-                          <span
-                            className="rounded-md px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                            style={
-                              matchedShift?.color
-                                ? { borderInlineStart: `3px solid ${matchedShift.color}` }
-                                : undefined
-                            }
-                          >
-                            {label}
-                          </span>
-                        );
-                      })()}
-                    </div>
-
-                    <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <Clock className="h-3 w-3" />
-                      <Ltr>{dateStr} • {timeStr}</Ltr>
-                    </div>
-                  </div>
-
-                  {note.urgent_flag && (
-                    <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-0.5 text-xs font-bold text-white">
-                      <AlertTriangle className="h-3 w-3" />
-                      <span>{t.urgentFlag}</span>
-                    </div>
-                  )}
-
-                  {note.tags && note.tags.length > 0 && (
-                    <div className="mb-1.5 flex flex-wrap gap-1.5">
-                      {note.tags.map((k) => (
-                        <span
-                          key={k}
-                          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                            isUrgentTag(k) ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200" : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
-                          }`}
-                        >
-                          {tagLabel(k, ar)}
+                  {isEditing ? (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-900 dark:text-white">
+                          {ar ? "تعديل الملاحظة" : "Edit note"}
                         </span>
-                      ))}
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="inline-flex min-h-11 items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <X className="h-4 w-4" />
+                          <span>{ar ? "إلغاء" : "Cancel"}</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {TAG_CHOICES.map((tag) => {
+                          const on = editTags.includes(tag.key);
+                          return (
+                            <button
+                              type="button"
+                              key={tag.key}
+                              aria-pressed={on}
+                              onClick={() => setEditTags((prev) => (prev.includes(tag.key) ? prev.filter((k) => k !== tag.key) : [...prev, tag.key]))}
+                              className={`flex min-h-12 items-center justify-center gap-1.5 rounded-xl border-2 px-2 text-center text-xs font-bold leading-tight transition-all active:scale-95 ${
+                                on
+                                  ? tag.urgent
+                                    ? "border-rose-600 bg-rose-600 text-white"
+                                    : "border-emerald-600 bg-emerald-600 text-white"
+                                  : tag.urgent
+                                    ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
+                                    : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                              }`}
+                            >
+                              {on && <Check className="h-3.5 w-3.5 shrink-0" />}
+                              <span>{ar ? tag.ar : tag.en}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <textarea
+                        rows={3}
+                        value={editSummary}
+                        onChange={(e) => setEditSummary(e.target.value)}
+                        placeholder={ar ? "ماذا حدث؟" : "What happened?"}
+                        aria-label={ar ? "تعديل نص الملاحظة" : "Edit note text"}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-base text-slate-900 focus:border-emerald-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-900"
+                      />
+                      <div className="flex justify-end">
+                        <VoiceNoteButton ar={ar} onText={(text) => setEditSummary((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />
+                      </div>
+
+                      {editTags.some(isUrgentTag) ? (
+                        <p className="flex items-center gap-1.5 rounded-xl bg-rose-50 p-2 text-xs font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          {ar ? "سيُعلَّم البلاغ كعاجل" : "This note will be marked urgent"}
+                        </p>
+                      ) : (
+                        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-rose-200 bg-rose-50/50 p-2 dark:border-rose-900/60 dark:bg-rose-950/20">
+                          <input
+                            type="checkbox"
+                            checked={editUrgentFlag}
+                            onChange={(e) => setEditUrgentFlag(e.target.checked)}
+                            className="h-4 w-4 shrink-0 rounded-sm text-rose-600 focus:ring-rose-500"
+                          />
+                          <span className="text-xs font-bold text-rose-700 dark:text-rose-400">
+                            {ar ? "عاجل — يظهر باللون الأحمر" : "Urgent — shows in red"}
+                          </span>
+                        </label>
+                      )}
+
+                      {editError && (
+                        <p role="alert" className="rounded-xl bg-rose-50 p-2 text-xs font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                          {editError}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={editSaving}
+                          onClick={() => saveEdit(note.id)}
+                          className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white transition-all hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+                        >
+                          {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          <span>{editSaving ? (ar ? "جارٍ الحفظ…" : "Saving…") : (ar ? "حفظ التعديلات" : "Save changes")}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={editSaving}
+                          onClick={cancelEdit}
+                          className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {ar ? "إلغاء" : "Cancel"}
+                        </button>
+                      </div>
                     </div>
-                  )}
+                  ) : isDeleting ? (
+                    <div className="space-y-3 rounded-xl border border-rose-200 bg-rose-50/70 p-3 dark:border-rose-900/60 dark:bg-rose-950/30">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-rose-600 dark:text-rose-400" />
+                        <div>
+                          <p className="text-sm font-bold text-rose-900 dark:text-rose-100">
+                            {ar ? "هل أنت متأكد من حذف هذه الملاحظة نهائياً؟" : "Are you sure you want to permanently delete this note?"}
+                          </p>
+                          <p className="mt-0.5 text-xs text-rose-700 dark:text-rose-300">
+                            {ar ? "سيتم تسجيل الحذف في سجل الرقابة وحذفه من شاشات الجميع." : "This deletion will be recorded in the audit log and removed for everyone."}
+                          </p>
+                        </div>
+                      </div>
 
-                  {note.summary && (
-                    <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                      {note.summary}
-                    </p>
-                  )}
+                      {deleteError && (
+                        <p role="alert" className="rounded-xl bg-rose-100 p-2 text-xs font-bold text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">
+                          {deleteError}
+                        </p>
+                      )}
 
-                  {note.passed_to_name && (
-                    <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-blue-800 dark:text-blue-300">
-                      <ArrowRightLeft className="h-3.5 w-3.5" />
-                      <span>
-                        {ar ? "سُلّمت المناوبة إلى" : "Duty passed to"} <bdi>{note.passed_to_name}</bdi>
-                        {" — "}
-                        {note.accepted_at
-                          ? ar ? `قبلها ${formatTime(note.accepted_at, locale)}` : `accepted ${formatTime(note.accepted_at, locale)}`
-                          : ar ? "بانتظار القبول" : "waiting to be accepted"}
-                      </span>
-                    </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={deleteDeleting}
+                          onClick={() => confirmDelete(note.id)}
+                          className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-4 text-sm font-bold text-white transition-all hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+                        >
+                          {deleteDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          <span>{deleteDeleting ? (ar ? "جارٍ الحذف…" : "Deleting…") : (ar ? "نعم، احذف الملاحظة" : "Yes, delete note")}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deleteDeleting}
+                          onClick={cancelDelete}
+                          className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {ar ? "إلغاء" : "Cancel"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white shadow-xs"
+                            style={{ backgroundColor: note.avatar_color || "#059669" }}
+                          >
+                            {note.caregiver_name?.slice(0, 1)}
+                          </span>
+                          <span className="text-xs font-bold text-slate-900 dark:text-white">
+                            {note.caregiver_name}
+                          </span>
+                          {(() => {
+                            const matchedShift = activeShifts.find((s) => s.id === note.shift_type);
+                            const label = matchedShift
+                              ? `${locale === "ar" ? matchedShift.name_ar : matchedShift.name_en} (${matchedShift.start_time} - ${matchedShift.end_time})`
+                              : (t.shifts as Record<string, string>)[note.shift_type] || note.shift_type;
+                            return (
+                              <span
+                                className="rounded-md px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                style={
+                                  matchedShift?.color
+                                    ? { borderInlineStart: `3px solid ${matchedShift.color}` }
+                                    : undefined
+                                }
+                              >
+                                {label}
+                              </span>
+                            );
+                          })()}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 text-xs text-slate-400">
+                            <Clock className="h-3 w-3" />
+                            <Ltr>{dateStr} • {timeStr}</Ltr>
+                          </div>
+                          {canModify && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(note)}
+                                aria-label={ar ? "تعديل الملاحظة" : "Edit note"}
+                                className="inline-flex min-h-11 items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                <span>{ar ? "تعديل" : "Edit"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => startDelete(note.id)}
+                                aria-label={ar ? "حذف الملاحظة" : "Delete note"}
+                                className="inline-flex min-h-11 items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                <span>{ar ? "حذف" : "Delete"}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {note.urgent_flag && (
+                        <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-0.5 text-xs font-bold text-white">
+                          <AlertTriangle className="h-3 w-3" />
+                          <span>{t.urgentFlag}</span>
+                        </div>
+                      )}
+
+                      {note.tags && note.tags.length > 0 && (
+                        <div className="mb-1.5 flex flex-wrap gap-1.5">
+                          {note.tags.map((k) => (
+                            <span
+                              key={k}
+                              className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                                isUrgentTag(k) ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200" : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                              }`}
+                            >
+                              {tagLabel(k, ar)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {note.summary && (
+                        <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                          {note.summary}
+                        </p>
+                      )}
+
+                      {note.passed_to_name && (
+                        <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-blue-800 dark:text-blue-300">
+                          <ArrowRightLeft className="h-3.5 w-3.5" />
+                          <span>
+                            {ar ? "سُلّمت المناوبة إلى" : "Duty passed to"} <bdi>{note.passed_to_name}</bdi>
+                            {" — "}
+                            {note.accepted_at
+                              ? ar ? `قبلها ${formatTime(note.accepted_at, locale)}` : `accepted ${formatTime(note.accepted_at, locale)}`
+                              : ar ? "بانتظار القبول" : "waiting to be accepted"}
+                          </span>
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               );

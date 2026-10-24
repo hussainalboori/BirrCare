@@ -144,6 +144,8 @@ export function useLiveSync(options: UseLiveSyncOptions = {}) {
             o.onVitalLogged?.(parsed);
             break;
           case "NOTE_ADDED":
+          case "NOTE_UPDATED":
+          case "NOTE_DELETED":
             o.onNoteAdded?.(parsed);
             break;
           case "CAREGIVER_SWITCHED":

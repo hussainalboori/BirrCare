@@ -255,6 +255,8 @@ func NewRouter(o Options) http.Handler {
 				// Handover Notes
 				api.Get("/handovers", handoverHandler.ListHandovers)
 				api.Post("/handovers", handoverHandler.CreateHandover)
+				api.Put("/handovers/{id}", handoverHandler.UpdateHandover)
+				api.Delete("/handovers/{id}", handoverHandler.DeleteHandover)
 
 				// Doctor Consultation Summary
 				api.Get("/export/summary", exportHandler.ExportDoctorSummary)
