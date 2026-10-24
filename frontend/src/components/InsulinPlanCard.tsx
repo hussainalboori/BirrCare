@@ -13,7 +13,7 @@ import { BloodSugarBadge } from "./BloodSugarBadge";
 import { CrisisActions } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { firstName } from "@/lib/actor";
-import { Syringe, Lock, AlertTriangle, Check, Minus, Plus, Loader2, Ban } from "lucide-react";
+import { Syringe, Lock, AlertTriangle, Check, Minus, Plus, Loader2, Ban, Clock } from "lucide-react";
 
 type Mode = "normal" | "adjust" | "hold";
 
@@ -164,6 +164,35 @@ export function InsulinPlanCard({ status, onLogged }: Props) {
             {plan.prescribed_by && <> · <bdi>{plan.prescribed_by}</bdi></>}
           </p>
           {notes && <p className="mt-1 text-xs font-semibold text-slate-600 dark:text-slate-300">{notes}</p>}
+          {plan.frequency_slots && plan.frequency_slots.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {plan.frequency_slots.map((s) => {
+                const timeStr = plan.slot_times?.[s];
+                const slotLabel =
+                  s === "morning"
+                    ? ar ? "الصباح" : "Morning"
+                    : s === "afternoon"
+                    ? ar ? "الظهيرة" : "Afternoon"
+                    : s === "evening"
+                    ? ar ? "المساء" : "Evening"
+                    : s === "bedtime"
+                    ? ar ? "قبل النوم" : "Bedtime"
+                    : s === "night"
+                    ? ar ? "الليل" : "Night"
+                    : s;
+                return (
+                  <span
+                    key={s}
+                    className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50/80 px-2.5 py-1 text-xs font-bold text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300"
+                  >
+                    <Clock className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                    <span>{slotLabel}</span>
+                    {timeStr && <Ltr className="font-mono text-xs font-black">{timeStr}</Ltr>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

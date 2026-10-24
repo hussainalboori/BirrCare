@@ -33,6 +33,7 @@ const ALL_SLOTS = [
   { id: "afternoon", labelAr: "الظهيرة", labelEn: "Afternoon", defaultTime: "14:00" },
   { id: "evening", labelAr: "المساء", labelEn: "Evening", defaultTime: "20:00" },
   { id: "bedtime", labelAr: "قبل النوم", labelEn: "Bedtime", defaultTime: "22:30" },
+  { id: "night", labelAr: "الليل", labelEn: "Night", defaultTime: "02:00" },
 ];
 
 const DAYS_LIST = [
@@ -104,6 +105,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     afternoon: "14:00",
     evening: "20:00",
     bedtime: "22:30",
+    night: "02:00",
   });
 
   const loadMeds = async () => {
@@ -153,6 +155,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
       afternoon: "14:00",
       evening: "20:00",
       bedtime: "22:30",
+      night: "02:00",
     });
     setShowForm(true);
   };
@@ -505,9 +508,16 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 <>
                   {/* FREQUENCY SLOTS & EXACT TIMES */}
                   <div className="mb-4">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                      {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
-                    </label>
+                    <div className="mb-2">
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                        {locale === "ar" ? "فترات اليوم المقررة وتوقيت كل جرعة *" : "Scheduled Daily Time Slots & Clock Times *"}
+                      </label>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {locale === "ar"
+                          ? "حدد فترات أخذ الدواء واختر الوقت الدقيق لكل جرعة بالساعة والدقيقة"
+                          : "Choose medication slots and specify the exact dose time for each"}
+                      </p>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       {ALL_SLOTS.map((slot) => {
                         const isChecked = selectedSlots.includes(slot.id);
@@ -515,45 +525,63 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                         return (
                           <div
                             key={slot.id}
-                            className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
+                            className={`rounded-2xl border p-3 transition-all ${
                               isChecked
-                                ? "border-amber-500/80 bg-amber-50/80 text-amber-950 dark:bg-amber-950/40 dark:text-amber-200"
+                                ? "border-amber-500/80 bg-amber-50/80 text-amber-950 dark:bg-amber-950/40 dark:text-amber-200 shadow-2xs"
                                 : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400"
                             }`}
                           >
-                            <button
-                              type="button"
-                              onClick={() => handleToggleSlot(slot.id)}
-                              className="flex items-center gap-2 flex-1 text-start"
-                            >
-                              <div
-                                className={`flex h-4 w-4 items-center justify-center rounded-md border ${
-                                  isChecked
-                                    ? "bg-amber-600 border-amber-600 text-white"
-                                    : "border-slate-300 dark:border-slate-600"
-                                }`}
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSlot(slot.id)}
+                                className="flex items-center gap-2 flex-1 text-start min-h-8"
                               >
-                                {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                              </div>
-                              <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                              <span className="font-bold">{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
-                            </button>
+                                <div
+                                  className={`flex h-4 w-4 items-center justify-center rounded-md border ${
+                                    isChecked
+                                      ? "bg-amber-600 border-amber-600 text-white"
+                                      : "border-slate-300 dark:border-slate-600"
+                                  }`}
+                                >
+                                  {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                                </div>
+                                <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                                <span className="font-bold text-xs">{locale === "ar" ? slot.labelAr : slot.labelEn}</span>
+                              </button>
+
+                              {isChecked && (
+                                <span className="rounded-md bg-amber-200/70 dark:bg-amber-900/60 px-1.5 py-0.5 text-xs font-bold text-amber-900 dark:text-amber-300">
+                                  {locale === "ar" ? "مُفعل" : "Active"}
+                                </span>
+                              )}
+                            </div>
 
                             {/* Clock Time input */}
                             {isChecked && (
-                              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
-                                <span className="text-xs text-slate-400 font-mono">⏰</span>
-                                <input
-                                  type="time"
-                                  value={currentSlotTime}
-                                  onChange={(e) =>
-                                    setSlotTimes((prev) => ({
-                                      ...prev,
-                                      [slot.id]: e.target.value,
-                                    }))
-                                  }
-                                  className="bg-transparent text-base font-mono font-bold text-slate-900 focus:outline-none dark:text-white"
-                                />
+                              <div className="mt-2.5 pt-2 border-t border-amber-200/70 dark:border-amber-800/60 flex items-center justify-between gap-2">
+                                <label
+                                  htmlFor={`med-slot-time-${slot.id}`}
+                                  className="text-xs font-semibold text-slate-700 dark:text-slate-300"
+                                >
+                                  {locale === "ar" ? "وقت أخذ الجرعة:" : "Dose time:"}
+                                </label>
+                                <div className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-2.5 py-1 shadow-2xs dark:border-amber-700 dark:bg-slate-900">
+                                  <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                                  <input
+                                    id={`med-slot-time-${slot.id}`}
+                                    type="time"
+                                    value={currentSlotTime}
+                                    onChange={(e) =>
+                                      setSlotTimes((prev) => ({
+                                        ...prev,
+                                        [slot.id]: e.target.value,
+                                      }))
+                                    }
+                                    aria-label={locale === "ar" ? `وقت جرعة ${slot.labelAr}` : `${slot.labelEn} dose time`}
+                                    className="bg-transparent text-base font-mono font-bold text-slate-900 focus:outline-none dark:text-white"
+                                  />
+                                </div>
                               </div>
                             )}
                           </div>

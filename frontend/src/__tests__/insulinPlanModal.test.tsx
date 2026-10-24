@@ -51,13 +51,16 @@ describe("InsulinPlanModal scale rows", () => {
     const r2Max = screen.getByLabelText("row 2 max") as HTMLInputElement;
     const r2Units = screen.getByLabelText("row 2 units") as HTMLInputElement;
 
-    // Row 2 min is automatically linked to Row 1 max (no gaps)
+    // Row 2 min is pre-filled from Row 1 max, but is fully editable (not disabled)
     expect(r2Min.value).toBe("10");
-    expect(r2Min.disabled).toBe(true);
+    expect(r2Min.disabled).toBe(false);
 
-    // Row 2 units and max MUST be enabled and editable
+    // Row 2 units, max, and min MUST all be enabled and editable
     expect(r2Max.disabled).toBe(false);
     expect(r2Units.disabled).toBe(false);
+
+    fireEvent.change(r2Min, { target: { value: "11" } });
+    expect(r2Min.value).toBe("11");
 
     fireEvent.change(r2Units, { target: { value: "4" } });
     expect(r2Units.value).toBe("4");
@@ -74,5 +77,41 @@ describe("InsulinPlanModal scale rows", () => {
     expect(rowContainer?.getAttribute("dir")).toBeNull();
     // But the input itself should have dir=ltr for numeric typing
     expect(r1Units.getAttribute("dir")).toBe("ltr");
+  });
+
+  it("renders delete button on plan list and shows in-page confirmation before calling DELETE", async () => {
+    currentLocale = "ar";
+    const mockPlans = [
+      {
+        id: "ins_1",
+        name_ar: "نوفورابيد",
+        name_en: "NovoRapid",
+        kind: "fixed" as const,
+        fixed_units: 10,
+        scale: [],
+        min_hours_between: 4,
+        frequency_slots: ["morning"],
+        slot_times: { morning: "08:00" },
+        is_active: true,
+      },
+    ];
+
+    const onSaved = vi.fn();
+    render(<InsulinPlanModal plans={mockPlans} onClose={() => {}} onSaved={onSaved} />);
+
+    // Delete button exists for the plan
+    const deleteBtn = screen.getByRole("button", { name: /حذف نوفورابيد|Delete/ });
+    expect(deleteBtn).toBeTruthy();
+
+    // Clicking delete opens in-page confirmation modal
+    fireEvent.click(deleteBtn);
+    expect(screen.getByText("تأكيد حذف الإبرة")).toBeTruthy();
+
+    // Clicking confirm delete calls fetchApi with DELETE
+    const confirmBtn = screen.getByRole("button", { name: "نعم، احذف" });
+    fireEvent.click(confirmBtn);
+
+    const { fetchApi } = await import("@/lib/api");
+    expect(fetchApi).toHaveBeenCalledWith("/insulin/plans/ins_1", { method: "DELETE" });
   });
 });

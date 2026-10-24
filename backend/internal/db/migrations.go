@@ -242,6 +242,8 @@ CREATE TABLE IF NOT EXISTS insulin_plans (
     fixed_units REAL,
     scale TEXT NOT NULL DEFAULT '[]', -- JSON [{"min":4,"max":8,"units":0},...] mmol/L, min inclusive, max exclusive
     min_hours_between REAL NOT NULL DEFAULT 4,
+    frequency_slots TEXT NOT NULL DEFAULT '[]',
+    slot_times TEXT NOT NULL DEFAULT '{}',
     prescribed_by TEXT,
     notes_ar TEXT,
     notes_en TEXT,
@@ -1185,6 +1187,19 @@ func Migrate(database *sql.DB) error {
 		BEGIN SELECT RAISE(ABORT, 'PRN entries cannot be deleted: cancel the dose instead'); END;
 	`); err != nil {
 		return fmt.Errorf("failed creating prn_logs triggers: %w", err)
+	}
+
+	for _, c := range []struct{ col, def string }{
+		{"frequency_slots", "TEXT NOT NULL DEFAULT '[]'"},
+		{"slot_times", "TEXT NOT NULL DEFAULT '{}'"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('insulin_plans') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE insulin_plans ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding insulin_plans.%s: %w", c.col, err)
+			}
+		}
 	}
 
 	if err := seedSuperAdmin(database); err != nil {

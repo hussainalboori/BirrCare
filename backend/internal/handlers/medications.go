@@ -665,8 +665,9 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 }
 
 type UpdateScheduleRequest struct {
-	DaysOfWeek []string          `json:"days_of_week"`
-	SlotTimes  map[string]string `json:"slot_times"`
+	DaysOfWeek     []string          `json:"days_of_week"`
+	FrequencySlots []string          `json:"frequency_slots,omitempty"`
+	SlotTimes      map[string]string `json:"slot_times"`
 }
 
 // UpdateSchedule allows Admins and Super Admins to configure the times and days of a medication
@@ -712,6 +713,13 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 
 	var slots []string
 	json.Unmarshal([]byte(slotsJSON), &slots)
+	if len(req.FrequencySlots) > 0 {
+		if !validSlots(req.FrequencySlots) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_SLOTS", "frequency_slots must contain valid slots")
+			return
+		}
+		slots = req.FrequencySlots
+	}
 	normalizedTimes := normalizeSlotTimes(req.SlotTimes, slots)
 
 	daysToSave := req.DaysOfWeek
@@ -720,6 +728,7 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 	}
 
 	daysJSON, _ := json.Marshal(daysToSave)
+	slotsJSONToSave, _ := json.Marshal(slots)
 	timesJSON, _ := json.Marshal(normalizedTimes)
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
@@ -732,9 +741,10 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 	_, err = tx.Exec(`
 		UPDATE medications
 		SET days_of_week = ?,
+		    frequency_slots = ?,
 		    slot_times = ?
 		WHERE id = ?
-	`, string(daysJSON), string(timesJSON), medID)
+	`, string(daysJSON), string(slotsJSONToSave), string(timesJSON), medID)
 	if err != nil {
 		internalError(w, "failed to update schedule", err)
 		return

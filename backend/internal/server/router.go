@@ -246,6 +246,7 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/insulin/plans", insulinHandler.ListPlans)
 				api.Post("/insulin/plans", insulinHandler.CreatePlan)
 				api.Put("/insulin/plans/{id}", insulinHandler.UpdatePlan)
+				api.Delete("/insulin/plans/{id}", insulinHandler.DeletePlan)
 				api.Get("/insulin/status", insulinHandler.GetStatus)
 				api.Post("/insulin/log", insulinHandler.LogInsulin)
 

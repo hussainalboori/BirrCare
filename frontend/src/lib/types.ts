@@ -348,6 +348,8 @@ export interface InsulinPlan {
   fixed_units?: number;
   scale: InsulinScaleRow[];
   min_hours_between: number;
+  frequency_slots?: string[];
+  slot_times?: Record<string, string>;
   prescribed_by?: string;
   notes_ar?: string;
   notes_en?: string;

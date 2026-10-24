@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"birrcare/backend/internal/handlers"
 	"birrcare/backend/internal/models"
+	"github.com/go-chi/chi/v5"
 )
 
 var (
@@ -185,5 +187,75 @@ func TestInsulinConcurrentTaps(t *testing.T) {
 	h.DB.QueryRow("SELECT COUNT(*) FROM insulin_logs WHERE status = 'given'").Scan(&n)
 	if created != 1 || n != 1 {
 		t.Fatalf("expected exactly one injection, got %d responses / %d rows", created, n)
+	}
+}
+
+func TestDeleteInsulinPlan(t *testing.T) {
+	h, planID := setupInsulin(t)
+
+	// 1. Caregiver cannot delete plan (403)
+	rCaregiver := chi.NewRouteContext()
+	rCaregiver.URLParams.Add("id", planID)
+	reqCaregiver := httptest.NewRequest(http.MethodDelete, "/api/v1/insulin/plans/"+planID, nil)
+	reqCaregiver = reqCaregiver.WithContext(context.WithValue(authContext(reqCaregiver.Context(), insCaregiver), chi.RouteCtxKey, rCaregiver))
+	recCaregiver := httptest.NewRecorder()
+	h.DeletePlan(recCaregiver, reqCaregiver)
+	if recCaregiver.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for caregiver, got %d", recCaregiver.Code)
+	}
+
+	// 2. Admin can delete plan without logs -> hard deleted
+	recCreated := call(h.CreatePlan, insAdmin, handlers.SavePlanRequest{
+		NameAr: "لانتوس", NameEn: "Lantus", Kind: "fixed", FixedUnits: f(10),
+		MinHoursBetween: 12,
+	})
+	if recCreated.Code != http.StatusCreated {
+		t.Fatalf("create second plan: %d", recCreated.Code)
+	}
+	var out map[string]string
+	json.Unmarshal(recCreated.Body.Bytes(), &out)
+	unusedPlanID := out["id"]
+
+	rAdmin := chi.NewRouteContext()
+	rAdmin.URLParams.Add("id", unusedPlanID)
+	reqAdmin := httptest.NewRequest(http.MethodDelete, "/api/v1/insulin/plans/"+unusedPlanID, nil)
+	reqAdmin = reqAdmin.WithContext(context.WithValue(authContext(reqAdmin.Context(), insAdmin), chi.RouteCtxKey, rAdmin))
+	recAdmin := httptest.NewRecorder()
+	h.DeletePlan(recAdmin, reqAdmin)
+	if recAdmin.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for admin deleting unused plan, got %d: %s", recAdmin.Code, recAdmin.Body.String())
+	}
+
+	var count int
+	h.DB.QueryRow("SELECT COUNT(*) FROM insulin_plans WHERE id = ?", unusedPlanID).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected unused plan to be completely deleted, got count=%d", count)
+	}
+
+	// 3. Admin deleting plan WITH logs -> soft deleted (is_active = 0)
+	recLog := call(h.LogInsulin, insCaregiver, handlers.LogInsulinRequest{
+		PlanID: planID, Status: "given", Units: 4, BloodSugar: f(12),
+	})
+	if recLog.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for log, got %d", recLog.Code)
+	}
+
+	rAdmin2 := chi.NewRouteContext()
+	rAdmin2.URLParams.Add("id", planID)
+	reqAdmin2 := httptest.NewRequest(http.MethodDelete, "/api/v1/insulin/plans/"+planID, nil)
+	reqAdmin2 = reqAdmin2.WithContext(context.WithValue(authContext(reqAdmin2.Context(), insAdmin), chi.RouteCtxKey, rAdmin2))
+	recAdmin2 := httptest.NewRecorder()
+	h.DeletePlan(recAdmin2, reqAdmin2)
+	if recAdmin2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for admin deleting plan with logs, got %d: %s", recAdmin2.Code, recAdmin2.Body.String())
+	}
+
+	var isActive int
+	err := h.DB.QueryRow("SELECT is_active FROM insulin_plans WHERE id = ?", planID).Scan(&isActive)
+	if err != nil {
+		t.Fatalf("expected plan with logs to still exist in DB, got err: %v", err)
+	}
+	if isActive != 0 {
+		t.Fatalf("expected plan with logs to have is_active=0, got %d", isActive)
 	}
 }

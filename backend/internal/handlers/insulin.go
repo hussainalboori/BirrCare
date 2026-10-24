@@ -57,18 +57,20 @@ type ScaleRow struct {
 }
 
 type InsulinPlan struct {
-	ID              string     `json:"id"`
-	NameAr          string     `json:"name_ar"`
-	NameEn          string     `json:"name_en"`
-	Kind            string     `json:"kind"` // 'scale' or 'fixed'
-	FixedUnits      *float64   `json:"fixed_units,omitempty"`
-	Scale           []ScaleRow `json:"scale"`
-	MinHoursBetween float64    `json:"min_hours_between"`
-	PrescribedBy    string     `json:"prescribed_by,omitempty"`
-	NotesAr         string     `json:"notes_ar,omitempty"`
-	NotesEn         string     `json:"notes_en,omitempty"`
-	IsActive        bool       `json:"is_active"`
-	UpdatedAt       string     `json:"updated_at,omitempty"`
+	ID              string            `json:"id"`
+	NameAr          string            `json:"name_ar"`
+	NameEn          string            `json:"name_en"`
+	Kind            string            `json:"kind"` // 'scale' or 'fixed'
+	FixedUnits      *float64          `json:"fixed_units,omitempty"`
+	Scale           []ScaleRow        `json:"scale"`
+	MinHoursBetween float64           `json:"min_hours_between"`
+	FrequencySlots  []string          `json:"frequency_slots"`
+	SlotTimes       map[string]string `json:"slot_times,omitempty"`
+	PrescribedBy    string            `json:"prescribed_by,omitempty"`
+	NotesAr         string            `json:"notes_ar,omitempty"`
+	NotesEn         string            `json:"notes_en,omitempty"`
+	IsActive        bool              `json:"is_active"`
+	UpdatedAt       string            `json:"updated_at,omitempty"`
 }
 
 type InsulinLog struct {
@@ -128,6 +130,7 @@ func validateScale(rows []ScaleRow) error {
 
 func (h *InsulinHandler) loadPlans(onlyActive bool) ([]InsulinPlan, error) {
 	q := `SELECT id, name_ar, name_en, kind, fixed_units, scale, min_hours_between,
+	             COALESCE(frequency_slots, '[]'), COALESCE(slot_times, '{}'),
 	             COALESCE(prescribed_by, ''), COALESCE(notes_ar, ''), COALESCE(notes_en, ''), is_active, COALESCE(updated_at, '')
 	      FROM insulin_plans`
 	if onlyActive {
@@ -144,9 +147,9 @@ func (h *InsulinHandler) loadPlans(onlyActive bool) ([]InsulinPlan, error) {
 	for rows.Next() {
 		var p InsulinPlan
 		var fixed sql.NullFloat64
-		var scaleJSON string
+		var scaleJSON, slotsJSON, timesJSON string
 		if err := rows.Scan(&p.ID, &p.NameAr, &p.NameEn, &p.Kind, &fixed, &scaleJSON, &p.MinHoursBetween,
-			&p.PrescribedBy, &p.NotesAr, &p.NotesEn, &p.IsActive, &p.UpdatedAt); err != nil {
+			&slotsJSON, &timesJSON, &p.PrescribedBy, &p.NotesAr, &p.NotesEn, &p.IsActive, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if fixed.Valid {
@@ -156,6 +159,14 @@ func (h *InsulinHandler) loadPlans(onlyActive bool) ([]InsulinPlan, error) {
 		_ = json.Unmarshal([]byte(scaleJSON), &p.Scale)
 		if p.Scale == nil {
 			p.Scale = []ScaleRow{}
+		}
+		_ = json.Unmarshal([]byte(slotsJSON), &p.FrequencySlots)
+		if p.FrequencySlots == nil {
+			p.FrequencySlots = []string{}
+		}
+		_ = json.Unmarshal([]byte(timesJSON), &p.SlotTimes)
+		if p.SlotTimes == nil {
+			p.SlotTimes = map[string]string{}
 		}
 		p.UpdatedAt = sqliteToRFC3339(p.UpdatedAt)
 		plans = append(plans, p)
@@ -174,16 +185,18 @@ func (h *InsulinHandler) ListPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 type SavePlanRequest struct {
-	NameAr          string     `json:"name_ar"`
-	NameEn          string     `json:"name_en"`
-	Kind            string     `json:"kind"`
-	FixedUnits      *float64   `json:"fixed_units"`
-	Scale           []ScaleRow `json:"scale"`
-	MinHoursBetween float64    `json:"min_hours_between"`
-	PrescribedBy    string     `json:"prescribed_by"`
-	NotesAr         string     `json:"notes_ar"`
-	NotesEn         string     `json:"notes_en"`
-	IsActive        *bool      `json:"is_active"`
+	NameAr          string            `json:"name_ar"`
+	NameEn          string            `json:"name_en"`
+	Kind            string            `json:"kind"`
+	FixedUnits      *float64          `json:"fixed_units"`
+	Scale           []ScaleRow        `json:"scale"`
+	MinHoursBetween float64           `json:"min_hours_between"`
+	FrequencySlots  []string          `json:"frequency_slots"`
+	SlotTimes       map[string]string `json:"slot_times"`
+	PrescribedBy    string            `json:"prescribed_by"`
+	NotesAr         string            `json:"notes_ar"`
+	NotesEn         string            `json:"notes_en"`
+	IsActive        *bool             `json:"is_active"`
 }
 
 func (req *SavePlanRequest) normalize() (code, msg string) {
@@ -198,8 +211,22 @@ func (req *SavePlanRequest) normalize() (code, msg string) {
 	if req.NameEn == "" {
 		req.NameEn = req.NameAr
 	}
-	if req.MinHoursBetween == 0 {
-		req.MinHoursBetween = defaultMinHoursGap
+	if req.FrequencySlots == nil {
+		req.FrequencySlots = []string{}
+	}
+	for _, s := range req.FrequencySlots {
+		if !allowedSlots[s] {
+			return "INVALID_SLOTS", "frequency_slots must contain valid slots (morning, afternoon, evening, bedtime, night)"
+		}
+	}
+	req.SlotTimes = normalizeSlotTimes(req.SlotTimes, req.FrequencySlots)
+
+	if req.MinHoursBetween <= 0 {
+		if len(req.FrequencySlots) > 0 {
+			req.MinHoursBetween = intervalHours(nil, req.FrequencySlots, req.SlotTimes)
+		} else {
+			req.MinHoursBetween = defaultMinHoursGap
+		}
 	}
 	if req.MinHoursBetween < 1 || req.MinHoursBetween > 48 {
 		return "INVALID_INTERVAL", "minimum hours between injections must be 1–48"
@@ -234,6 +261,83 @@ func (h *InsulinHandler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 	h.savePlan(w, r, id)
 }
 
+func (h *InsulinHandler) DeletePlan(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if !auth.CanManageMedications(caregiver) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Only Admins and Super Admins can delete insulin plans")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_ID", "missing plan id")
+		return
+	}
+
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		internalError(w, "failed to begin transaction", err)
+		return
+	}
+	defer tx.Rollback()
+
+	var nameAr, nameEn string
+	err = tx.QueryRow("SELECT name_ar, name_en FROM insulin_plans WHERE id = ?", id).Scan(&nameAr, &nameEn)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "insulin plan not found")
+			return
+		}
+		internalError(w, "failed to query insulin plan", err)
+		return
+	}
+
+	var logCount int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM insulin_logs WHERE plan_id = ?", id).Scan(&logCount); err != nil {
+		internalError(w, "failed to check existing insulin logs", err)
+		return
+	}
+
+	deactivatedOnly := logCount > 0
+	if logCount == 0 {
+		if _, err := tx.Exec("DELETE FROM insulin_plans WHERE id = ?", id); err != nil {
+			internalError(w, "failed to delete insulin plan", err)
+			return
+		}
+	} else {
+		if _, err := tx.Exec("UPDATE insulin_plans SET is_active = 0, updated_by = ?, updated_at = datetime('now') WHERE id = ?", caregiver.ID, id); err != nil {
+			internalError(w, "failed to deactivate insulin plan", err)
+			return
+		}
+	}
+
+	action := "DEACTIVATE_INSULIN_PLAN"
+	desc := fmt.Sprintf("Deactivated insulin plan %s (retained due to existing logs)", nameEn)
+	if !deactivatedOnly {
+		action = "DELETE_INSULIN_PLAN"
+		desc = fmt.Sprintf("Deleted unused insulin plan %s", nameEn)
+	}
+
+	if err := audit.Record(tx, caregiver.ID, action, "insulin_plan", id, desc); err != nil {
+		internalError(w, "failed to record audit log", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, "failed to commit insulin plan deletion", err)
+		return
+	}
+
+	h.Broker.Broadcast("INSULIN_PLANS_UPDATED", actorOf(caregiver), map[string]interface{}{"id": id, "action": "deleted"})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":      "success",
+		"message":     "Insulin plan deleted successfully",
+		"deactivated": deactivatedOnly,
+	})
+}
+
 func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id string) {
 	caregiver := auth.GetCaregiverFromContext(r.Context())
 	if !auth.CanManageMedications(caregiver) {
@@ -250,6 +354,8 @@ func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	scaleJSON, _ := json.Marshal(req.Scale)
+	slotsJSON, _ := json.Marshal(req.FrequencySlots)
+	timesJSON, _ := json.Marshal(req.SlotTimes)
 	active := 1
 	if req.IsActive != nil && !*req.IsActive {
 		active = 0
@@ -268,18 +374,19 @@ func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id str
 		id = "ins_" + uuid.New().String()[:8]
 		status = http.StatusCreated
 		_, err = tx.Exec(`
-			INSERT INTO insulin_plans (id, name_ar, name_en, kind, fixed_units, scale, min_hours_between, prescribed_by, notes_ar, notes_en, is_active, updated_by, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			INSERT INTO insulin_plans (id, name_ar, name_en, kind, fixed_units, scale, min_hours_between, frequency_slots, slot_times, prescribed_by, notes_ar, notes_en, is_active, updated_by, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		`, id, req.NameAr, req.NameEn, req.Kind, req.FixedUnits, string(scaleJSON), req.MinHoursBetween,
-			req.PrescribedBy, req.NotesAr, req.NotesEn, active, caregiver.ID)
+			string(slotsJSON), string(timesJSON), req.PrescribedBy, req.NotesAr, req.NotesEn, active, caregiver.ID)
 	} else {
 		var res sql.Result
 		res, err = tx.Exec(`
 			UPDATE insulin_plans SET name_ar = ?, name_en = ?, kind = ?, fixed_units = ?, scale = ?, min_hours_between = ?,
+			       frequency_slots = ?, slot_times = ?,
 			       prescribed_by = ?, notes_ar = ?, notes_en = ?, is_active = ?, updated_by = ?, updated_at = datetime('now')
 			WHERE id = ?
 		`, req.NameAr, req.NameEn, req.Kind, req.FixedUnits, string(scaleJSON), req.MinHoursBetween,
-			req.PrescribedBy, req.NotesAr, req.NotesEn, active, caregiver.ID, id)
+			string(slotsJSON), string(timesJSON), req.PrescribedBy, req.NotesAr, req.NotesEn, active, caregiver.ID, id)
 		if err == nil {
 			if n, _ := res.RowsAffected(); n == 0 {
 				writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "insulin plan not found")
@@ -292,8 +399,8 @@ func (h *InsulinHandler) savePlan(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	auditDetail := fmt.Sprintf("%s (%s) kind=%s fixed=%v scale=%s gap=%.1fh by=%s active=%d",
-		req.NameEn, req.NameAr, req.Kind, req.FixedUnits, scaleJSON, req.MinHoursBetween, req.PrescribedBy, active)
+	auditDetail := fmt.Sprintf("%s (%s) kind=%s fixed=%v scale=%s slots=%s gap=%.1fh by=%s active=%d",
+		req.NameEn, req.NameAr, req.Kind, req.FixedUnits, scaleJSON, string(slotsJSON), req.MinHoursBetween, req.PrescribedBy, active)
 	if err := audit.Record(tx, caregiver.ID, "INSULIN_PLAN_SAVED", "insulin_plan", id, auditDetail); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return

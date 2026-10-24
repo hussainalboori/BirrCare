@@ -57,9 +57,9 @@ export function ScheduleManagementModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Per-medication schedule edits: { [medId]: { days: string[], times: Record<string, string> } }
+  // Per-medication schedule edits: { [medId]: { days: string[], slots: string[], times: Record<string, string> } }
   const [scheduleDrafts, setScheduleDrafts] = useState<
-    Record<string, { days: string[]; times: Record<string, string> }>
+    Record<string, { days: string[]; slots: string[]; times: Record<string, string> }>
   >({});
   const [savingMedId, setSavingMedId] = useState<string | null>(null);
   const [savedSuccessId, setSavedSuccessId] = useState<string | null>(null);
@@ -74,16 +74,18 @@ export function ScheduleManagementModal({
       setMeds(data || []);
 
       // Initialize drafts
-      const drafts: Record<string, { days: string[]; times: Record<string, string> }> = {};
+      const drafts: Record<string, { days: string[]; slots: string[]; times: Record<string, string> }> = {};
       (data || []).forEach((m) => {
         const initialDays =
           m.days_of_week && m.days_of_week.length > 0 ? m.days_of_week : ALL_DAY_IDS;
+        const initialSlots =
+          m.frequency_slots && m.frequency_slots.length > 0 ? m.frequency_slots : ["morning"];
         const initialTimes: Record<string, string> = {};
-        m.frequency_slots.forEach((s) => {
+        Object.keys(SLOT_LABELS).forEach((s) => {
           initialTimes[s] =
             m.slot_times?.[s] || SLOT_LABELS[s]?.defaultTime || "08:00";
         });
-        drafts[m.id] = { days: initialDays, times: initialTimes };
+        drafts[m.id] = { days: initialDays, slots: initialSlots, times: initialTimes };
       });
       setScheduleDrafts(drafts);
     } catch (err: any) {
@@ -104,7 +106,7 @@ export function ScheduleManagementModal({
   const handleToggleDay = (medId: string, dayId: string) => {
     if (!canEdit) return;
     setScheduleDrafts((prev) => {
-      const current = prev[medId] || { days: ALL_DAY_IDS, times: {} };
+      const current = prev[medId] || { days: ALL_DAY_IDS, slots: ["morning"], times: {} };
       const currentDays = current.days;
       let newDays: string[];
       if (currentDays.includes(dayId)) {
@@ -123,10 +125,32 @@ export function ScheduleManagementModal({
     });
   };
 
+  const handleToggleSlot = (medId: string, slotId: string) => {
+    if (!canEdit) return;
+    setScheduleDrafts((prev) => {
+      const current = prev[medId] || { days: ALL_DAY_IDS, slots: ["morning"], times: {} };
+      const currentSlots = current.slots;
+      let newSlots: string[];
+      if (currentSlots.includes(slotId)) {
+        if (currentSlots.length > 1) {
+          newSlots = currentSlots.filter((s) => s !== slotId);
+        } else {
+          newSlots = currentSlots; // At least one slot required
+        }
+      } else {
+        newSlots = [...currentSlots, slotId];
+      }
+      return {
+        ...prev,
+        [medId]: { ...current, slots: newSlots },
+      };
+    });
+  };
+
   const handleSetAllDays = (medId: string) => {
     if (!canEdit) return;
     setScheduleDrafts((prev) => {
-      const current = prev[medId] || { days: ALL_DAY_IDS, times: {} };
+      const current = prev[medId] || { days: ALL_DAY_IDS, slots: ["morning"], times: {} };
       return {
         ...prev,
         [medId]: { ...current, days: ALL_DAY_IDS },
@@ -137,7 +161,7 @@ export function ScheduleManagementModal({
   const handleTimeChange = (medId: string, slot: string, newTime: string) => {
     if (!canEdit) return;
     setScheduleDrafts((prev) => {
-      const current = prev[medId] || { days: ALL_DAY_IDS, times: {} };
+      const current = prev[medId] || { days: ALL_DAY_IDS, slots: ["morning"], times: {} };
       return {
         ...prev,
         [medId]: {
@@ -163,6 +187,7 @@ export function ScheduleManagementModal({
         method: "PUT",
         body: JSON.stringify({
           days_of_week: draft.days,
+          frequency_slots: draft.slots,
           slot_times: draft.times,
         }),
       });
@@ -254,6 +279,7 @@ export function ScheduleManagementModal({
               {meds.map((med) => {
                 const draft = scheduleDrafts[med.id] || {
                   days: ALL_DAY_IDS,
+                  slots: med.frequency_slots && med.frequency_slots.length > 0 ? med.frequency_slots : ["morning"],
                   times: {},
                 };
                 const isAllDays = draft.days.length === 7;
@@ -380,15 +406,44 @@ export function ScheduleManagementModal({
                         </p>
                       </div>
 
-                      {/* Right: Clock Times per Slot */}
+                      {/* Right: Clock Times and Slots */}
                       <div>
-                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                          <span>{t.doseTimes}</span>
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span>{t.doseTimes}</span>
+                          </label>
+                          <span className="text-xs text-slate-400">
+                            {locale === "ar" ? "اضغط على الفترة لتفعيلها" : "Tap slot to toggle"}
+                          </span>
+                        </div>
 
+                        {/* Slot chips */}
+                        <div className="flex flex-wrap gap-1.5 mb-2.5">
+                          {Object.entries(SLOT_LABELS).map(([slotKey, slotInfo]) => {
+                            const isSelected = draft.slots.includes(slotKey);
+                            return (
+                              <button
+                                type="button"
+                                key={slotKey}
+                                disabled={!canEdit}
+                                onClick={() => handleToggleSlot(med.id, slotKey)}
+                                className={`flex min-h-8 items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
+                                  isSelected
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                    : "bg-slate-50 text-slate-500 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                                }`}
+                              >
+                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                <span>{locale === "ar" ? slotInfo.ar : slotInfo.en}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Dose times inputs for active slots */}
                         <div className="space-y-2">
-                          {med.frequency_slots.map((slot) => {
+                          {draft.slots.map((slot) => {
                             const slotInfo = SLOT_LABELS[slot] || {
                               ar: slot,
                               en: slot,
@@ -399,21 +454,28 @@ export function ScheduleManagementModal({
                             return (
                               <div
                                 key={slot}
-                                className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-1.5 border border-slate-200 dark:bg-slate-900/60 dark:border-slate-700/80"
+                                className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 border border-slate-200 dark:bg-slate-900/60 dark:border-slate-700/80"
                               >
-                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                                   {locale === "ar" ? slotInfo.ar : slotInfo.en}
                                 </span>
 
                                 <div className="flex items-center gap-1.5">
-                                  <Clock className="h-3.5 w-3.5 text-slate-400" />
+                                  <label
+                                    htmlFor={`sched-time-${med.id}-${slot}`}
+                                    className="text-xs text-slate-500 dark:text-slate-400"
+                                  >
+                                    {locale === "ar" ? "وقت الجرعة:" : "Dose time:"}
+                                  </label>
                                   <input
+                                    id={`sched-time-${med.id}-${slot}`}
                                     type="time"
                                     value={timeVal}
                                     disabled={!canEdit}
                                     onChange={(e) =>
                                       handleTimeChange(med.id, slot, e.target.value)
                                     }
+                                    aria-label={locale === "ar" ? `وقت جرعة ${slotInfo.ar}` : `${slotInfo.en} dose time`}
                                     className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-base font-mono font-bold text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                                   />
                                 </div>
