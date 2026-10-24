@@ -273,9 +273,17 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
                       <Lock className="h-3 w-3 text-slate-500" />
                     )}
                     <span>
-                      {trustStatus.trusted
-                        ? (ar ? "شبكة المنزل (تبديل مباشر)" : "Home Network (1-Tap)")
-                        : (ar ? "خارج المنزل (مطلوب رمز المرور)" : "External (PIN Protected)")}
+                      {trustStatus.trusted ? (
+                        <>
+                          <span>{ar ? "شبكة المنزل" : "Home Network"}</span>
+                          <span className="hidden sm:inline">{ar ? " (تبديل مباشر)" : " (1-Tap)"}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{ar ? "خارج المنزل" : "External (PIN)"}</span>
+                          <span className="hidden sm:inline">{ar ? " (مطلوب رمز المرور)" : " Protected"}</span>
+                        </>
+                      )}
                     </span>
                   </button>
                 )}

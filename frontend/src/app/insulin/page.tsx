@@ -57,8 +57,8 @@ export default function InsulinPage() {
       <CaregiverHeader connectionStatus={connectionStatus} />
 
       <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 lg:max-w-none lg:px-8">
-        <div className="mb-5 flex items-center justify-between gap-3">
-          <div>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <h1 className="flex items-center gap-2 text-xl font-black text-slate-900 dark:text-white sm:text-2xl">
               {ar ? "الإنسولين" : "Insulin"}
               <Syringe className="h-5 w-5 text-blue-600" />
@@ -96,7 +96,7 @@ export default function InsulinPage() {
             )}
           </div>
         ) : (
-          <div className="grid items-start gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
             {statuses.map((s) => (
               <InsulinPlanCard key={s.plan.id} status={s} onLogged={load} />
             ))}

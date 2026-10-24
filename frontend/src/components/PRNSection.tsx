@@ -224,7 +224,7 @@ export function PRNSection() {
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {prnMeds.map((medStatus) => {
           const med = medStatus.medication;
           const name = locale === "ar" ? med.name_ar : med.name_en;

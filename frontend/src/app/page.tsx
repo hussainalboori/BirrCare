@@ -210,7 +210,7 @@ export default function MedicationsPage() {
                     </h2>
                   </div>
 
-                  <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                     {doses.map((dose) => (
                       <MedicationSlotCard
                         key={`${selectedDate}:${dose.medication.id}:${dose.slot}`}
