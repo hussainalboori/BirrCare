@@ -99,10 +99,13 @@ test("Ate half + Needs rest + Pass to Fatima + Send: 4 taps, under 15 s; Fatima 
   await expect(accept).toHaveCount(0);
   expect(shared.accepted).toEqual(["c2"]);
 
-  // Home: the last handover at the top.
+  // Report: the handover is in the day's list, marked as a handover.
   await fatima.reload();
-  await expect(fatima.getByTestId("last-handover")).toContainText("From Hussain");
-  await expect(fatima.getByTestId("last-handover")).toContainText("Ate half · Needs rest");
+  const item = fatima.getByTestId("report-item").first();
+  await expect(item).toContainText("Hussain");
+  await expect(item).toContainText("Shift handover");
+  await expect(item).toContainText("Ate half");
+  await expect(item).toContainText("Needs rest");
 });
 
 test("tags only is enough for a plain note; urgent tags mark it urgent; Arabic labels", async ({ browser, baseURL }) => {

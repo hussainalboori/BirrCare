@@ -9,7 +9,7 @@ import { HandoverNote, ShiftType, Shift, CurrentDutyStatus } from "@/lib/types";
 import { canTakeActions, isViewer } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { firstName, saveAs } from "@/lib/actor";
-import { HANDOVER_TAGS, isUrgentTag, tagLabel } from "@/lib/handoverTags";
+import { TAG_CHOICES, isUrgentTag, tagLabel } from "@/lib/handoverTags";
 import { VoiceNoteButton } from "@/components/VoiceNoteButton";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { formatShortDate, formatTime } from "@/lib/datetime";
@@ -214,7 +214,7 @@ export default function HandoversPage() {
             </h2>
 
             <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {HANDOVER_TAGS.map((tag) => {
+              {TAG_CHOICES.map((tag) => {
                 const on = tags.includes(tag.key);
                 return (
                   <button

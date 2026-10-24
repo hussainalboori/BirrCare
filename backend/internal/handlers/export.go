@@ -350,7 +350,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	noteRows, err := h.DB.Query(handoverNoteSelect+`
 		WHERE n.created_at >= ?
 		ORDER BY n.created_at DESC
-		LIMIT 15
+		LIMIT 60
 	`, sinceUTC)
 	if err != nil {
 		internalError(w, "failed to load notes for the report", err)

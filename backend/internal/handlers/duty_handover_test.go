@@ -191,3 +191,39 @@ func TestPassDuty(t *testing.T) {
 		t.Fatalf("want one DUTY_ACCEPTED audit row, got %d", n)
 	}
 }
+
+// Reports during the day: ?date= lists every note of that household day.
+func TestHandoversByDay(t *testing.T) {
+	med, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	h := &handlers.HandoverHandler{DB: med.DB, Broker: med.Broker}
+	fatima := &models.Caregiver{ID: "cg_fatima", Name: "Fatima", Role: models.RoleCaregiver}
+	for _, s := range []string{"vomited after breakfast", "complained of a headache", "refused lunch"} {
+		if code, out := postNote(t, h, fatima, map[string]interface{}{"shift_type": "report", "summary": s}); code != http.StatusCreated {
+			t.Fatalf("report %q: %d %v", s, code, out)
+		}
+	}
+	// One from two days ago must not show up today.
+	if _, err := med.DB.Exec(`UPDATE handover_notes SET created_at = datetime('now', '-2 days') WHERE summary = 'refused lunch'`); err != nil {
+		t.Fatal(err)
+	}
+
+	list := func(q string) (int, []models.HandoverNote) {
+		rec := httptest.NewRecorder()
+		h.ListHandovers(rec, httptest.NewRequest(http.MethodGet, "/api/v1/handovers"+q, nil))
+		var out []models.HandoverNote
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	today := time.Now().In(handlers.ClinicalLocation()).Format("2006-01-02")
+	if code, got := list("?date=" + today); code != http.StatusOK || len(got) != 2 || got[0].ShiftType != "report" {
+		t.Fatalf("today: want 2 reports, got %d %+v", code, got)
+	}
+	twoDaysAgo := time.Now().In(handlers.ClinicalLocation()).AddDate(0, 0, -2).Format("2006-01-02")
+	if _, got := list("?date=" + twoDaysAgo); len(got) != 1 || got[0].Summary != "refused lunch" {
+		t.Fatalf("two days ago: want the one report, got %+v", got)
+	}
+	if code, _ := list("?date=yesterday"); code != http.StatusBadRequest {
+		t.Fatalf("bad date: want 400, got %d", code)
+	}
+}

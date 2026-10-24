@@ -28,10 +28,24 @@ func (h *HandoverHandler) ListHandovers(w http.ResponseWriter, r *http.Request) 
 		limit = l
 	}
 
+	// ?date=YYYY-MM-DD: every note of that household day (the Report page lists
+	// all of a day's reports, not only the latest).
+	where, args := "", []interface{}{}
+	if d := strings.TrimSpace(r.URL.Query().Get("date")); d != "" {
+		_, start, ok := parseClinicalDate(d)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_DATE", "date must be YYYY-MM-DD")
+			return
+		}
+		where = "WHERE datetime(n.created_at) >= datetime(?) AND datetime(n.created_at) < datetime(?)"
+		args = append(args, start.UTC().Format(sqliteTimeLayout), start.AddDate(0, 0, 1).UTC().Format(sqliteTimeLayout))
+		limit = 100
+	}
 	rows, err := h.DB.Query(handoverNoteSelect+`
+		`+where+`
 		ORDER BY n.created_at DESC
 		LIMIT ?
-	`, limit)
+	`, append(args, limit)...)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch handovers"}`, http.StatusInternalServerError)
 		return

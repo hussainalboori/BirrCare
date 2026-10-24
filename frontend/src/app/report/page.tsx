@@ -3,13 +3,13 @@
 import React from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { SiblingBar } from "@/components/SiblingBar";
-import { LastHandover } from "@/components/LastHandover";
+import { DayReports } from "@/components/DayReports";
 import { PushOptIn } from "@/components/PushOptIn";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 
-// The last handover and lock-screen alerts, kept off the medicines page so it
-// stays short. Repositioning, fluids and bowel are on Vitals & Tracker.
+// Reports as they happen (several a day, every one listed) and lock-screen
+// alerts. Repositioning, fluids and bowel are on Vitals & Tracker.
 export default function ReportPage() {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -24,7 +24,7 @@ export default function ReportPage() {
           {ar ? "التقرير" : "Report"}
         </h1>
         <SiblingBar className="mb-4" />
-        <LastHandover />
+        <DayReports />
         <PushOptIn />
       </main>
     </div>
