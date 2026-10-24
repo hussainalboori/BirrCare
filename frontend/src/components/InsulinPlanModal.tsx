@@ -202,10 +202,11 @@ export function InsulinPlanModal({ plans, onClose, onSaved }: Props) {
                 </div>
                 <div className="space-y-2">
                   {draft.rows.map((r, i) => (
-                    <div key={i} className="grid grid-cols-3 gap-2" dir="ltr">
+                    <div key={i} className="grid grid-cols-3 gap-2">
                       {(["min", "max", "units"] as const).map((k) => (
                         <input
                           key={k}
+                          dir="ltr"
                           className="min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2 text-center text-base font-bold text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:bg-slate-100 disabled:text-slate-500 dark:disabled:bg-slate-900"
                           inputMode="decimal"
                           value={r[k]}
