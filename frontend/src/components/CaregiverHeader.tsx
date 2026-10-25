@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus, RESYNC_EVENT } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock, Download } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock, Download, FileText } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
 import { useRouter } from "next/navigation";
@@ -19,6 +19,7 @@ import { TwoFactorModal } from "./TwoFactorModal";
 import { ThemePicker, themeLabel, useThemeMode } from "./ThemePicker";
 import { DevicePairingModal } from "./DevicePairingModal";
 import { UpdatesModal } from "./UpdatesModal";
+import { AdminLogsModal } from "./AdminLogsModal";
 import { UPDATE_STATUS_EVENT, fetchUpdateStatus } from "@/lib/updates";
 import { backupNeedsAttention, fetchBackupStatus } from "@/lib/backups";
 
@@ -40,6 +41,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const [isUpdatesOpen, setIsUpdatesOpen] = useState(false);
+  const [isLogsOpen, setIsLogsOpen] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
   const [backupAttention, setBackupAttention] = useState(false);
   const themeMode = useThemeMode();
@@ -99,6 +101,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       ? [
           { key: "users", icon: ShieldAlert, label: t.userManagement, short: ar ? "المستخدمون" : "Users", tone: "bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60", onClick: () => setIsUserModalOpen(true) },
           { key: "shifts", icon: Clock, label: t.manageShifts, short: ar ? "الورديات" : "Shifts", tone: "bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60", onClick: () => setIsShiftModalOpen(true) },
+          {
+            key: "logs",
+            icon: FileText,
+            label: ar ? "سجلات النظام والعمليات" : "System & User Logs",
+            short: ar ? "السجلات" : "Logs",
+            tone: "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:hover:bg-indigo-900/60",
+            onClick: () => setIsLogsOpen(true),
+          },
           {
             key: "updates",
             icon: Download,
@@ -391,8 +401,12 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       <ChangePinModal isOpen={isChangePinOpen} onClose={() => setIsChangePinOpen(false)} />
       <TwoFactorModal isOpen={isTwoFactorOpen} onClose={() => setIsTwoFactorOpen(false)} />
       <ThemePicker isOpen={isThemeOpen} onClose={() => setIsThemeOpen(false)} />
-      <DevicePairingModal isOpen={isDeviceModalOpen} onClose={() => setIsDeviceModalOpen(false)} />
-      {superAdmin && <UpdatesModal isOpen={isUpdatesOpen} onClose={() => setIsUpdatesOpen(false)} />}
+      {superAdmin && (
+        <>
+          <UpdatesModal isOpen={isUpdatesOpen} onClose={() => setIsUpdatesOpen(false)} onOpenLogs={() => setIsLogsOpen(true)} />
+          <AdminLogsModal isOpen={isLogsOpen} onClose={() => setIsLogsOpen(false)} />
+        </>
+      )}
 
       {/* Mobile menu: bottom sheet within thumb reach */}
       {isMenuOpen && (

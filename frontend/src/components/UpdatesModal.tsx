@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileText, Loader2, XCircle } from "lucide-react";
 import { useLanguage } from "@/context/LanguageContext";
 import { fetchApi } from "@/lib/api";
 import { CHECKER_COMMAND, UPDATE_STATUS_EVENT, UpdateStatus, fetchUpdateStatus, shortSha } from "@/lib/updates";
@@ -16,7 +16,7 @@ type Phase = "idle" | "crisis" | "installing" | "done" | "failed";
 
 const POLL_MS = 5000;
 
-export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function UpdatesModal({ isOpen, onClose, onOpenLogs }: { isOpen: boolean; onClose: () => void; onOpenLogs?: () => void }) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -172,6 +172,32 @@ export function UpdatesModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
         <div className="mb-4 border-b border-slate-200 pb-4 dark:border-slate-800">
           <BackupsCard ar={ar} />
         </div>
+
+        {onOpenLogs && (
+          <div className="mb-4 border-b border-slate-200 pb-4 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  {ar ? "سجلات النظام والعمليات" : "System & User Logs"}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {ar ? "فحص نشاط المستخدمين وأحداث الخادم وتدقيق الوصول" : "Inspect user activity, system events, and access audits"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenLogs();
+                }}
+                className="flex min-h-12 shrink-0 items-center gap-1.5 rounded-xl bg-indigo-50 px-3 text-sm font-bold text-indigo-700 hover:bg-indigo-100 active:scale-95 dark:bg-indigo-950/60 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+              >
+                <FileText className="h-4 w-4" />
+                <span>{ar ? "فتح السجلات" : "View Logs"}</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         <h3 className="mb-2 text-base font-black text-slate-900 dark:text-white">{ar ? "التحديثات" : "Updates"}</h3>
         {!s ? (
