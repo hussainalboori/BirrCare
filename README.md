@@ -45,6 +45,27 @@ Birrcare is built specifically for real-world home caregiving, where multiple fa
 
 ---
 
+## Centralized Logging and Audit Architecture
+
+Birrcare implements a centralized, production-ready logging system that separates user activity from system events and strictly restricts log viewing to the Super Admin:
+
+### 1. Separation of Log Streams
+- **User Activity & Errors (`UserLogStore` / `user_logs`):** Captures caregiver actions, medication intake, vital entry, smart authentication switches, and user-facing HTTP errors (4xx/5xx).
+- **System Events (`SystemLogStore` / `system_logs`):** Emits server lifecycle events, database migrations, connection pool state, Web Push deliveries, duty handover reminders, and backup/updater diagnostics.
+- Both streams are captured through a single, concurrent-safe `Logger` instance that explicitly handles sink failures (outputting diagnostics to a fallback sink) rather than silently dropping events.
+
+### 2. Role Model and Access Control
+- **Super Admin Only (`super_admin`):** Access to view, search, paginate, or export logs across either stream is enforced server-side.
+- **Strict Enforcement:** Unauthenticated requests receive `401 Unauthorized`. Requests from other authenticated roles (`admin`, `caregiver`, `viewer`) are rejected with `403 Forbidden`.
+- Accessible via Super Admin endpoints under `/api/v1/admin/logs/user`, `/api/v1/admin/logs/system`, and `/api/v1/admin/logs/export`.
+
+### 3. Auditable Log Access (`log_access_audits`)
+- Every viewing, search, pagination, or export operation performed by a Super Admin is itself recorded into a dedicated access-audit store (`log_access_audits`).
+- Access records capture the Super Admin ID, stream queried, operation type (`list`, `read`, `export`), applied filters, records count, IP address, and timestamp.
+- The access audit records are themselves protected and viewable only by the Super Admin via `/api/v1/admin/logs/access-audits`.
+
+---
+
 ## How It Works
 
 Birrcare uses a lightweight, decoupled stack designed to run reliably on affordable hardware (such as an old laptop or a Raspberry Pi 4/5):

@@ -10,6 +10,7 @@ import (
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/handlers"
+	"birrcare/backend/internal/logging"
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 
@@ -37,6 +38,10 @@ type Options struct {
 	PhotoDir string
 	// BackupDir is shared with the host backup script (issue #51).
 	BackupDir string
+	// Logger is the centralized logger instance.
+	Logger *logging.Logger
+	// AccessAuditStore stores and queries super admin log access audits.
+	AccessAuditStore logging.AccessAuditStore
 }
 
 // OptionsFromEnv returns production defaults, reading CORS_ALLOWED_ORIGINS
@@ -96,6 +101,18 @@ func NewRouter(o Options) http.Handler {
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
+	logger := o.Logger
+	accessAuditStore := o.AccessAuditStore
+	if logger == nil && o.DB != nil {
+		uStore := logging.NewSQLiteUserLogStore(o.DB)
+		sStore := logging.NewSQLiteSystemLogStore(o.DB)
+		logger = logging.NewLogger(uStore, sStore)
+	}
+	if accessAuditStore == nil && o.DB != nil {
+		accessAuditStore = logging.NewSQLiteAccessAuditStore(o.DB)
+	}
+	logsHandler := handlers.NewAdminLogsHandler(logger, accessAuditStore)
+
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -117,6 +134,7 @@ func NewRouter(o Options) http.Handler {
 	}))
 
 	r.Use(auth.MiddlewareWithConfig(o.DB, o.Auth))
+	r.Use(logging.HTTPMiddleware(logger))
 
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -191,6 +209,14 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/users/{id}/reset-pin", usersHandler.ResetUserPIN)
 				api.Delete("/users/{id}", usersHandler.ToggleUserActive)
 				api.Get("/audit/verify", auditHandler.Verify)
+
+				// Super Admin Logging & Audit (Super Admin only - enforced in handlers)
+				api.Get("/admin/logs/user", logsHandler.ListUserLogs)
+				api.Get("/admin/logs/user/{id}", logsHandler.GetUserLog)
+				api.Get("/admin/logs/system", logsHandler.ListSystemLogs)
+				api.Get("/admin/logs/system/{id}", logsHandler.GetSystemLog)
+				api.Get("/admin/logs/export", logsHandler.ExportLogs)
+				api.Get("/admin/logs/access-audits", logsHandler.ListAccessAudits)
 
 				// Updates: offered, installed only when the Super Admin asks (issue #43)
 				api.Get("/admin/update/status", updatesHandler.GetStatus)

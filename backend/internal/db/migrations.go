@@ -319,6 +319,58 @@ CREATE TABLE IF NOT EXISTS paired_devices (
     is_revoked INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_paired_devices_hash ON paired_devices(device_token_hash);
+
+-- 15. User Activity & Error Logs (Dedicated User Log Store)
+CREATE TABLE IF NOT EXISTS user_logs (
+    id TEXT PRIMARY KEY,
+    caregiver_id TEXT REFERENCES caregivers(id) ON DELETE SET NULL,
+    caregiver_name TEXT,
+    level TEXT NOT NULL CHECK (level IN ('debug', 'info', 'warn', 'error')),
+    action TEXT NOT NULL,
+    resource TEXT,
+    status_code INTEGER,
+    ip_address TEXT,
+    user_agent TEXT,
+    message TEXT NOT NULL,
+    metadata TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_user_logs_created_at ON user_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_logs_caregiver_id ON user_logs(caregiver_id);
+CREATE INDEX IF NOT EXISTS idx_user_logs_level ON user_logs(level);
+CREATE INDEX IF NOT EXISTS idx_user_logs_action ON user_logs(action);
+
+-- 16. System Events & Operational Logs (Dedicated System Log Store)
+CREATE TABLE IF NOT EXISTS system_logs (
+    id TEXT PRIMARY KEY,
+    level TEXT NOT NULL CHECK (level IN ('debug', 'info', 'warn', 'error', 'fatal')),
+    subsystem TEXT NOT NULL,
+    event TEXT NOT NULL,
+    message TEXT NOT NULL,
+    error_details TEXT,
+    metadata TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level);
+CREATE INDEX IF NOT EXISTS idx_system_logs_subsystem ON system_logs(subsystem);
+CREATE INDEX IF NOT EXISTS idx_system_logs_event ON system_logs(event);
+
+-- 17. Super Admin Log Access Audits (Protected Access Audit Store)
+CREATE TABLE IF NOT EXISTS log_access_audits (
+    id TEXT PRIMARY KEY,
+    caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+    caregiver_name TEXT NOT NULL,
+    stream TEXT NOT NULL CHECK (stream IN ('user', 'system', 'both', 'access_audit')),
+    operation TEXT NOT NULL CHECK (operation IN ('list', 'read', 'search', 'export')),
+    filter_query TEXT,
+    records_count INTEGER NOT NULL DEFAULT 0,
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_log_access_audits_created_at ON log_access_audits(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_log_access_audits_caregiver ON log_access_audits(caregiver_id);
 `
 
 // Migrate runs schema migrations and seeds initial data if tables are empty.

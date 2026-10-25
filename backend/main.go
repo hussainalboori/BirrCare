@@ -13,6 +13,7 @@ import (
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
 	"birrcare/backend/internal/handlers"
+	"birrcare/backend/internal/logging"
 	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/server"
 	"birrcare/backend/internal/sse"
@@ -59,12 +60,25 @@ func main() {
 		log.Printf("[PUSH] disabled: %v", err)
 	}
 
+	// 5b. Centralized Logger & Stores (User Logs, System Logs, Access Audit)
+	userLogStore := logging.NewSQLiteUserLogStore(database)
+	systemLogStore := logging.NewSQLiteSystemLogStore(database)
+	accessAuditStore := logging.NewSQLiteAccessAuditStore(database)
+	appLogger := logging.NewLogger(userLogStore, systemLogStore)
+	_ = appLogger.SystemInfo(context.Background(), "server", "startup", fmt.Sprintf("Starting Birrcare backend on :%s", port), map[string]any{
+		"port":     port,
+		"db_path":  dbPath,
+		"timezone": handlers.ClinicalLocation().String(),
+	})
+
 	// 6. Router & Middleware
 	opts := server.OptionsFromEnv(database, broker)
 	opts.Push = notifier
 	opts.UpdateDir = handlers.UpdateDirFromEnv(dbPath)
 	opts.PhotoDir = handlers.PhotoDirFromEnv(dbPath)
 	opts.BackupDir = handlers.BackupDirFromEnv(dbPath)
+	opts.Logger = appLogger
+	opts.AccessAuditStore = accessAuditStore
 	r := server.NewRouter(opts)
 
 	// 7. Tell a sibling when the duty they passed has not been accepted (issue #18)
@@ -103,6 +117,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down Birrcare backend...")
+	_ = appLogger.SystemInfo(context.Background(), "server", "shutdown", "Birrcare backend shutting down gracefully", nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
