@@ -6,7 +6,7 @@ Rooted in the Islamic value of *Birr al-Walidayn* (honoring and caring for one's
 
 ### 🎬 See it in action
 
-[![BirrCare feature walkthrough (1:47)](docs/media/walkthrough-poster.jpg)](docs/media/birrcare-walkthrough.mp4)
+https://github.com/user-attachments/assets/5c362f37-57e0-46fa-ad2d-70f39b5843d3
 
 *A 1:47 tour of the main features: medication schedule, double-dose prevention, PRN safeguards, crisis alerts, the F.A.S.T. check, insulin barriers, shift handovers, the paramedic card, and Arabic/night mode. Screens use demo data.*
 
