@@ -4,6 +4,12 @@ Birrcare is a self-hosted, mobile-first web app designed to help siblings coordi
 
 Rooted in the Islamic value of *Birr al-Walidayn* (honoring and caring for one's parents), Birrcare gives the whole family a single, shared source of truth. When one sibling gives a medication dose, logs a blood pressure reading, or finishes a shift, every other family member's phone updates instantly without refreshing.
 
+### 🎬 See it in action
+
+[![BirrCare feature walkthrough (1:47)](docs/media/walkthrough-poster.jpg)](docs/media/birrcare-walkthrough.mp4)
+
+*A 1:47 tour of the main features: medication schedule, double-dose prevention, PRN safeguards, crisis alerts, the F.A.S.T. check, insulin barriers, shift handovers, the paramedic card, and Arabic/night mode. Screens use demo data.*
+
 ---
 
 ## Quick Start
