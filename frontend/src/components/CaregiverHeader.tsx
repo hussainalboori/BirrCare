@@ -239,7 +239,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               <span className="hidden truncate text-xs font-medium text-slate-500 dark:text-slate-400 sm:block">
                 {t.activeCaregiver}
               </span>
-              <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-1.5">
+              <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-1.5 sm:flex-wrap">
                 <span className="max-w-full text-sm font-bold leading-tight text-slate-900 dark:text-white">
                   {currentCaregiver?.name || "..."}
                 </span>
@@ -301,25 +301,8 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
             </div>
           </div>
 
-          {/* One row: name, then (from 1760px, where even the Super Admin's full set fits) every labelled action and
-              Switch. Below that the actions live in the labelled Menu sheet. */}
+          {/* Right: Actions Menu & Switch Profile */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <div className="hidden min-[1760px]:flex items-center gap-1">
-              {actions.map((a) => (
-                <button
-                  key={a.key}
-                  type="button"
-                  onClick={a.onClick}
-                  title={a.label}
-                  className={`flex min-h-12 items-center gap-1 rounded-xl px-2 text-sm font-semibold transition-colors active:scale-95 ${a.tone}`}
-                >
-                  <a.icon className="h-4 w-4 shrink-0" />
-                  <span className="whitespace-nowrap">{a.short}</span>
-                  {a.dot && <span data-testid={`action-dot-${a.key}`} className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
-                </button>
-              ))}
-            </div>
-
             {/* SOS (issue #19): the paramedics' card, from this phone's cache if offline */}
             {emergencyToken && (
               <a
@@ -349,7 +332,7 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
               onClick={() => setIsMenuOpen(true)}
               aria-label={locale === "ar" ? "القائمة" : "Menu"}
               aria-expanded={isMenuOpen}
-              className="relative flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 px-1.5 text-xs font-semibold sm:flex-row sm:gap-1.5 sm:px-3 text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200 min-[1760px]:hidden"
+              className="relative flex min-h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl border border-slate-200 px-1.5 text-xs font-semibold sm:flex-row sm:gap-1.5 sm:px-3 text-slate-700 active:scale-95 dark:border-slate-700 dark:text-slate-200"
             >
               <Menu className="h-5 w-5 shrink-0" />
               <span>{ar ? "القائمة" : "Menu"}</span>
@@ -408,14 +391,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
         </>
       )}
 
-      {/* Mobile menu: bottom sheet within thumb reach */}
+      {/* Menu: bottom sheet on mobile, centered modal dialog on desktop */}
       {isMenuOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs min-[1760px]:hidden" onClick={() => setIsMenuOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs sm:items-center sm:p-4" onClick={() => setIsMenuOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"
             aria-label={ar ? "القائمة" : "Menu"}
-            className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900"
+            className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-2 flex items-center justify-between">
