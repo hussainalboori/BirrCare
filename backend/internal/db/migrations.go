@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -1089,6 +1089,34 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("failed migrating alerts for fall and seizure: %w", err)
 		}
 	}
+	// Migrate alerts for inr_out_of_range (issue #62), keeping resolved_at.
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'inr_out_of_range'") {
+		log.Println("Migrating alerts: adding inr_out_of_range kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v14;
+			CREATE TABLE alerts_v14 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id),
+				resolved_at TEXT
+			);
+			INSERT INTO alerts_v14 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v14 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for inr_out_of_range: %w", err)
+		}
+	}
 	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dose_overdue ON alerts(ref_id) WHERE kind = 'dose_overdue'`); err != nil {
 		return fmt.Errorf("failed creating uq_alerts_dose_overdue: %w", err)
 	}
@@ -1171,6 +1199,36 @@ func Migrate(database *sql.DB) error {
 				return fmt.Errorf("failed adding medications.%s: %w", c, err)
 			}
 		}
+	}
+
+	// Issue #62: a dose that changes by weekday (JSON {"sat":"2.5 mg",...}), also
+	// kept in the schedule history; and lab results (INR) with the doctor's range.
+	for _, c := range []struct{ table, col string }{{"medications", "dose_by_day"}, {"medication_schedule_versions", "dose_by_day"}} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('"+c.table+"') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE " + c.table + " ADD COLUMN " + c.col + " TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed adding %s.%s: %w", c.table, c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS lab_results (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('inr', 'hba1c', 'other')),
+			value REAL NOT NULL,
+			unit TEXT NOT NULL DEFAULT '',
+			taken_on TEXT NOT NULL,
+			next_test_on TEXT,
+			out_of_range INTEGER NOT NULL DEFAULT 0,
+			notes TEXT NOT NULL DEFAULT '',
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+			created_at TEXT NOT NULL,
+			client_request_id TEXT UNIQUE
+		);
+		CREATE INDEX IF NOT EXISTS idx_lab_results_kind ON lab_results(kind, taken_on DESC);
+	`); err != nil {
+		return fmt.Errorf("failed creating lab_results: %w", err)
 	}
 
 	// Ensure care_events table exists

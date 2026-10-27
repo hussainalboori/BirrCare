@@ -104,7 +104,7 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
 		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1),
-		       COALESCE(active_ingredient, ''), COALESCE(drug_class, '')
+		       COALESCE(active_ingredient, ''), COALESCE(drug_class, ''), COALESCE(dose_by_day, '')
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -121,12 +121,15 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var isPRNInt int
 		var prnMinHours sql.NullFloat64
 		var prnMax24h sql.NullInt64
-		var slotsJSON, photosJSON string
+		var slotsJSON, photosJSON, doseByDayJSON string
 		var createdAtStr string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass, &doseByDayJSON); err != nil {
 			continue
+		}
+		if doseByDayJSON != "" {
+			_ = json.Unmarshal([]byte(doseByDayJSON), &m.DoseByDay)
 		}
 		m.PhotoURLs = parsePhotoURLs(photosJSON)
 		m.IsPRN = isPRNInt == 1
@@ -200,6 +203,8 @@ type CreateMedicationRequest struct {
 	StockSettings
 	// Active ingredient and drug class (issue #61).
 	IngredientFields
+	// DoseByDay (issue #62): a different dose on some weekdays, e.g. {"sat":"2.5 mg"}.
+	DoseByDay map[string]string `json:"dose_by_day,omitempty"`
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +288,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	warning := bloodThinnerWarning(h.DB, drugClass, "")
+	doseByDay, derr := cleanDoseByDay(req.DoseByDay)
+	if derr != "" {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_DOSE_BY_DAY", derr)
+		return
+	}
 
 	id := "med_" + uuid.New().String()[:8]
 	if msg := req.StockSettings.validate(); msg != "" {
@@ -306,9 +316,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class, dose_by_day)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass, doseByDay)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -395,6 +405,8 @@ type UpdateMedicationRequest struct {
 	EffectiveFrom string `json:"effective_from,omitempty"`
 	// Active ingredient and drug class (issue #61).
 	IngredientFields
+	// DoseByDay (issue #62): replaces the weekday doses; {} clears them.
+	DoseByDay *map[string]string `json:"dose_by_day,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        *bool    `json:"is_prn,omitempty"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -604,6 +616,17 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 
 	if req.IsCritical != nil {
 		if _, err := tx.Exec("UPDATE medications SET is_critical = ? WHERE id = ?", *req.IsCritical, medID); err != nil {
+			internalError(w, "failed to update medication", err)
+			return
+		}
+	}
+	if req.DoseByDay != nil {
+		doseByDay, derr := cleanDoseByDay(*req.DoseByDay)
+		if derr != "" {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_DOSE_BY_DAY", derr)
+			return
+		}
+		if _, err := tx.Exec("UPDATE medications SET dose_by_day = ? WHERE id = ?", doseByDay, medID); err != nil {
 			internalError(w, "failed to update medication", err)
 			return
 		}
@@ -1145,6 +1168,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 	// The schedule in effect on this date, plus any dose logged that day whatever
 	// the schedule said; a medicine with neither isn't shown.
 	kept := meds[:0]
+	doseChanged := map[string]bool{}
 	for _, m := range meds {
 		var logged []string
 		for _, slot := range allSlotsInOrder {
@@ -1158,7 +1182,11 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		if ok {
-			m.FrequencySlots, m.DaysOfWeek, m.SlotTimes, m.Dosage = v.Slots, v.Days, v.Times, v.Dosage
+			// That day's dose (issue #62: warfarin 2.5 mg at weekends).
+			m.FrequencySlots, m.DaysOfWeek, m.SlotTimes, m.Dosage = v.Slots, v.Days, v.Times, v.doseOn(dateStr)
+			if pv, pok := versionOn(versions[m.ID], dayBefore(dateStr)); pok && pv.doseOn(dayBefore(dateStr)) != m.Dosage {
+				doseChanged[m.ID] = true
+			}
 		} else {
 			m.FrequencySlots, m.DaysOfWeek, m.SlotTimes = nil, []string{}, normalizeSlotTimes(nil, logged)
 		}
@@ -1216,6 +1244,7 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 				LastTaken:     lastTaken[m.ID],
 				VoidedLogs:    voidedMap[key],
 				IntervalHours: intervalHours(m.MinHoursBetween, m.FrequencySlots, m.SlotTimes),
+				DoseChanged:   doseChanged[m.ID],
 			}
 			if last := item.LastTaken; last != nil && item.IntervalHours > 0 {
 				if t, err := time.Parse(time.RFC3339, last.TakenAt); err == nil {
@@ -1415,6 +1444,7 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := versionOn(versions[req.MedicationID], req.ScheduledDate); ok && slices.Contains(v.Slots, req.Slot) {
 		slots, slotTimes = v.Slots, v.Times
+		dosage = v.doseOn(req.ScheduledDate) // the day's dose goes in dosage_snapshot (issue #62)
 	} else if !slices.Contains(slots, req.Slot) {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_SLOT", "medication is not scheduled for this slot")
 		return
@@ -1783,4 +1813,28 @@ func parsePhotoURLs(s string) []string {
 		out = []string{}
 	}
 	return out
+}
+
+// cleanDoseByDay validates weekday doses and returns them as stored JSON ("" for
+// none). Keys are sun..sat; an empty value means "the usual dose" (issue #62).
+func cleanDoseByDay(in map[string]string) (string, string) {
+	out := map[string]string{}
+	for k, v := range in {
+		k = strings.ToLower(strings.TrimSpace(k))
+		v = strings.TrimSpace(v)
+		if !slices.Contains(allDaysOfWeek, k) {
+			return "", "dose_by_day keys must be sun, mon, tue, wed, thu, fri or sat"
+		}
+		if len(v) > 40 {
+			return "", "a dose is too long"
+		}
+		if v != "" {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return "", ""
+	}
+	b, _ := json.Marshal(out)
+	return string(b), ""
 }

@@ -19,6 +19,8 @@ interface Settings {
   fever_high_c?: number;
   reposition_interval_minutes?: number;
   fluid_daily_target_ml?: number;
+  inr_target_low?: number;
+  inr_target_high?: number;
 }
 
 export function ClinicalThresholds() {
@@ -34,6 +36,8 @@ export function ClinicalThresholds() {
     fever_high_c: "39",
     reposition_interval_minutes: "120",
     fluid_daily_target_ml: "1500",
+    inr_target_low: "2",
+    inr_target_high: "3",
   });
   const [msg, setMsg] = useState("");
   const admin = canManageMedications(currentCaregiver?.role);
@@ -52,6 +56,8 @@ export function ClinicalThresholds() {
           fever_high_c: String(t.fever_high_c ?? 39),
           reposition_interval_minutes: String(t.reposition_interval_minutes ?? 120),
           fluid_daily_target_ml: String(t.fluid_daily_target_ml ?? 1500),
+          inr_target_low: String(t.inr_target_low ?? 2),
+          inr_target_high: String(t.inr_target_high ?? 3),
         });
       })
       .catch(() => {});
@@ -72,8 +78,8 @@ export function ClinicalThresholds() {
     } catch {
       setMsg(
         ar
-          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39، الحمّى الشديدة 38.5–40 وأعلى من الحمّى، فاصل التقليب 30–360 دقيقة، هدف السوائل 500–5000 مل"
-          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39, high fever 38.5–40 and above fever, reposition interval 30–360m, fluid target 500–5000ml"
+          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39، الحمّى الشديدة 38.5–40 وأعلى من الحمّى، فاصل التقليب 30–360 دقيقة، هدف السوائل 500–5000 مل، مدى INR بين 1.5 و4.5"
+          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39, high fever 38.5–40 and above fever, reposition interval 30–360m, fluid target 500–5000ml, INR range within 1.5–4.5"
       );
     }
   };
@@ -95,7 +101,7 @@ export function ClinicalThresholds() {
   return (
     <details className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
       <summary className="min-h-12 cursor-pointer text-sm font-bold text-slate-800 dark:text-slate-100">
-        {ar ? "حدود الطبيب: الضغط المنخفض والأكسجين والحمّى ومؤقت التقليب وهدف السوائل (للمسؤول)" : "Doctor's limits: low BP, oxygen, fever, reposition interval, fluid target (admin)"}
+        {ar ? "حدود الطبيب: الضغط المنخفض والأكسجين والحمّى ومؤقت التقليب وهدف السوائل ومدى INR (للمسؤول)" : "Doctor's limits: low BP, oxygen, fever, reposition interval, fluid target, INR range (admin)"}
       </summary>
       <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
         {ar ? "الضغط منخفض إذا كان الانقباضي أقل من أو الانبساطي أقل من:" : "BP is low when systolic is below, or diastolic is below:"}
@@ -124,6 +130,13 @@ export function ClinicalThresholds() {
       </p>
       <div className="mt-2 flex flex-wrap items-end gap-2">
         {field("fluid_daily_target_ml", ar ? "الهدف (مل)" : "Target (ml)")}
+      </div>
+      <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+        {ar ? "مدى INR الذي حدده الطبيب (للوارفارين). النتيجة خارجه تنبّه المسؤولين:" : "The doctor's INR range (warfarin). A result outside it alerts the admins:"}
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        {field("inr_target_low", ar ? "من" : "From", "0.1")}
+        {field("inr_target_high", ar ? "إلى" : "To", "0.1")}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" onClick={save} className="min-h-12 rounded-xl bg-emerald-700 px-4 text-base font-bold text-white">

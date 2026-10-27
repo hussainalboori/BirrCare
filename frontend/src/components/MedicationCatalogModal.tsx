@@ -24,6 +24,16 @@ import {
 import { StartingWhen, type StartingWhenValue } from "./StartingWhen";
 import { DRUG_CLASSES, KNOWN_INGREDIENTS, suggestIngredient, type DrugClass } from "@/lib/ingredients";
 
+const DAY_KEYS: [string, string, string][] = [
+  ["sun", "Sunday", "الأحد"],
+  ["mon", "Monday", "الاثنين"],
+  ["tue", "Tuesday", "الثلاثاء"],
+  ["wed", "Wednesday", "الأربعاء"],
+  ["thu", "Thursday", "الخميس"],
+  ["fri", "Friday", "الجمعة"],
+  ["sat", "Saturday", "السبت"],
+];
+
 interface MedicationCatalogModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -108,6 +118,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [duplicateReason, setDuplicateReason] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  // Issue #62: a different dose on some weekdays (warfarin 2.5 mg at weekends).
+  const [doseByDay, setDoseByDay] = useState<Record<string, string>>({});
+  const [showDoseByDay, setShowDoseByDay] = useState(false);
   const [startingWhen, setStartingWhen] = useState<StartingWhenValue>("today");
   const [prnMax24h, setPrnMax24h] = useState("4");
   const [prnMinHours, setPrnMinHours] = useState("4");
@@ -162,6 +175,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setRemind(true);
     setIngredient("");
     setDrugClass("");
+    setDoseByDay({});
+    setShowDoseByDay(false);
     setDuplicate(null);
     setDuplicateReason("");
     setSaveError("");
@@ -196,6 +211,8 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setIsCritical(!!med.is_critical);
     setRemind(med.remind !== false);
     setIngredient(med.active_ingredient || "");
+    setDoseByDay(med.dose_by_day || {});
+    setShowDoseByDay(Object.keys(med.dose_by_day || {}).length > 0);
     setDrugClass((med.drug_class as DrugClass) || "");
     setDuplicate(null);
     setDuplicateReason("");
@@ -278,6 +295,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
           }
         : {
             is_prn: false,
+            dose_by_day: showDoseByDay ? doseByDay : {},
             frequency_slots: selectedSlots,
             days_of_week: daysOfWeek,
             slot_times: slotTimes,
@@ -696,6 +714,39 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     </p>
                   </div>
                 </>
+              )}
+
+              {/* DOSE BY WEEKDAY (issue #62) */}
+              {!isPRN && (
+                <div className="mb-4 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <label className="flex min-h-12 items-center gap-3 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    <input type="checkbox" checked={showDoseByDay} onChange={(e) => setShowDoseByDay(e.target.checked)} className="h-5 w-5" data-testid="dose-by-day-toggle" />
+                    {locale === "ar" ? "جرعة مختلفة في بعض الأيام؟ (مثل الوارفارين)" : "A different dose on some days? (e.g. warfarin)"}
+                  </label>
+                  {showDoseByDay && (
+                    <>
+                      <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+                        {locale === "ar" ? "اترك اليوم فارغاً لاستخدام الجرعة المعتادة: " : "Leave a day empty for the usual dose: "}
+                        <bdi dir="ltr">{dosage || "—"}</bdi>
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {DAY_KEYS.map(([key, en, ar]) => (
+                          <label key={key} className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                            {locale === "ar" ? ar : en}
+                            <input
+                              value={doseByDay[key] || ""}
+                              onChange={(e) => setDoseByDay((d) => ({ ...d, [key]: e.target.value }))}
+                              placeholder={dosage}
+                              dir="ltr"
+                              data-testid={`dose-${key}`}
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-base text-slate-800 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-800"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
 
               {/* ACTIVE INGREDIENT AND TYPE (issue #61) */}

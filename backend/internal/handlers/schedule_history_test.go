@@ -167,3 +167,14 @@ func TestScheduleChangeFromTomorrowLeavesToday(t *testing.T) {
 		t.Fatalf("bad effective_from: want 400, got %d", rec.Code)
 	}
 }
+
+func scheduleDoses(t *testing.T, h *handlers.MedicationHandler, date string) []models.ScheduledDose {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.GetSchedule(rec, httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date="+date, nil))
+	var out struct {
+		Schedule []models.ScheduledDose `json:"schedule"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	return out.Schedule
+}

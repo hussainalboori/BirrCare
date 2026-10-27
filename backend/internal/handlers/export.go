@@ -45,6 +45,9 @@ type DoctorSummaryResponse struct {
 	Pauses []CarePause `json:"pauses"`
 	// Falls and seizures in the period (issue #60), newest first.
 	Incidents []Incident `json:"incidents"`
+	// Lab results (INR) in the period and the doctor's INR range (issue #62).
+	LabResults []LabResult `json:"lab_results"`
+	INRTarget  INRTarget   `json:"inr_target"`
 }
 
 // DailyFluid is one household-local day of fluid intake (issue #28).
@@ -360,6 +363,11 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	if pauses == nil {
 		pauses = []CarePause{}
 	}
+	labs, err := labsSince(h.DB, "", startDate.Format("2006-01-02"))
+	if err != nil {
+		internalError(w, "failed to load lab results", err)
+		return
+	}
 	incidents, err := incidentsSince(h.DB, time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc))
 	if err != nil {
 		internalError(w, "failed to load falls and seizures", err)
@@ -548,6 +556,8 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		PRNLogs:         prnLogs,
 		Pauses:          pauses,
 		Incidents:       incidents,
+		LabResults:      labs,
+		INRTarget:       currentINRTarget(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

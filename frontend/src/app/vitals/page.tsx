@@ -14,6 +14,7 @@ import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/li
 import { CorrectionNote, CorrectVital } from "@/components/VitalCorrection";
 import { OxygenTempBadges, SpO2Fields, TemperatureField } from "@/components/OxygenTemp";
 import { BruiseCard } from "@/components/BruiseCard";
+import { INRCard } from "@/components/INRCard";
 import { FluidBowelCard } from "@/components/FluidBowelCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
@@ -982,6 +983,7 @@ export default function VitalsPage() {
 
         {/* Trackers: bruises and bleeding (blood thinner), fluids and bowel (#28).
             Repositioning (#27) is off the page: she walks and moves by herself. */}
+        <INRCard />
         <BruiseCard />
         <FluidBowelCard />
 

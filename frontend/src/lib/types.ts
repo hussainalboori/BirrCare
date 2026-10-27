@@ -88,6 +88,8 @@ export interface Medication {
   /** Lowercase INN and drug class (issue #61). */
   active_ingredient?: string;
   drug_class?: string;
+  /** Issue #62: the dose on some weekdays, e.g. { sat: "2.5 mg" }. */
+  dose_by_day?: Record<string, string>;
   /** PRN (as-needed) medication (issue #25). */
   is_prn?: boolean;
   prn_min_hours?: number | null;
@@ -169,6 +171,8 @@ export interface ScheduledDose {
   interval_hours?: number;
   /** RFC3339; present while the medication is still inside its minimum interval. */
   next_allowed_at?: string;
+  /** Issue #62: the dose differs from yesterday's (a dose by weekday). */
+  dose_changed_from_yesterday?: boolean;
 }
 
 export interface DailyScheduleResponse {
@@ -313,6 +317,9 @@ export interface DoctorSummary {
   }[];
   /** Falls and seizures in the period (issue #60), newest first. */
   incidents?: { id: string; kind: "fall" | "seizure"; at: string; hit_head?: boolean; awake_normal?: boolean; pain_or_bleeding?: boolean; duration_seconds?: number; repeat?: boolean; escalate: boolean; by?: string }[];
+  /** Lab results (INR) in the period, newest first, and the doctor's INR range (issue #62). */
+  lab_results?: { id: string; kind: "inr" | "hba1c" | "other"; value: number; unit?: string; taken_on: string; out_of_range: boolean; next_test_on?: string }[];
+  inr_target?: { inr_target_low: number; inr_target_high: number };
   /** Hospital stays / time away in the period (issue #59). */
   pauses?: { id: string; reason: "hospital" | "travel" | "other"; started_at: string; ended_at?: string; notes?: string }[];
   /** Blood pressure per household-local day. */

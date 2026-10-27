@@ -99,12 +99,33 @@ func SetFluidDailyTarget(target int) {
 	}
 }
 
+// INRTarget (issue #62): the doctor's INR range for warfarin; a result outside
+// it alerts the admins. Defaults 2.0-3.0.
+type INRTarget struct {
+	Low  float64 `json:"inr_target_low"`
+	High float64 `json:"inr_target_high"`
+}
+
+var defaultINRTarget = INRTarget{Low: 2.0, High: 3.0}
+var inrTarget atomic.Pointer[INRTarget]
+
+func currentINRTarget() INRTarget {
+	if t := inrTarget.Load(); t != nil {
+		return *t
+	}
+	return defaultINRTarget
+}
+
+// SetINRTarget replaces the in-memory range (startup, admin change, tests).
+func SetINRTarget(t INRTarget) { inrTarget.Store(&t) }
+
 // ClinicalSettings is everything GET/PUT /settings/clinical carries.
 type ClinicalSettings struct {
 	BPLowThresholds
 	OxygenFeverThresholds
 	RepositionIntervalMinutes int `json:"reposition_interval_minutes"`
 	FluidDailyTargetML        int `json:"fluid_daily_target_ml"`
+	INRTarget
 }
 
 // LoadClinicalSettings reads the doctor's thresholds from app_settings, if set.
@@ -148,6 +169,20 @@ func LoadClinicalSettings(db *sql.DB) {
 		SetRepositionInterval(defaultRepositionInterval)
 	}
 
+	inr := defaultINRTarget
+	for key, dst := range map[string]*float64{"inr_target_low": &inr.Low, "inr_target_high": &inr.High} {
+		var v string
+		if db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&v) == nil {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*dst = f
+			}
+		}
+	}
+	if inr.Low >= inr.High {
+		inr = defaultINRTarget
+	}
+	SetINRTarget(inr)
+
 	var fTargetStr string
 	if db.QueryRow(`SELECT value FROM app_settings WHERE key = 'fluid_daily_target_ml'`).Scan(&fTargetStr) == nil {
 		if n, err := strconv.Atoi(fTargetStr); err == nil && n >= 500 && n <= 5000 {
@@ -164,7 +199,7 @@ type ClinicalSettingsHandler struct {
 
 func (h *ClinicalSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever(), currentRepositionInterval(), currentFluidDailyTarget()})
+	json.NewEncoder(w).Encode(ClinicalSettings{currentBPLow(), currentOxygenFever(), currentRepositionInterval(), currentFluidDailyTarget(), currentINRTarget()})
 }
 
 type clinicalSettingsRequest struct {
@@ -176,6 +211,8 @@ type clinicalSettingsRequest struct {
 	FeverHighC                *float64 `json:"fever_high_c"`
 	RepositionIntervalMinutes *int     `json:"reposition_interval_minutes"`
 	FluidDailyTargetML        *int     `json:"fluid_daily_target_ml"`
+	INRTargetLow              *float64 `json:"inr_target_low"`
+	INRTargetHigh             *float64 `json:"inr_target_high"`
 }
 
 // Put sets the doctor's thresholds (admin). Fields left out keep their value.
@@ -243,6 +280,17 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		}
 		fluidTarget = *req.FluidDailyTargetML
 	}
+	inr := currentINRTarget()
+	if req.INRTargetLow != nil {
+		inr.Low = math.Round(*req.INRTargetLow*10) / 10
+	}
+	if req.INRTargetHigh != nil {
+		inr.High = math.Round(*req.INRTargetHigh*10) / 10
+	}
+	if inr.Low < 1.5 || inr.High > 4.5 || inr.Low >= inr.High {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "inr_target_low and inr_target_high must be within 1.5-4.5, low below high")
+		return
+	}
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		internalError(w, "failed to begin transaction", err)
@@ -250,6 +298,11 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES ('inr_target_low', ?), ('inr_target_high', ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, strconv.FormatFloat(inr.Low, 'f', 1, 64), strconv.FormatFloat(inr.High, 'f', 1, 64)); err != nil {
+		internalError(w, "failed to save thresholds", err)
+		return
+	}
 	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES
 		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?), ('fever_high_c', ?), ('reposition_interval_minutes', ?), ('fluid_daily_target_ml', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
@@ -259,7 +312,7 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := audit.Record(tx, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
-		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C, high >=%.1f C; reposition %d min; fluid target %d ml", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, o.FeverHighC, repInterval, fluidTarget)); err != nil {
+		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C, high >=%.1f C; reposition %d min; fluid target %d ml; INR %.1f-%.1f", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, o.FeverHighC, repInterval, fluidTarget, inr.Low, inr.High)); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return
 	}
@@ -271,6 +324,7 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	SetOxygenFeverThresholds(o)
 	SetRepositionInterval(repInterval)
 	SetFluidDailyTarget(fluidTarget)
+	SetINRTarget(inr)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClinicalSettings{bp, o, repInterval, fluidTarget})
+	json.NewEncoder(w).Encode(ClinicalSettings{bp, o, repInterval, fluidTarget, inr})
 }

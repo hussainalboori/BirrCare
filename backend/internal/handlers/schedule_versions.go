@@ -25,6 +25,19 @@ type scheduleVersion struct {
 	Days     []string
 	Times    map[string]string
 	Dosage   string
+	// DoseByDay (issue #62): the dose on some weekdays ("sat" → "2.5 mg"),
+	// overriding Dosage on those days.
+	DoseByDay map[string]string
+}
+
+// doseOn is the dose this version gives on that date.
+func (v scheduleVersion) doseOn(date string) string {
+	if d, err := time.Parse("2006-01-02", date); err == nil {
+		if dose := v.DoseByDay[weekdayKeys[d.Weekday()]]; dose != "" {
+			return dose
+		}
+	}
+	return v.Dosage
 }
 
 func (v scheduleVersion) covers(date string) bool {
@@ -49,7 +62,7 @@ func versionOn(vs []scheduleVersion, date string) (scheduleVersion, bool) {
 	return scheduleVersion{}, false
 }
 
-func parseVersion(slotsJSON, daysJSON, timesJSON, dosage string) scheduleVersion {
+func parseVersion(slotsJSON, daysJSON, timesJSON, dosage string, doseByDay ...string) scheduleVersion {
 	var v scheduleVersion
 	_ = json.Unmarshal([]byte(slotsJSON), &v.Slots)
 	_ = json.Unmarshal([]byte(daysJSON), &v.Days)
@@ -60,6 +73,9 @@ func parseVersion(slotsJSON, daysJSON, timesJSON, dosage string) scheduleVersion
 	_ = json.Unmarshal([]byte(timesJSON), &times)
 	v.Times = normalizeSlotTimes(times, v.Slots)
 	v.Dosage = dosage
+	if len(doseByDay) > 0 && doseByDay[0] != "" {
+		_ = json.Unmarshal([]byte(doseByDay[0]), &v.DoseByDay)
+	}
 	return v
 }
 
@@ -68,40 +84,40 @@ func parseVersion(slotsJSON, daysJSON, timesJSON, dosage string) scheduleVersion
 // gets one from its current row: from the day it was added, or none if stopped.
 func loadScheduleVersions(q querier) (map[string][]scheduleVersion, error) {
 	out := map[string][]scheduleVersion{}
-	rows, err := q.Query(`SELECT medication_id, effective_from, COALESCE(effective_to, ''), frequency_slots, days_of_week, slot_times, dosage
+	rows, err := q.Query(`SELECT medication_id, effective_from, COALESCE(effective_to, ''), frequency_slots, days_of_week, slot_times, dosage, COALESCE(dose_by_day, '')
 		FROM medication_schedule_versions ORDER BY medication_id, effective_from`)
 	if err != nil {
 		return nil, fmt.Errorf("loading schedule history: %w", err)
 	}
 	for rows.Next() {
-		var id, slots, days, times, dosage string
+		var id, slots, days, times, dosage, byDay string
 		var from, to string
-		if err := rows.Scan(&id, &from, &to, &slots, &days, &times, &dosage); err != nil {
+		if err := rows.Scan(&id, &from, &to, &slots, &days, &times, &dosage, &byDay); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		v := parseVersion(slots, days, times, dosage)
+		v := parseVersion(slots, days, times, dosage, byDay)
 		v.From, v.To = from, to
 		out[id] = append(out[id], v)
 	}
 	rows.Close() // release the single pooled connection before the next query
 
-	mrows, err := q.Query(`SELECT id, frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(created_at, ''), COALESCE(is_active, 1)
+	mrows, err := q.Query(`SELECT id, frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(created_at, ''), COALESCE(is_active, 1), COALESCE(dose_by_day, '')
 		FROM medications`)
 	if err != nil {
 		return nil, err
 	}
 	defer mrows.Close()
 	for mrows.Next() {
-		var id, slots, days, times, dosage, created string
+		var id, slots, days, times, dosage, created, byDay string
 		var active bool
-		if err := mrows.Scan(&id, &slots, &days, &times, &dosage, &created, &active); err != nil {
+		if err := mrows.Scan(&id, &slots, &days, &times, &dosage, &created, &active, &byDay); err != nil {
 			return nil, err
 		}
 		if _, ok := out[id]; ok {
 			continue
 		}
-		v := parseVersion(slots, days, times, dosage)
+		v := parseVersion(slots, days, times, dosage, byDay)
 		v.From = "2000-01-01"
 		if t, err := time.Parse(sqliteTimeLayout, created); err == nil {
 			v.From = t.In(ClinicalLocation()).Format("2006-01-02")
@@ -141,16 +157,16 @@ func ensureScheduleVersion(tx *sql.Tx, medID string) error {
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM medication_schedule_versions WHERE medication_id = ?`, medID).Scan(&n); err != nil || n > 0 {
 		return err
 	}
-	var slots, days, times, dosage, created string
+	var slots, days, times, dosage, created, byDay string
 	var active bool
-	err := tx.QueryRow(`SELECT frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(created_at, ''), COALESCE(is_active, 1)
-		FROM medications WHERE id = ?`, medID).Scan(&slots, &days, &times, &dosage, &created, &active)
+	err := tx.QueryRow(`SELECT frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(created_at, ''), COALESCE(is_active, 1), COALESCE(dose_by_day, '')
+		FROM medications WHERE id = ?`, medID).Scan(&slots, &days, &times, &dosage, &created, &active, &byDay)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	v := parseVersion(slots, days, times, dosage)
+	v := parseVersion(slots, days, times, dosage, byDay)
 	v.From = "2000-01-01"
 	if t, err := time.Parse(sqliteTimeLayout, created); err == nil {
 		v.From = t.In(ClinicalLocation()).Format("2006-01-02")
@@ -166,8 +182,13 @@ func insertVersion(tx *sql.Tx, medID, by string, v scheduleVersion, to interface
 	slots, _ := json.Marshal(v.Slots)
 	days, _ := json.Marshal(v.Days)
 	times, _ := json.Marshal(v.Times)
-	_, err := tx.Exec(`INSERT INTO medication_schedule_versions (id, medication_id, effective_from, effective_to, frequency_slots, days_of_week, slot_times, dosage, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.New().String(), medID, v.From, to, string(slots), string(days), string(times), v.Dosage, nullIfEmpty(by),
+	byDay := ""
+	if len(v.DoseByDay) > 0 {
+		b, _ := json.Marshal(v.DoseByDay)
+		byDay = string(b)
+	}
+	_, err := tx.Exec(`INSERT INTO medication_schedule_versions (id, medication_id, effective_from, effective_to, frequency_slots, days_of_week, slot_times, dosage, dose_by_day, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.New().String(), medID, v.From, to, string(slots), string(days), string(times), v.Dosage, byDay, nullIfEmpty(by),
 		time.Now().UTC().Format(sqliteTimeLayout))
 	return err
 }
@@ -177,10 +198,10 @@ func insertVersion(tx *sql.Tx, medID, by string, v scheduleVersion, to interface
 // before; a changed schedule closes the open version and opens a new one. Versions
 // that would only have started on or after `from` are replaced.
 func syncScheduleVersion(tx *sql.Tx, medID, by, from string) error {
-	var slots, days, times, dosage string
+	var slots, days, times, dosage, byDay string
 	var active bool
-	err := tx.QueryRow(`SELECT frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(is_active, 1)
-		FROM medications WHERE id = ?`, medID).Scan(&slots, &days, &times, &dosage, &active)
+	err := tx.QueryRow(`SELECT frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''), dosage, COALESCE(is_active, 1), COALESCE(dose_by_day, '')
+		FROM medications WHERE id = ?`, medID).Scan(&slots, &days, &times, &dosage, &active, &byDay)
 	if err != nil {
 		return err
 	}
@@ -202,11 +223,11 @@ func syncScheduleVersion(tx *sql.Tx, medID, by, from string) error {
 	if _, err := tx.Exec(`UPDATE medications SET stopped_on = NULL, stopped_by = NULL WHERE id = ?`, medID); err != nil {
 		return err
 	}
-	want := parseVersion(slots, days, times, dosage)
-	var oSlots, oDays, oTimes, oDosage string
-	err = tx.QueryRow(`SELECT frequency_slots, days_of_week, slot_times, dosage FROM medication_schedule_versions
-		WHERE medication_id = ? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1`, medID).Scan(&oSlots, &oDays, &oTimes, &oDosage)
-	if err == nil && sameSchedule(parseVersion(oSlots, oDays, oTimes, oDosage), want) {
+	want := parseVersion(slots, days, times, dosage, byDay)
+	var oSlots, oDays, oTimes, oDosage, oByDay string
+	err = tx.QueryRow(`SELECT frequency_slots, days_of_week, slot_times, dosage, COALESCE(dose_by_day, '') FROM medication_schedule_versions
+		WHERE medication_id = ? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1`, medID).Scan(&oSlots, &oDays, &oTimes, &oDosage, &oByDay)
+	if err == nil && sameSchedule(parseVersion(oSlots, oDays, oTimes, oDosage, oByDay), want) {
 		return nil
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -219,7 +240,7 @@ func syncScheduleVersion(tx *sql.Tx, medID, by, from string) error {
 }
 
 func sameSchedule(a, b scheduleVersion) bool {
-	ja, _ := json.Marshal([]interface{}{a.Slots, a.Days, a.Times, a.Dosage})
-	jb, _ := json.Marshal([]interface{}{b.Slots, b.Days, b.Times, b.Dosage})
+	ja, _ := json.Marshal([]interface{}{a.Slots, a.Days, a.Times, a.Dosage, a.DoseByDay})
+	jb, _ := json.Marshal([]interface{}{b.Slots, b.Days, b.Times, b.Dosage, b.DoseByDay})
 	return string(ja) == string(jb)
 }

@@ -78,6 +78,8 @@ type Medication struct {
 	// Active ingredient (lowercase INN) and drug class (issue #61).
 	ActiveIngredient string `json:"active_ingredient,omitempty"`
 	DrugClass        string `json:"drug_class,omitempty"`
+	// DoseByDay (issue #62): the dose on some weekdays, overriding Dosage.
+	DoseByDay map[string]string `json:"dose_by_day,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -200,6 +202,8 @@ type ScheduledDose struct {
 	LastTaken     *LastDose `json:"last_taken,omitempty"`
 	IntervalHours float64   `json:"interval_hours"`
 	NextAllowedAt string    `json:"next_allowed_at,omitempty"` // RFC3339; set while still locked
+	// The dose differs from yesterday's (a dose by weekday, issue #62).
+	DoseChanged bool `json:"dose_changed_from_yesterday,omitempty"`
 }
 
 // VitalsLog represents cardiovascular and cognitive metrics critical for stroke recovery.

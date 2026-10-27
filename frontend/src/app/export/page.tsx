@@ -120,6 +120,44 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
+            {/* INR history (issue #62), next to the warfarin doses below */}
+            {(summary.lab_results ?? []).some((l) => l.kind === "inr") && (
+              <div data-testid="report-inr" className="mb-4 break-inside-avoid">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  {locale === "ar" ? "تحاليل INR" : "INR results"}
+                  {summary.inr_target && (
+                    <span className="ms-2 normal-case">
+                      ({locale === "ar" ? "المدى " : "range "}
+                      <Ltr>
+                        {summary.inr_target.inr_target_low}–{summary.inr_target.inr_target_high}
+                      </Ltr>
+                      )
+                    </span>
+                  )}
+                </h3>
+                <table className="w-full text-start text-xs print:text-[9pt]">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800">
+                      <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "التاريخ" : "Date"}</th>
+                      <th className="py-1.5 text-start font-semibold">INR</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {summary.lab_results!
+                      .filter((l) => l.kind === "inr")
+                      .map((l) => (
+                        <tr key={l.id} className={l.out_of_range ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
+                          <td className="py-1.5 pe-2"><Ltr>{l.taken_on}</Ltr></td>
+                          <td className={`py-1.5 pe-2 ${l.out_of_range ? "font-black text-amber-800 dark:text-amber-300" : ""}`}>
+                            <Ltr>{l.value}</Ltr> {l.out_of_range && (locale === "ar" ? "(خارج المدى)" : "(outside range)")}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {/* Falls and seizures (issue #60) */}
             {(summary.incidents ?? []).length > 0 && (
               <div data-testid="report-incidents" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950 print:mb-2 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-50">

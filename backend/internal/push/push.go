@@ -150,6 +150,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"
 		}
 	}
+	if kind == "inr_out_of_range" {
+		body = "An INR result is outside the doctor's range — open Birrcare"
+		if ar {
+			body = "نتيجة INR خارج حدود الطبيب — افتح رعاية بر"
+		}
+	}
 	if kind == "fall" {
 		body = "A fall was recorded — open Birrcare"
 		if ar {

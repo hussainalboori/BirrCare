@@ -32,11 +32,11 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 // models.EmergencyAlertKinds, issue #54), not from a list kept here.
 
 // Orange: needs attention soon, not an emergency.
-const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever", "fall", "seizure"]);
+const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever", "fall", "seizure", "inr_out_of_range"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure" | "inr_out_of_range";
   created_by_name?: string;
   emergency?: boolean;
   payload: Record<string, unknown>;
@@ -249,6 +249,19 @@ export function AlertCenter() {
       advice = ar
         ? "اتصل بالطبيب الآن. إن كان الأكسجين منخفضاً أو تتنفس بصعوبة أو بعد سعال أثناء الأكل: اتصل بالإسعاف."
         : "Call the doctor now. If her oxygen is low, she is breathing hard, or it follows coughing while eating: call emergency.";
+      break;
+    case "inr_out_of_range":
+      // Issue #62: never a dose suggestion, only "tell the doctor".
+      title = (
+        <>
+          {ar ? "نتيجة INR خارج المدى" : "INR outside the range"}: <Ltr>{String(p.value)}</Ltr> (
+          <Ltr>
+            {String(p.target_low)}–{String(p.target_high)}
+          </Ltr>
+          )
+        </>
+      );
+      advice = ar ? "أخبر الطبيب قبل جرعة الوارفارين القادمة." : "Tell the doctor before the next warfarin dose.";
       break;
     case "fall": {
       // Issue #60: red (emergency flag) after a head knock, not awake, or pain / bleeding.

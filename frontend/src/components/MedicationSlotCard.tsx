@@ -407,6 +407,11 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 <Auto className="inline-flex items-center rounded-md bg-emerald-100/80 px-2.5 py-1 text-base font-bold text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
                   {medication.dosage}
                 </Auto>
+                {dose.dose_changed_from_yesterday && (
+                  <span data-testid="dose-different-today" className="inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+                    {ar ? "(جرعة مختلفة اليوم)" : "(different today)"}
+                  </span>
+                )}
 
                 {isOverdue && (
                   <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 animate-pulse">

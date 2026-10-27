@@ -99,6 +99,7 @@ func NewRouter(o Options) http.Handler {
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	carePauseHandler := &handlers.CarePauseHandler{DB: o.DB, Broker: o.Broker}
+	labHandler := &handlers.LabHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
@@ -314,6 +315,9 @@ func NewRouter(o Options) http.Handler {
 				// Falls and seizures (issue #60)
 				api.Post("/care/incidents", careHandler.LogIncident)
 				api.Get("/care/incidents", careHandler.ListIncidents)
+				// Lab results, INR (issue #62)
+				api.Get("/labs", labHandler.List)
+				api.Post("/labs", labHandler.Create)
 				// Hospital stay / away (issue #59)
 				api.Get("/care/pause", carePauseHandler.Status)
 				api.Post("/care/pause", carePauseHandler.Pause)
