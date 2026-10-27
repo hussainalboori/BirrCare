@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS insulin_logs (
 
 CREATE TABLE IF NOT EXISTS care_events (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio')),
+    kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio', 'fall', 'seizure')),
     value TEXT NOT NULL,
     caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
     skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
@@ -1061,6 +1061,34 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("failed adding alerts.resolved_at: %w", err)
 		}
 	}
+	// Migrate alerts for fall and seizure (issue #60), keeping resolved_at.
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'seizure'") {
+		log.Println("Migrating alerts: adding fall and seizure kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v13;
+			CREATE TABLE alerts_v13 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id),
+				resolved_at TEXT
+			);
+			INSERT INTO alerts_v13 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v13 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for fall and seizure: %w", err)
+		}
+	}
 	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dose_overdue ON alerts(ref_id) WHERE kind = 'dose_overdue'`); err != nil {
 		return fmt.Errorf("failed creating uq_alerts_dose_overdue: %w", err)
 	}
@@ -1160,6 +1188,37 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("failed adding thickened column to care_events: %w", err)
 		}
 	}
+	// Issue #60: falls and seizures are care events too.
+	var careSQL string
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='care_events'").Scan(&careSQL)
+	if careSQL != "" && !strings.Contains(careSQL, "'seizure'") {
+		log.Println("Migrating care_events: adding fall and seizure kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS care_events_v2;
+			CREATE TABLE care_events_v2 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('reposition', 'fluid', 'bowel', 'hygiene', 'physio', 'fall', 'seizure')),
+				value TEXT NOT NULL,
+				caregiver_id TEXT NOT NULL REFERENCES caregivers(id),
+				skin_condition TEXT CHECK (skin_condition IN ('ok', 'red_area', '')),
+				notes TEXT,
+				thickened INTEGER NOT NULL DEFAULT 0,
+				created_at TEXT DEFAULT (datetime('now')),
+				client_request_id TEXT UNIQUE
+			);
+			INSERT INTO care_events_v2 (id, kind, value, caregiver_id, skin_condition, notes, thickened, created_at, client_request_id)
+				SELECT id, kind, value, caregiver_id, skin_condition, notes, thickened, created_at, client_request_id FROM care_events;
+			DROP TABLE care_events;
+			ALTER TABLE care_events_v2 RENAME TO care_events;
+			CREATE INDEX IF NOT EXISTS idx_care_events_kind_time ON care_events(kind, created_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_care_events_time ON care_events(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating care_events for fall and seizure: %w", err)
+		}
+	}
+
 	// The immutability trigger below must cover the new values too.
 	var trigSQL string
 	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='vitals_values_immutable'").Scan(&trigSQL)

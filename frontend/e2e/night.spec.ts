@@ -157,7 +157,7 @@ test("Night: every page and the main dialogs stay dim", async ({ browser, baseUR
   const page = await ctx.newPage();
   await mockApi(page);
   const found: Record<string, string[]> = {};
-  for (const path of ["/handovers", "/insulin", "/fast", "/export", "/emergency-qr"]) {
+  for (const path of ["/handovers", "/insulin", "/fast", "/incident", "/export", "/emergency-qr"]) {
     await page.goto(path);
     await page.waitForTimeout(700);
     const b = await brightElements(page);

@@ -43,6 +43,8 @@ type DoctorSummaryResponse struct {
 	PRNLogs []models.PRNExportLog `json:"prn_logs"`
 	// Hospital stays / time away in the period (issue #59), shown as grey bands.
 	Pauses []CarePause `json:"pauses"`
+	// Falls and seizures in the period (issue #60), newest first.
+	Incidents []Incident `json:"incidents"`
 }
 
 // DailyFluid is one household-local day of fluid intake (issue #28).
@@ -358,6 +360,11 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 	if pauses == nil {
 		pauses = []CarePause{}
 	}
+	incidents, err := incidentsSince(h.DB, time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc))
+	if err != nil {
+		internalError(w, "failed to load falls and seizures", err)
+		return
+	}
 
 	// 3. Recent Handover notes
 	noteRows, err := h.DB.Query(handoverNoteSelect+`
@@ -540,6 +547,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		InsulinLogs:     insulinLogs,
 		PRNLogs:         prnLogs,
 		Pauses:          pauses,
+		Incidents:       incidents,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

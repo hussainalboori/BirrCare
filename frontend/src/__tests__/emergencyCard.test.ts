@@ -117,3 +117,20 @@ describe("emergency card: recent doses first (issue #56)", () => {
     expect(plain).not.toContain("recent-doses");
   });
 });
+
+describe("emergency card: latest fall or seizure (issue #60)", () => {
+  it("shows a recent fall with the head knock, in red, in both languages", () => {
+    const html = renderEmergencyCard({
+      ...card,
+      generated_at: "2026-10-21T12:00:00Z",
+      last_incident: { kind: "fall", at: "2026-10-21T10:00:00Z", hit_head: true, awake_normal: true, pain_or_bleeding: false, escalate: true },
+    });
+    expect(html).toMatch(/<div class="row alarm"><div class="en"><span class="k">Fall<\/span>/);
+    expect(html).toContain("(2 h 0 min ago) — hit her head");
+    expect(html).toContain("ضربت رأسها");
+  });
+  it("shows a seizure with how long it lasted", () => {
+    const html = renderEmergencyCard({ ...card, last_incident: { kind: "seizure", at: "2026-10-21T09:10:00Z", duration_seconds: 125, escalate: false } });
+    expect(html).toContain('lasted <span class="num">2:05</span> min');
+  });
+});

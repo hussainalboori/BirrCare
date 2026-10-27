@@ -120,6 +120,33 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
+            {/* Falls and seizures (issue #60) */}
+            {(summary.incidents ?? []).length > 0 && (
+              <div data-testid="report-incidents" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-950 print:mb-2 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-50">
+                <p className="font-bold">
+                  {locale === "ar" ? "السقوط والنوبات" : "Falls and seizures"}:{" "}
+                  <Ltr>{summary.incidents!.filter((i) => i.kind === "fall").length}</Ltr> {locale === "ar" ? "سقوط" : "fall(s)"},{" "}
+                  <Ltr>{summary.incidents!.filter((i) => i.kind === "seizure").length}</Ltr> {locale === "ar" ? "نوبة" : "seizure(s)"}
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {summary.incidents!.map((i) => (
+                    <li key={i.id}>
+                      <bdi>{formatDateTime(i.at, locale)}</bdi> —{" "}
+                      {i.kind === "fall"
+                        ? [locale === "ar" ? "سقوط" : "Fall", i.hit_head && (locale === "ar" ? "ضربت رأسها" : "hit head"), i.awake_normal === false && (locale === "ar" ? "ليست واعية" : "not awake/normal"), i.pain_or_bleeding && (locale === "ar" ? "ألم أو نزيف" : "pain or bleeding")].filter(Boolean).join(", ")
+                        : (
+                          <>
+                            {locale === "ar" ? "نوبة تشنج، " : "Seizure, "}
+                            <Ltr>{`${Math.floor((i.duration_seconds ?? 0) / 60)}:${String((i.duration_seconds ?? 0) % 60).padStart(2, "0")}`}</Ltr>
+                            {i.repeat ? (locale === "ar" ? "، الثانية خلال يوم" : ", second within a day") : ""}
+                          </>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Hospital stays / time away (issue #59): doses then are "paused", not missed. */}
             {(summary.pauses ?? []).length > 0 && (
               <div data-testid="report-pauses" className="mb-4 rounded-xl border border-slate-300 bg-slate-100 p-3 text-sm text-slate-800 print:mb-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">

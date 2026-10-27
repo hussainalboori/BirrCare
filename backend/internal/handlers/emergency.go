@@ -109,6 +109,8 @@ type EmergencyCard struct {
 	LastFAST    *EmergencyFAST    `json:"last_fast,omitempty"`
 	LastInsulin *EmergencyInsulin `json:"last_insulin,omitempty"`
 	PRN24h      []EmergencyPRN    `json:"prn_24h"`
+	// LastIncident (issue #60): the latest fall or seizure in the last 7 days.
+	LastIncident *Incident `json:"last_incident,omitempty"`
 	Contacts    Contacts          `json:"contacts"`
 	Family      []EmergencyFamily `json:"family"`
 	GeneratedAt string            `json:"generated_at"`
@@ -177,6 +179,13 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	rows.Close()
 	if err := h.addRecentDoses(card, now); err != nil {
 		return nil, err
+	}
+	if list, err := incidentsSince(h.DB, now.Add(-7*24*time.Hour)); err != nil {
+		return nil, err
+	} else if len(list) > 0 {
+		inc := list[0]
+		inc.By, inc.Notes = "", "" // no names or free text on a public page
+		card.LastIncident = &inc
 	}
 
 	// Corrected readings (issue #15) are replaced by their correction.

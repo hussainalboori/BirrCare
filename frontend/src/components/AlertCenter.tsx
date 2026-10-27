@@ -32,11 +32,11 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 // models.EmergencyAlertKinds, issue #54), not from a list kept here.
 
 // Orange: needs attention soon, not an emergency.
-const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever"]);
+const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever", "fall", "seizure"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure";
   created_by_name?: string;
   emergency?: boolean;
   payload: Record<string, unknown>;
@@ -250,6 +250,32 @@ export function AlertCenter() {
         ? "اتصل بالطبيب الآن. إن كان الأكسجين منخفضاً أو تتنفس بصعوبة أو بعد سعال أثناء الأكل: اتصل بالإسعاف."
         : "Call the doctor now. If her oxygen is low, she is breathing hard, or it follows coughing while eating: call emergency.";
       break;
+    case "fall": {
+      // Issue #60: red (emergency flag) after a head knock, not awake, or pain / bleeding.
+      const signs = [
+        p.hit_head && (ar ? "ضربت رأسها" : "hit her head"),
+        p.awake_normal === false && (ar ? "ليست واعية أو كلامها غير طبيعي" : "not awake or talking normally"),
+        p.pain_or_bleeding && (ar ? "ألم أو نزيف" : "pain or bleeding"),
+      ].filter(Boolean);
+      title = <>{ar ? "سقطت" : "She fell"}{signs.length > 0 && <>: {signs.join(ar ? "، " : ", ")}</>}</>;
+      advice = current.emergency
+        ? ar ? "اتصل بالإسعاف إن لم يتصل أحد بعد." : "Call emergency if nobody has yet."
+        : ar ? "لا ترفعها وحدك. راقبها 24 ساعة: كل 4 ساعات تأكد أنها واعية وتتكلم بشكل طبيعي." : "Don't lift her alone. Watch her for 24 hours: every 4 hours, check she is awake and talking normally.";
+      break;
+    }
+    case "seizure": {
+      const secs = Number(p.duration_seconds) || 0;
+      title = (
+        <>
+          {ar ? "نوبة تشنج" : "Seizure"}: <Ltr>{`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`}</Ltr>
+          {p.repeat ? (ar ? " (الثانية خلال يوم)" : " (second within a day)") : ""}
+        </>
+      );
+      advice = current.emergency
+        ? ar ? "اتصل بالإسعاف إن لم يتصل أحد بعد." : "Call emergency if nobody has yet."
+        : ar ? "ابقَ معها حتى تستعيد وعيها، وأخبر الطبيب." : "Stay with her until she is fully awake, and tell the doctor.";
+      break;
+    }
     case "dose_overdue": {
       // Issue #55: a scheduled dose nobody has logged.
       const dose = (

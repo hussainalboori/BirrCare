@@ -118,7 +118,11 @@ func (h *AlertsHandler) Unacked(w http.ResponseWriter, r *http.Request) {
 		}
 		a.Payload = json.RawMessage(payload)
 		a.CreatedAt = sqliteToRFC3339(createdAt)
-		a.Emergency = models.IsEmergencyAlert(a.Kind)
+		var esc struct {
+			Escalate bool `json:"escalate"`
+		}
+		_ = json.Unmarshal(a.Payload, &esc)
+		a.Emergency = models.IsEmergency(a.Kind, esc.Escalate)
 		out = append(out, a)
 	}
 	w.Header().Set("Content-Type", "application/json")

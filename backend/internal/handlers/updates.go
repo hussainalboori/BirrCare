@@ -265,7 +265,7 @@ func (h *UpdatesHandler) activeCrisisAlerts(ctx context.Context) (int, error) {
 	var n int
 	err := h.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM alerts a
-		WHERE a.kind IN (`+models.EmergencyAlertKindsSQL()+`)
+		WHERE `+models.EmergencyAlertWhereSQL()+`
 		  AND datetime(a.created_at) >= datetime('now', ?)
 		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id)
 	`, fmt.Sprintf("-%d minutes", int(updateCrisisWindow.Minutes()))).Scan(&n)

@@ -361,6 +361,10 @@ Reads or customizes clinical thresholds:
 
 ## Bedside Care (Repositioning, Fluids, Bowel)
 
+### Falls and seizures (issue #60)
+- `POST /api/v1/care/incidents` (caregivers and admins): `{kind: "fall", hit_head, awake_normal, pain_or_bleeding, notes?, client_request_id?}` or `{kind: "seizure", duration_seconds, notes?, client_request_id?}`. Saved as a `care_events` row (`fall` / `seizure`) with an alert to everyone. `escalate` (a red alert, counted as an emergency for the crisis bar, backups and updates): a fall with a head knock, not awake and talking normally, or new pain / a limb that won't move / bleeding; a seizure of 5 minutes or more, or a second one within 24 hours. The response lists any active blood thinners for the dispatcher. A resend with the same `client_request_id` returns the first one.
+- `GET /api/v1/care/incidents?hours=24` lists recent falls and seizures. The emergency card carries `last_incident` (last 7 days, no names or notes) and the doctor report `incidents`.
+
 ### Hospital stay / away (issue #59)
 - `GET /api/v1/care/pause` → `{paused, pause: {id, reason, started_at, started_by_name, notes}}`.
 - `POST /api/v1/care/pause` `{reason: "hospital" | "travel" | "other", notes}` (caregivers and admins): `201`, or `409 PAUSE_OPEN` if care is already paused. `POST /api/v1/care/resume`: `200`, or `409 NOT_PAUSED`. Both are audited and broadcast (`CARE_PAUSED`, `CARE_RESUMED`).

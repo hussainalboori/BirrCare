@@ -132,6 +132,14 @@ export default function MedicationsPage() {
           <Brain className="h-6 w-6" />
           {locale === "ar" ? "تبدو غير طبيعية؟ فحص الجلطة السريع" : "She seems off? Quick stroke check"}
         </Link>
+        {/* Issue #60: a fall or a seizure, next to the stroke check */}
+        <Link
+          href="/incident"
+          data-testid="something-happened"
+          className="mb-4 flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 border-amber-600 bg-white px-4 text-lg font-black text-amber-900 active:scale-95 dark:bg-slate-900 dark:text-amber-300"
+        >
+          {locale === "ar" ? "حدث شيء؟ سقوط أو نوبة تشنج" : "Something happened? Fall or seizure"}
+        </Link>
         {/* Header & Date Selector */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

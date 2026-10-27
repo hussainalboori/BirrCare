@@ -308,6 +308,8 @@ export interface DoctorSummary {
     stopped_on?: string;
     stopped_by?: string;
   }[];
+  /** Falls and seizures in the period (issue #60), newest first. */
+  incidents?: { id: string; kind: "fall" | "seizure"; at: string; hit_head?: boolean; awake_normal?: boolean; pain_or_bleeding?: boolean; duration_seconds?: number; repeat?: boolean; escalate: boolean; by?: string }[];
   /** Hospital stays / time away in the period (issue #59). */
   pauses?: { id: string; reason: "hospital" | "travel" | "other"; started_at: string; ended_at?: string; notes?: string }[];
   /** Blood pressure per household-local day. */

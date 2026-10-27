@@ -35,6 +35,8 @@ export interface EmergencyCard {
   last_fast?: { face: boolean; arm: boolean; speech: boolean; recorded_at: string; last_normal_at?: string };
   last_insulin?: { at: string; units: number; plan_name_ar: string; plan_name_en: string; blood_sugar?: number };
   prn_24h?: { name_ar: string; name_en: string; dosage: string; count: number; total_dose?: string; last_at: string }[];
+  /** Issue #60: the latest fall or seizure in the last 7 days. */
+  last_incident?: { kind: "fall" | "seizure"; at: string; hit_head?: boolean; awake_normal?: boolean; pain_or_bleeding?: boolean; duration_seconds?: number; repeat?: boolean; escalate: boolean };
   contacts: { emergency_number?: string; doctor_name?: string; doctor_phone?: string };
   family: { name: string; phone: string }[];
   generated_at: string;
@@ -204,9 +206,32 @@ export function renderEmergencyCard(c: EmergencyCard, now = new Date()): string 
       ),
     )
     .join("");
+  const inc = c.last_incident;
+  const incident = inc
+    ? (() => {
+        const agoEn = esc(ago(hoursSince(inc.at, c.generated_at), false));
+        const agoAr = esc(ago(hoursSince(inc.at, c.generated_at), true));
+        const atEn = `<bdi class="num">${esc(whenAbs(inc.at, tz, false))}</bdi>`;
+        const atAr = `<bdi class="num">${esc(whenAbs(inc.at, tz, true))}</bdi>`;
+        if (inc.kind === "fall") {
+          const en = [inc.hit_head && "hit her head", inc.awake_normal === false && "not awake / talking normally", inc.pain_or_bleeding && "pain or bleeding"].filter(Boolean).join(", ");
+          const arx = [inc.hit_head && "ضربت رأسها", inc.awake_normal === false && "ليست واعية / كلامها غير طبيعي", inc.pain_or_bleeding && "ألم أو نزيف"].filter(Boolean).join("، ");
+          return row("Fall", `${atEn} (${agoEn} ago)${en ? ` — ${esc(en)}` : ""}`, "سقوط", `${atAr} (قبل ${agoAr})${arx ? ` — ${esc(arx)}` : ""}`, inc.escalate ? "alarm" : "");
+        }
+        const secs = inc.duration_seconds ?? 0;
+        const dur = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+        return row(
+          "Seizure",
+          `${atEn} (${agoEn} ago) — lasted <span class="num">${esc(dur)}</span> min${inc.repeat ? ", second within 24 h" : ""}`,
+          "نوبة تشنج",
+          `${atAr} (قبل ${agoAr}) — استمرت <span class="num">${esc(dur)}</span> د${inc.repeat ? "، الثانية خلال 24 ساعة" : ""}`,
+          inc.escalate ? "alarm" : "",
+        );
+      })()
+    : "";
   const recent =
-    thinners || insulin || prn
-      ? `<section class="now" data-testid="recent-doses">${thinners}${insulin}${prn}<p class="empty">As of · حتى <bdi class="num">${esc(whenAbs(c.generated_at, tz, false))}</bdi></p></section>`
+    thinners || insulin || prn || incident
+      ? `<section class="now" data-testid="recent-doses">${thinners}${incident}${insulin}${prn}<p class="empty">As of · حتى <bdi class="num">${esc(whenAbs(c.generated_at, tz, false))}</bdi></p></section>`
       : "";
 
   const bp = c.last_bp.length

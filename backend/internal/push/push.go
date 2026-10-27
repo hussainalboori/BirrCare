@@ -150,6 +150,18 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"
 		}
 	}
+	if kind == "fall" {
+		body = "A fall was recorded — open Birrcare"
+		if ar {
+			body = "تم تسجيل سقوط — افتح رعاية بر"
+		}
+	}
+	if kind == "seizure" {
+		body = "A seizure was recorded — open Birrcare"
+		if ar {
+			body = "تم تسجيل نوبة تشنج — افتح رعاية بر"
+		}
+	}
 	if kind == "dose_overdue" {
 		body = "A medicine is overdue — open Birrcare"
 		if ar {

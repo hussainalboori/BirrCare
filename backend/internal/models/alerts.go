@@ -18,8 +18,32 @@ func IsEmergencyAlert(kind string) bool {
 	return false
 }
 
+// EscalatingAlertKinds are emergencies only when their payload says escalate
+// (issue #60): a fall with a head knock, a long or repeated seizure.
+var EscalatingAlertKinds = []string{"fall", "seizure"}
+
+// IsEmergency: an emergency kind, or an escalating kind that escalated.
+func IsEmergency(kind string, escalate bool) bool {
+	if IsEmergencyAlert(kind) {
+		return true
+	}
+	for _, k := range EscalatingAlertKinds {
+		if k == kind {
+			return escalate
+		}
+	}
+	return false
+}
+
 // EmergencyAlertKindsSQL is the list as an SQL IN (...) body, built from the
 // constants above (never from input).
 func EmergencyAlertKindsSQL() string {
 	return "'" + strings.Join(EmergencyAlertKinds, "', '") + "'"
+}
+
+// EmergencyAlertWhereSQL matches emergency alerts in a query over alerts aliased
+// "a": the emergency kinds, and fall / seizure alerts that escalated.
+func EmergencyAlertWhereSQL() string {
+	return "(a.kind IN (" + EmergencyAlertKindsSQL() + ") OR (a.kind IN ('" + strings.Join(EscalatingAlertKinds, "', '") +
+		"') AND json_extract(a.payload, '$.escalate') = 1))"
 }
