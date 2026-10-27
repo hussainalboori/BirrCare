@@ -10,6 +10,7 @@ import { formatTime } from "@/lib/datetime";
 import { useContacts } from "@/components/CrisisActions";
 import { Ltr } from "@/components/Ltr";
 import { Smile, Hand, MessageCircle, Siren, Phone, ArrowLeft, Clock } from "lucide-react";
+import { householdDateTime, householdToday } from "@/lib/householdTime";
 
 // F.A.S.T. stroke check (issue #13). All three questions are on one screen so any
 // "yes" reaches "Call emergency now" in two taps from Home. Calling never waits for
@@ -149,12 +150,12 @@ export default function FastPage() {
                 type="time"
                 className="mt-1 w-full rounded-xl px-3 py-2 text-base text-slate-900"
                 onChange={(e) => {
-                  const [h, mi] = e.target.value.split(":").map(Number);
-                  if (Number.isNaN(h)) return;
-                  const d = new Date();
-                  d.setHours(h, mi, 0, 0);
-                  if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
-                  markLastNormal(d);
+                  // The time typed is home time (issue #58); in the future means yesterday.
+                  if (!e.target.value) return;
+                  const now = new Date();
+                  let d = householdDateTime(householdToday(now), e.target.value);
+                  if (d && d.getTime() > now.getTime()) d = new Date(d.getTime() - 24 * 3600_000);
+                  if (d) markLastNormal(d);
                 }}
               />
             </label>

@@ -44,7 +44,7 @@ These values are only used on the very first start, when the database is empty; 
 
 | Variable | Default | Description |
 |---|---|---|
-| `APP_TIMEZONE` | Detected | **Required in production.** The IANA time zone where the patient resides (e.g., `Asia/Riyadh`, `Asia/Bahrain`). This ensures scheduled doses, midnight cutoffs, and doctor reports align with local time. |
+| `APP_TIMEZONE` | Detected | **Required in production.** The IANA time zone where the patient resides (e.g., `Asia/Riyadh`, `Asia/Bahrain`). This ensures scheduled doses, midnight cutoffs, and doctor reports align with local time. Phones read it from `/health`: "today", overdue doses and every time shown follow this zone, so a sibling helping from abroad sees home time, with a banner saying so when their phone's clock differs. |
 | `EMERGENCY_NUMBER` | Suggested for your time zone | **Required.** The ambulance number for the crisis call button, e.g. `999` (Bahrain), `997` (Saudi Arabia); you confirm the suggestion during setup (`scripts/emergency-numbers`). It is also sent inside every page, so the button works offline; `112` is the last fallback. After changing it, `./scripts/deploy.sh restart`. |
 | `DOCTOR_NAME` | Empty | Optional name of the treating neurologist or primary care physician. Displayed on crisis alerts. |
 | `DOCTOR_PHONE` | Empty | Optional phone number for the attending physician. Enables a one-tap call button during crisis alerts and adverse drug events. |

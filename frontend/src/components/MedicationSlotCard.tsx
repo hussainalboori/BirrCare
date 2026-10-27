@@ -8,7 +8,9 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
 import { canManageMedications, isViewer } from "@/lib/permissions";
-import { formatDuration, formatShortDate, formatTime, lastGivenText, localDateString, parseServerTime } from "@/lib/datetime";
+import { formatDuration, formatShortDate, formatTime, lastGivenText, parseServerTime } from "@/lib/datetime";
+import { clockDiffersFromHome, householdClock, householdDateString, householdDateTime, householdToday } from "@/lib/householdTime";
+import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { Auto } from "./Ltr";
 import { DoctorCallButton } from "./CrisisActions";
 import { DOSE_COPY, VOMIT_MINUTES } from "@/lib/doseWarnings";
@@ -60,6 +62,8 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const [vomitOpen, setVomitOpen] = useState(false);
   // Re-render every 30 s so "4 h 15 min ago" stays true and the lock lifts on time.
   const [now, setNow] = useState(() => new Date());
+  const zone = useHouseholdZone();
+  const abroad = clockDiffersFromHome(now, zone);
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
@@ -106,7 +110,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const isIntervalLocked = !isLogged && !!nextAllowed && nextAllowed > now;
   const nextAllowedText = nextAllowed
     ? `${formatTime(nextAllowed.toISOString(), locale)}${
-        localDateString(nextAllowed) !== localDateString(now) ? ` (${formatShortDate(nextAllowed.toISOString(), locale)})` : ""
+        householdDateString(nextAllowed, zone) !== householdDateString(now, zone) ? ` (${formatShortDate(nextAllowed.toISOString(), locale)})` : ""
       }`
     : "";
 
@@ -321,26 +325,20 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
         : (elapsed === "less than a minute" ? "just now" : `${elapsed} ago`))
     : "";
 
-  // This card's scheduled moment on the device's clock.
-  const scheduledAt = (() => {
-    if (!scheduledTime) return null;
-    const [y, mo, d] = scheduledDate.split("-").map(Number);
-    const [h, mi] = scheduledTime.split(":").map(Number);
-    const at = new Date(y, mo - 1, d, h, mi);
-    return isNaN(at.getTime()) ? null : at;
-  })();
+  // This card's scheduled moment: the date and time at home (issue #58).
+  const scheduledAt = scheduledTime ? householdDateTime(scheduledDate, scheduledTime, zone) : null;
   const sinceScheduled = scheduledAt ? now.getTime() - scheduledAt.getTime() : 0;
   // More than an hour late, and recent enough for the server to accept that time.
   const lateEnoughToAsk = sinceScheduled > 60 * 60_000 && sinceScheduled < 36 * 3600_000;
 
+  // Overdue by the clock at home, not this phone's (a sibling abroad, issue #58).
   const isOverdue = (() => {
     if (isLogged || !scheduledTime) return false;
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    if (scheduledDate !== todayStr) return false;
+    if (scheduledDate !== householdToday(now, zone)) return false;
     const [sh, sm] = scheduledTime.split(":").map(Number);
     if (isNaN(sh) || isNaN(sm)) return false;
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const home = householdClock(now, zone);
+    const currentMinutes = home.hours * 60 + home.minutes;
     const scheduledMinutes = sh * 60 + sm;
     return currentMinutes > scheduledMinutes + 30;
   })();
@@ -402,6 +400,7 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                   <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
                     <span>⏰</span>
                     <span className="font-mono">{scheduledTime}</span>
+                    {abroad && <span data-testid="home-time-label">{ar ? "بتوقيت البيت" : "home time"}</span>}
                   </span>
                 )}
 

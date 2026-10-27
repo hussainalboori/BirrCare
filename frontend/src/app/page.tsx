@@ -11,16 +11,18 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { OUTBOX_RESULT_EVENT } from "@/lib/outbox";
-import { localDateString } from "@/lib/datetime";
+import { householdToday } from "@/lib/householdTime";
+import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { Ltr } from "@/components/Ltr";
 import { Calendar, CheckCircle2, Clock, Sparkles, Brain } from "lucide-react";
 import Link from "next/link";
 
 export default function MedicationsPage() {
   const { t, locale } = useLanguage();
-  // Local calendar date (NOT toISOString(), which is the UTC date and is "yesterday"
-  // between 00:00–03:00 in UTC+3).
-  const [selectedDate, setSelectedDate] = useState<string>(() => localDateString());
+  // Today at home (issue #58): not the UTC date, and not this phone's date when
+  // the phone is abroad.
+  const zone = useHouseholdZone();
+  const [selectedDate, setSelectedDate] = useState<string>(() => householdToday());
   // Whether the user is looking at "today" (so we can roll over at midnight on wake).
   const followsTodayRef = useRef(true);
   const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
@@ -55,9 +57,16 @@ export default function MedicationsPage() {
     loadSchedule(selectedDate);
   }, [selectedDate, loadSchedule]);
 
+  // The household zone arrived from the server: "today" may be another date.
+  useEffect(() => {
+    if (!followsTodayRef.current) return;
+    const today = householdToday(new Date(), zone);
+    setSelectedDate((d) => (d === today ? d : today));
+  }, [zone]);
+
   const handleDateChange = (value: string) => {
     if (!value) return;
-    followsTodayRef.current = value === localDateString();
+    followsTodayRef.current = value === householdToday(new Date(), zone);
     setLoading(true);
     setSelectedDate(value);
   };
@@ -80,7 +89,7 @@ export default function MedicationsPage() {
     onMedEvent: onDoseChanged,
     // After reconnect / returning from background: re-hydrate (and roll over to the new day).
     onResync: () => {
-      const today = localDateString();
+      const today = householdToday(new Date(), zone);
       if (followsTodayRef.current && today !== selectedDate) {
         setSelectedDate(today);
       } else {

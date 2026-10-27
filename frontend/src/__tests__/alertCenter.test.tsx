@@ -32,7 +32,8 @@ vi.mock("@/context/CaregiverContext", () => ({
   }),
 }));
 
-import { AlertCenter, TimezoneMismatchBanner } from "@/components/AlertCenter";
+import { AlertCenter, HomeTimeBanner } from "@/components/AlertCenter";
+import { setHouseholdZone } from "@/lib/householdTime";
 
 const crisis = {
   id: "a1",
@@ -183,40 +184,25 @@ describe("AlertCenter: overdue dose (issue #55)", () => {
   });
 });
 
-describe("TimezoneMismatchBanner (issue #26)", () => {
-  it("server zone ≠ device zone → admin banner rendered", async () => {
-    mockRole = "admin";
-    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-      timeZone: "UTC",
-    } as Intl.ResolvedDateTimeFormatOptions);
+describe("HomeTimeBanner (issue #58)", () => {
+  const device = (timeZone: string) =>
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({ timeZone } as Intl.ResolvedDateTimeFormatOptions);
+  afterEach(() => vi.restoreAllMocks());
 
-    render(<TimezoneMismatchBanner />);
-    const banner = await screen.findByTestId("timezone-mismatch-banner");
-    expect(banner).toBeTruthy();
-    expect(banner.textContent).toContain("Asia/Bahrain");
-    expect(banner.textContent).toContain("UTC");
+  it("phone in London, home in Riyadh: every caregiver sees home time and home's clock", () => {
+    setHouseholdZone("Asia/Riyadh");
+    device("Europe/London");
+    render(<HomeTimeBanner />);
+    const banner = screen.getByTestId("home-time-banner");
+    expect(banner.textContent).toContain("Times shown are home time");
+    expect(banner.textContent).toContain("Riyadh");
+    expect(banner.textContent).toMatch(/\d{1,2}:\d{2}/);
   });
 
-  it("server zone = device zone → no banner", async () => {
-    mockRole = "admin";
-    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-      timeZone: "Asia/Bahrain",
-    } as Intl.ResolvedDateTimeFormatOptions);
-
-    render(<TimezoneMismatchBanner />);
-    await waitFor(() => expect(fetchApi).toHaveBeenCalledWith("/health", undefined));
-    expect(screen.queryByTestId("timezone-mismatch-banner")).toBeNull();
-  });
-
-  it("non-admin caregiver → no banner even on mismatch", async () => {
-    mockRole = "caregiver";
-    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-      timeZone: "UTC",
-    } as Intl.ResolvedDateTimeFormatOptions);
-
-    render(<TimezoneMismatchBanner />);
-    await waitFor(() => expect(fetchApi).toHaveBeenCalledWith("/health", undefined));
-    expect(screen.queryByTestId("timezone-mismatch-banner")).toBeNull();
+  it("phone in Bahrain, home in Riyadh (both UTC+3): no banner", () => {
+    setHouseholdZone("Asia/Riyadh");
+    device("Asia/Bahrain");
+    render(<HomeTimeBanner />);
+    expect(screen.queryByTestId("home-time-banner")).toBeNull();
   });
 });
-

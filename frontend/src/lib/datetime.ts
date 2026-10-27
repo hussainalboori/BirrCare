@@ -1,7 +1,9 @@
 import type { Locale } from "./i18n";
+import { getHouseholdZone } from "./householdTime";
 
 /**
- * Returns the device-local calendar date as 'YYYY-MM-DD'.
+ * Returns the device-local calendar date as 'YYYY-MM-DD'. For anything clinical
+ * ("today", overdue) use householdToday() from ./householdTime (issue #58).
  *
  * Never use `new Date().toISOString().slice(0, 10)` for "today": that is the
  * UTC date, which in UTC+3 is still *yesterday* between 00:00 and 03:00 local
@@ -43,13 +45,14 @@ export function intlLocale(locale: Locale): string {
 export function formatTime(value: string | null | undefined, locale: Locale): string {
   const d = parseServerTime(value);
   if (!d) return "";
-  return d.toLocaleTimeString(intlLocale(locale), { hour: "numeric", minute: "2-digit", hour12: true });
+  // Home time (issue #58), whatever clock this phone is on.
+  return d.toLocaleTimeString(intlLocale(locale), { hour: "numeric", minute: "2-digit", hour12: true, timeZone: getHouseholdZone() });
 }
 
 export function formatShortDate(value: string | null | undefined, locale: Locale): string {
   const d = parseServerTime(value);
   if (!d) return "";
-  return d.toLocaleDateString(intlLocale(locale), { month: "short", day: "numeric" });
+  return d.toLocaleDateString(intlLocale(locale), { month: "short", day: "numeric", timeZone: getHouseholdZone() });
 }
 
 export function formatDateTime(value: string | null | undefined, locale: Locale): string {
@@ -61,6 +64,7 @@ export function formatDateTime(value: string | null | undefined, locale: Locale)
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: getHouseholdZone(),
   });
 }
 

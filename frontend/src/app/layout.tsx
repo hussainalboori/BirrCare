@@ -5,12 +5,13 @@ import "./globals.css";
 import { LanguageProvider } from "@/context/LanguageContext";
 import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { CaregiverProvider } from "@/context/CaregiverContext";
+import { HouseholdTimeProvider } from "@/context/HouseholdTimeContext";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
 import { OutboxBar } from "@/components/OutboxBar";
 import { SharedDeviceGuard } from "@/components/SharedDeviceGuard";
 import { EmergencyCardKeeper } from "@/components/EmergencyCardKeeper";
-import { AlertCenter, EmergencySetupBanner, TimezoneMismatchBanner } from "@/components/AlertCenter";
+import { AlertCenter, EmergencySetupBanner, HomeTimeBanner } from "@/components/AlertCenter";
 import { Navigation } from "@/components/Navigation";
 import { ThemeKeeper } from "@/components/ThemePicker";
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -69,9 +70,10 @@ export default async function RootLayout({
         <LanguageProvider initialLocale={locale}>
           {/* Read from the server's settings at request time, not baked into the build. */}
           <EmergencyDefaultProvider value={cleanEmergencyNumber(process.env.EMERGENCY_NUMBER)}>
+          <HouseholdTimeProvider>
           <CaregiverProvider>
             <EmergencySetupBanner />
-            <TimezoneMismatchBanner />
+            <HomeTimeBanner />
             <UpdateBanner />
             {/* The version this page was loaded from (read at request time, like the emergency number). */}
             <NewVersionBanner pageVersion={process.env.GIT_SHA || ""} />
@@ -85,6 +87,7 @@ export default async function RootLayout({
             {children}
             <Navigation />
           </CaregiverProvider>
+          </HouseholdTimeProvider>
           </EmergencyDefaultProvider>
         </LanguageProvider>
       </body>

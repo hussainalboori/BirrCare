@@ -6,6 +6,8 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi, type ApiError } from "@/lib/api";
 import { formatTime } from "@/lib/datetime";
+import { clockDiffersFromHome, homeCity } from "@/lib/householdTime";
+import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { playAlert } from "@/lib/alertSound";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
 import { setBPLowThresholds, setOxygenFeverThresholds } from "@/lib/clinical";
@@ -525,35 +527,26 @@ export function EmergencySetupBanner() {
   );
 }
 
-/** Admins see this when the server timezone does not match device timezone (issue #26). */
-export function TimezoneMismatchBanner() {
+/**
+ * Issue #58 (replaces the admin-only zone-name check of #26): when this phone's
+ * clock is on a different UTC offset from home, every caregiver sees that the
+ * times shown are home time, with home's clock. Bahrain and Riyadh (both UTC+3)
+ * are the same clock, so no banner.
+ */
+export function HomeTimeBanner() {
   const { locale } = useLanguage();
   const { currentCaregiver } = useCaregiver();
-  const [serverTz, setServerTz] = useState<string | null>(null);
-
+  const zone = useHouseholdZone();
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    fetchApi<{ timezone?: string }>("/health")
-      .then((data) => {
-        if (data?.timezone) {
-          setServerTz(data.timezone);
-        }
-      })
-      .catch(() => {});
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
   }, []);
-
-  const role = currentCaregiver?.role;
-  if (role !== "admin" && role !== "super_admin") return null;
-  if (!serverTz) return null;
-
-  const deviceTz = typeof Intl !== "undefined" && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : null;
-  if (!deviceTz || serverTz === deviceTz) return null;
-
+  if (!currentCaregiver || !clockDiffersFromHome(now, zone)) return null;
+  const clock = now.toLocaleTimeString(locale === "ar" ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: zone });
   return (
-    <div role="alert" data-testid="timezone-mismatch-banner" className="bg-amber-600 px-4 py-2 text-center text-sm font-bold text-white">
-      {locale === "ar"
-        ? `تنبيه المنطقة الزمنية: الخادم يعمل بتوقيت (${serverTz}) بينما جهازك مضبوط على (${deviceTz}). قد تختلف تواريخ الجرعات والتقارير بين منتصف الليل وفجر اليوم.`
-        : `Time zone mismatch: Server is in (${serverTz}) while your device is set to (${deviceTz}). Dose dates and reports may differ around midnight.`}
+    <div role="status" data-testid="home-time-banner" className="bg-blue-800 px-4 py-2 text-center text-sm font-bold text-white">
+      {locale === "ar" ? "الأوقات المعروضة بتوقيت البيت" : "Times shown are home time"} (<bdi>{homeCity(zone)}</bdi>, <Ltr>{clock}</Ltr>)
     </div>
   );
 }
-

@@ -8,7 +8,9 @@ import { canManageMedications, canTakeActions, isViewer } from "@/lib/permission
 import { firstName } from "@/lib/actor";
 import { TAG_CHOICES, isUrgentTag, tagLabel } from "@/lib/handoverTags";
 import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/lib/outbox";
-import { formatShortDate, formatTime, localDateString } from "@/lib/datetime";
+import { formatShortDate, formatTime } from "@/lib/datetime";
+import { householdToday } from "@/lib/householdTime";
+import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
 import { VoiceNoteButton } from "@/components/VoiceNoteButton";
 import { Ltr } from "@/components/Ltr";
@@ -28,8 +30,10 @@ export function DayReports() {
   const { currentCaregiver, openPinModal } = useCaregiver();
   const ar = locale === "ar";
 
-  const [date, setDate] = useState<string>(() => localDateString());
-  const [today, setToday] = useState<string>(() => localDateString());
+  // The household's day (issue #58), not this phone's.
+  const zone = useHouseholdZone();
+  const [date, setDate] = useState<string>(() => householdToday());
+  const [today, setToday] = useState<string>(() => householdToday());
   const [notes, setNotes] = useState<HandoverNote[] | null>(null);
 
   const [tags, setTags] = useState<string[]>([]);
@@ -143,7 +147,7 @@ export function DayReports() {
     };
     // A new day starts while the page is open: follow it if "today" was shown.
     const onFocus = () => {
-      const now = localDateString();
+      const now = householdToday(new Date(), zone);
       if (now === today) return;
       setDate((d) => (d === today ? now : d));
       setToday(now);
@@ -158,7 +162,15 @@ export function DayReports() {
       window.removeEventListener(OUTBOX_RESULT_EVENT, load);
       window.removeEventListener("focus", onFocus);
     };
-  }, [currentCaregiver, load, today]);
+  }, [currentCaregiver, load, today, zone]);
+
+  // The household zone arrived from the server: "today" may be another date.
+  useEffect(() => {
+    const now = householdToday(new Date(), zone);
+    if (now === today) return;
+    setDate((d) => (d === today ? now : d));
+    setToday(now);
+  }, [zone, today]);
 
   const toggleTag = (key: string) => setTags((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
