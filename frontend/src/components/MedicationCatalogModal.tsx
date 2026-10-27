@@ -98,6 +98,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [thresholdDays, setThresholdDays] = useState("4");
   // PRN (issue #25)
   const [isPRN, setIsPRN] = useState(false);
+  const [remind, setRemind] = useState(true);
   const [prnMax24h, setPrnMax24h] = useState("4");
   const [prnMinHours, setPrnMinHours] = useState("4");
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
@@ -148,6 +149,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setDaysOfWeek(ALL_DAY_IDS);
     setMinHours("");
     setIsCritical(false);
+    setRemind(true);
     setTrackStock(false);
     setStockCount("");
     setStockTouched(false);
@@ -177,6 +179,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setPhotos(med.photo_urls || []);
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setIsCritical(!!med.is_critical);
+    setRemind(med.remind !== false);
     setTrackStock(med.stock_units != null);
     setStockCount(med.stock_units != null ? String(med.stock_units) : "");
     setStockTouched(false);
@@ -261,6 +264,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             image_url: imageUrl.trim() || undefined,
             photo_urls: photos,
             is_critical: isCritical,
+            remind,
             ...prnPayload,
             ...stockPayload(),
           }),
@@ -278,6 +282,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             image_url: imageUrl.trim() || undefined,
             photo_urls: photos,
             is_critical: isCritical,
+            remind,
             ...prnPayload,
             ...stockPayload(),
           }),
@@ -648,6 +653,16 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 <input type="checkbox" checked={isCritical} onChange={(e) => setIsCritical(e.target.checked)} className="h-5 w-5" />
                 {locale === "ar" ? "دواء حرج (مميّع للدم أو مضاد للصفائح): يظهر أولاً في تقرير الطبيب ومعلَّماً في بطاقة الطوارئ" : "Critical medicine (blood thinner / antiplatelet): listed first in the doctor report and flagged on the emergency card"}
               </label>
+
+              {/* OVERDUE REMINDERS (issue #55) */}
+              {!isPRN && (
+                <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100">
+                  <input type="checkbox" checked={remind} onChange={(e) => setRemind(e.target.checked)} className="h-5 w-5" data-testid="med-remind" />
+                  {locale === "ar"
+                    ? "ذكّرنا إذا لم تُسجَّل الجرعة (للمناوب بعد 45 دقيقة، وللجميع بعد 90؛ المميّع 30 و60)"
+                    : "Remind us if a dose isn't logged (whoever is on duty after 45 min, everyone after 90; blood thinners 30 and 60)"}
+                </label>
+              )}
 
               {/* STOCK (issue #20) */}
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">

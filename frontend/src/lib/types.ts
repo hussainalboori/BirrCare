@@ -83,6 +83,8 @@ export interface Medication {
   min_hours_between?: number | null;
   /** Anticoagulant / antiplatelet: listed first in the doctor report. */
   is_critical?: boolean;
+  /** The server chases an unlogged dose (issue #55); default true. */
+  remind?: boolean;
   /** PRN (as-needed) medication (issue #25). */
   is_prn?: boolean;
   prn_min_hours?: number | null;

@@ -73,6 +73,8 @@ type Medication struct {
 	MinHoursBetween *float64 `json:"min_hours_between"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report (issue #14).
 	IsCritical bool `json:"is_critical"`
+	// Remind: the server chases an unlogged dose (issue #55).
+	Remind bool `json:"remind"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`

@@ -103,7 +103,7 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
-		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]')
+		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1)
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -124,7 +124,7 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var createdAtStr string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind); err != nil {
 			continue
 		}
 		m.PhotoURLs = parsePhotoURLs(photosJSON)
@@ -189,6 +189,8 @@ type CreateMedicationRequest struct {
 	MinHoursBetween *float64 `json:"min_hours_between,omitempty"`
 	// Anticoagulant / antiplatelet: listed first in the doctor report.
 	IsCritical bool `json:"is_critical,omitempty"`
+	// Remind: chase an unlogged dose (issue #55). Omitted = on.
+	Remind *bool `json:"remind,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn,omitempty"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -283,9 +285,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -353,6 +355,7 @@ type UpdateMedicationRequest struct {
 	// Absent = unchanged, null = automatic, number = doctor's minimum hours.
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
 	IsCritical      *bool           `json:"is_critical,omitempty"`
+	Remind          *bool           `json:"remind,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        *bool    `json:"is_prn,omitempty"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -424,17 +427,18 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		PhotoURLs       string
 		MinHoursBetween sql.NullFloat64
 		IsCritical      bool
+		Remind          bool
 		IsActive        bool
 	}
 	err = tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
 		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
-		       min_hours_between, is_critical, is_active
+		       min_hours_between, is_critical, COALESCE(remind, 1), is_active
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&before.NameAr, &before.NameEn, &before.Dosage, &before.InstructionsAr, &before.InstructionsEn, &before.FrequencySlots,
 		&before.DaysOfWeek, &before.SlotTimes, &before.ImageURL, &before.PhotoURLs,
-		&before.MinHoursBetween, &before.IsCritical, &before.IsActive,
+		&before.MinHoursBetween, &before.IsCritical, &before.Remind, &before.IsActive,
 	)
 	if err == sql.ErrNoRows {
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "Medication not found")
@@ -511,6 +515,12 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if req.Remind != nil {
+		if _, err := tx.Exec("UPDATE medications SET remind = ? WHERE id = ?", *req.Remind, medID); err != nil {
+			internalError(w, "failed to update medication", err)
+			return
+		}
+	}
 
 	if setMinHours {
 		if _, err := tx.Exec("UPDATE medications SET min_hours_between = ? WHERE id = ?", minHours, medID); err != nil {
@@ -576,17 +586,18 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		PhotoURLs       string
 		MinHoursBetween sql.NullFloat64
 		IsCritical      bool
+		Remind          bool
 		IsActive        bool
 	}
 	if err := tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
 		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
-		       min_hours_between, is_critical, is_active
+		       min_hours_between, is_critical, COALESCE(remind, 1), is_active
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&after.NameAr, &after.NameEn, &after.Dosage, &after.InstructionsAr, &after.InstructionsEn, &after.FrequencySlots,
 		&after.DaysOfWeek, &after.SlotTimes, &after.ImageURL, &after.PhotoURLs,
-		&after.MinHoursBetween, &after.IsCritical, &after.IsActive,
+		&after.MinHoursBetween, &after.IsCritical, &after.Remind, &after.IsActive,
 	); err != nil {
 		internalError(w, "failed to query updated medication", err)
 		return
@@ -604,6 +615,7 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"image_url":       before.ImageURL,
 		"photo_urls":      before.PhotoURLs,
 		"is_critical":     before.IsCritical,
+		"remind":          before.Remind,
 		"is_active":       before.IsActive,
 	}
 	if before.MinHoursBetween.Valid {
@@ -622,6 +634,7 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"image_url":       after.ImageURL,
 		"photo_urls":      after.PhotoURLs,
 		"is_critical":     after.IsCritical,
+		"remind":          after.Remind,
 		"is_active":       after.IsActive,
 	}
 	if after.MinHoursBetween.Valid {
@@ -1086,6 +1099,10 @@ type LogDoseRequest struct {
 	// Admin-only escape from the interval lock (e.g. the doctor ordered an extra dose).
 	OverrideInterval bool   `json:"override_interval,omitempty"`
 	OverrideReason   string `json:"override_reason,omitempty"`
+	// GivenBy (optional): the caregiver who actually gave it, when someone else
+	// records it for them ("Someone else gave it", issue #55). The entry is theirs;
+	// recorded_by keeps who tapped.
+	GivenBy string `json:"given_by,omitempty"`
 }
 
 const (
@@ -1194,6 +1211,20 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Who gave it: the signed-in caregiver, or the sibling they name.
+	givenBy := caregiver
+	req.GivenBy = strings.TrimSpace(req.GivenBy)
+	if req.GivenBy != "" && req.GivenBy != caregiver.ID {
+		var g models.Caregiver
+		err := h.DB.QueryRowContext(r.Context(), `SELECT id, name, role, COALESCE(avatar_color, '') FROM caregivers WHERE id = ? AND is_active = 1`, req.GivenBy).
+			Scan(&g.ID, &g.Name, &g.Role, &g.AvatarColor)
+		if err != nil || !auth.CanTakeActions(&g) {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_GIVEN_BY", "given_by must be an active caregiver who can give medicines")
+			return
+		}
+		givenBy = &g
+	}
+
 	// Medication must exist, be active, and actually be scheduled in this slot.
 	var nameAr, nameEn, slotsJSON, dosage string
 	var timesJSON sql.NullString
@@ -1269,9 +1300,9 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes, dosage_snapshot)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, logID, req.MedicationID, caregiver.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), now.Format(sqliteTimeLayout), req.Status, req.Notes, dosage)
+		INSERT INTO medication_logs (id, medication_id, caregiver_id, slot, scheduled_date, taken_at, recorded_at, status, notes, dosage_snapshot, recorded_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, logID, req.MedicationID, givenBy.ID, req.Slot, req.ScheduledDate, givenAt.Format(sqliteTimeLayout), now.Format(sqliteTimeLayout), req.Status, req.Notes, dosage, caregiver.ID)
 	if err != nil {
 		tx.Rollback() // release the connection BEFORE querying the existing dose
 		if isUniqueViolation(err) {
@@ -1286,6 +1317,9 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	if !givenAt.Equal(now) {
 		details += fmt.Sprintf(", given at %s (recorded %s)", givenAt.Format(time.RFC3339), now.Format(time.RFC3339))
 	}
+	if givenBy.ID != caregiver.ID {
+		details += fmt.Sprintf(", given by %s (%s), recorded on their behalf by %s", givenBy.Name, givenBy.ID, caregiver.Name)
+	}
 	if err := audit.Record(tx, caregiver.ID, "MED_LOGGED", "medication_log", logID, details); err != nil {
 		tx.Rollback()
 		internalError(w, "failed to write audit trail", err)
@@ -1296,6 +1330,13 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		tx.Rollback()
 		internalError(w, "failed to update stock", err)
+		return
+	}
+	// Issue #55: the dose is dealt with, so its overdue alert is gone for everyone.
+	resolvedAlert, err := resolveDoseOverdue(tx, req.MedicationID, req.ScheduledDate, req.Slot, now)
+	if err != nil {
+		tx.Rollback()
+		internalError(w, "failed to clear the overdue alert", err)
 		return
 	}
 	var alertID string
@@ -1334,9 +1375,12 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		"notes":             req.Notes,
 		"interval_override": overridden != nil,
 		"override_reason":   overrideReasonIf(overridden != nil, req.OverrideReason),
-		"caregiver_id":      caregiver.ID,
-		"caregiver_name":    caregiver.Name,
-		"avatar_color":      caregiver.AvatarColor,
+		"caregiver_id":      givenBy.ID,
+		"caregiver_name":    givenBy.Name,
+		"avatar_color":      givenBy.AvatarColor,
+	}
+	if resolvedAlert != "" {
+		h.Broker.Broadcast(doseOverdueResolvedType, actorOf(caregiver), map[string]interface{}{"alert_id": resolvedAlert, "resolved": true})
 	}
 	if alertID != "" {
 		h.Broker.BroadcastAlert(alertID, "MED_LOGGED", actorOf(caregiver), medPayload)
@@ -1352,8 +1396,8 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 		"status":         "success",
 		"log_id":         logID,
 		"taken_at":       givenAt.Format(time.RFC3339),
-		"caregiver_name": caregiver.Name,
-		"avatar_color":   caregiver.AvatarColor,
+		"caregiver_name": givenBy.Name,
+		"avatar_color":   givenBy.AvatarColor,
 	})
 }
 
@@ -1446,7 +1490,7 @@ func (h *MedicationHandler) VoidDose(w http.ResponseWriter, r *http.Request) {
 	var loggedBy, recordedAt, medID, slot, date, status, nameAr, nameEn string
 	var voidedAt sql.NullString
 	err := h.DB.QueryRowContext(r.Context(), `
-		SELECT l.caregiver_id, COALESCE(l.recorded_at, l.taken_at, ''), l.voided_at, l.medication_id, l.slot, l.scheduled_date, l.status, m.name_ar, m.name_en
+		SELECT COALESCE(l.recorded_by, l.caregiver_id), COALESCE(l.recorded_at, l.taken_at, ''), l.voided_at, l.medication_id, l.slot, l.scheduled_date, l.status, m.name_ar, m.name_en
 		FROM medication_logs l JOIN medications m ON m.id = l.medication_id
 		WHERE l.id = ?`, logID).Scan(&loggedBy, &recordedAt, &voidedAt, &medID, &slot, &date, &status, &nameAr, &nameEn)
 	if errors.Is(err, sql.ErrNoRows) {

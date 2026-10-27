@@ -58,7 +58,12 @@ func pushRaised(n *push.Notifier, a raisedAlert, actorID string) {
 // onDutyCaregiverID is whoever is assigned to the shift running now, or "" if
 // nobody is. Safe inside a transaction (pass the tx).
 func onDutyCaregiverID(q querier) string {
-	shift, date, err := findCurrentShift(q, time.Now().In(ClinicalLocation()))
+	return onDutyCaregiverAt(q, time.Now())
+}
+
+// onDutyCaregiverAt is onDutyCaregiverID at a given moment (the dose watcher's clock).
+func onDutyCaregiverAt(q querier, now time.Time) string {
+	shift, date, err := findCurrentShift(q, now.In(ClinicalLocation()))
 	if err != nil || shift == nil {
 		return ""
 	}
@@ -95,6 +100,7 @@ func (h *AlertsHandler) Unacked(w http.ResponseWriter, r *http.Request) {
 		FROM alerts a LEFT JOIN caregivers c ON c.id = a.created_by
 		WHERE a.created_at >= ? AND COALESCE(a.created_by, '') <> ?
 		  AND (a.target_caregiver_id IS NULL OR a.target_caregiver_id = ?)
+		  AND a.resolved_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id AND k.caregiver_id = ?)
 		ORDER BY a.created_at ASC`, since, me.ID, me.ID, me.ID)
 	if err != nil {

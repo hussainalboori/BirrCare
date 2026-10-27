@@ -150,6 +150,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "تنبيه ضغط الدم — افتح رعاية بر"
 		}
 	}
+	if kind == "dose_overdue" {
+		body = "A medicine is overdue — open Birrcare"
+		if ar {
+			body = "دواء تأخر موعده — افتح رعاية بر"
+		}
+	}
 	if kind == "low_stock" {
 		body = "A medicine is running low — open Birrcare"
 		if ar {

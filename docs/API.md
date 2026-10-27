@@ -218,6 +218,7 @@ Creates a new scheduled medication.
   "days_of_week": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
   "slot_times": {"afternoon": "14:00"},
   "is_critical": true,
+  "remind": true,
   "min_hours_between": 18,
   "track_stock": true,
   "stock_units": 30,
@@ -253,6 +254,8 @@ Records a scheduled dose.
 }
 ```
 - **Allowed statuses:** `taken`, `partial`, `refused`, `skipped`.
+- **`given_by`** (optional): the caregiver who actually gave it, when someone else records it ("Someone else gave it"). The entry is theirs; who tapped is kept as `recorded_by` (they can still undo within 10 minutes), and the audit row says it was recorded on their behalf. Must be an active caregiver who can give medicines, else `400 INVALID_GIVEN_BY`.
+- **Overdue doses (issue #55):** a server watcher checks every minute. A scheduled dose with nothing logged gets a `dose_overdue` alert for the caregiver on duty (everyone if nobody is assigned) 45 minutes after its time, and the same alert goes to everyone at 90 minutes. Critical medicines (`is_critical`) use 30 and 60 minutes. One alert per dose; logging it in any way resolves it for everyone and broadcasts `ALERT_RESOLVED`; voiding that entry reopens it. No alert while the interval lock would refuse the dose, for medicines with `remind: false`, or for doses more than 12 hours old.
 - **Response codes:**
   - `201 Created`: Dose successfully recorded.
   - `200 OK`: Duplicate resend detected (`already_logged_by_you: true`).

@@ -4,7 +4,7 @@ import { haptic } from "@/lib/theme";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
-import { fetchApi } from "@/lib/api";
+import { fetchApi, type ApiError } from "@/lib/api";
 import { formatTime } from "@/lib/datetime";
 import { playAlert } from "@/lib/alertSound";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
@@ -34,7 +34,7 @@ const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergenc
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue";
   created_by_name?: string;
   emergency?: boolean;
   payload: Record<string, unknown>;
@@ -43,9 +43,11 @@ export interface ServerAlert {
 
 export function AlertCenter() {
   const { locale } = useLanguage();
-  const { currentCaregiver } = useCaregiver();
+  const { currentCaregiver, allCaregivers } = useCaregiver();
   const contacts = useContacts();
   const [alerts, setAlerts] = useState<ServerAlert[]>([]);
+  // Overdue dose (issue #55): the "who gave it?" picker and any error, for one alert.
+  const [doseUi, setDoseUi] = useState<{ id: string; picking: boolean; msg: string }>({ id: "", picking: false, msg: "" });
   const announced = useRef(new Set<string>());
   const ar = locale === "ar";
   const me = currentCaregiver?.id;
@@ -133,7 +135,45 @@ export function AlertCenter() {
 
   const p = current.payload;
   const duty = DUTY_KINDS.has(current.kind);
-  const red = current.emergency || (!duty && !AMBER_KINDS.has(current.kind));
+  const overdue = current.kind === "dose_overdue";
+  // A missed blood thinner is red; other missed doses orange. Neither needs the call buttons.
+  const red = current.emergency || (overdue ? Boolean(p.critical) : !duty && !AMBER_KINDS.has(current.kind));
+  const calls = red && !overdue;
+  const ui = doseUi.id === current.id ? doseUi : { id: current.id, picking: false, msg: "" };
+  const canGive = overdue && currentCaregiver?.role !== "viewer";
+  const otherGivers = (allCaregivers ?? []).filter((c) => c.id !== me);
+
+  // Log the overdue dose as given, by me or by the sibling picked; the server then
+  // clears the alert for everyone.
+  const giveDose = async (givenBy?: string) => {
+    const id = current.id;
+    try {
+      await fetchApi("/medications/log", {
+        method: "POST",
+        body: JSON.stringify({
+          medication_id: p.medication_id,
+          slot: p.slot,
+          scheduled_date: p.scheduled_date,
+          status: "taken",
+          ...(givenBy ? { given_by: givenBy } : {}),
+        }),
+      });
+      setAlerts((list) => list.filter((a) => a.id !== id));
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.data?.error === "DOSE_ALREADY_LOGGED") {
+        setAlerts((list) => list.filter((a) => a.id !== id)); // someone else just did
+        return;
+      }
+      const msg =
+        err.data?.error === "DOSE_TOO_SOON"
+          ? ar ? "لا يمكن الآن: الجرعة السابقة قريبة جداً. اسأل الطبيب أو المسؤول." : "Not now: the previous dose was too recent. Ask the doctor or an admin."
+          : !err.status
+          ? ar ? "لم تُرسل: تحقق من الاتصال وحاول مرة أخرى." : "Not sent: check the connection and try again."
+          : err.message;
+      setDoseUi({ id, picking: ui.picking, msg });
+    }
+  };
   const crisis = current.emergency || current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
@@ -208,6 +248,19 @@ export function AlertCenter() {
         ? "اتصل بالطبيب الآن. إن كان الأكسجين منخفضاً أو تتنفس بصعوبة أو بعد سعال أثناء الأكل: اتصل بالإسعاف."
         : "Call the doctor now. If her oxygen is low, she is breathing hard, or it follows coughing while eating: call emergency.";
       break;
+    case "dose_overdue": {
+      // Issue #55: a scheduled dose nobody has logged.
+      const dose = (
+        <>
+          <bdi>{medName}</bdi> {p.dosage ? <bdi>{String(p.dosage)}</bdi> : null} (<Ltr>{String(p.slot_time || "")}</Ltr>)
+        </>
+      );
+      title = ar ? <>لم تُسجَّل جرعة {dose}</> : <>{dose} isn&apos;t logged</>;
+      advice = p.critical
+        ? ar ? "مميّع للدم: تأكد الآن هل أُعطيت. لا تعطِ جرعة ثانية إن لم تكن متأكداً." : "Blood thinner: check now whether it was given. Don't give a second dose if you're not sure."
+        : ar ? "تأكد هل أُعطيت، ثم سجّلها." : "Check whether it was given, then record it.";
+      break;
+    }
     case "low_stock": {
       // Issue #20: a medicine is about to run out.
       title = (
@@ -338,7 +391,7 @@ export function AlertCenter() {
             </span>
           </span>
         </p>
-        {red && (
+        {calls && (
           <div className="grid grid-cols-2 gap-2">
             <a
               href={`tel:${contacts.emergency}`}
@@ -362,6 +415,53 @@ export function AlertCenter() {
           </div>
         )}
         {current.kind === "sugar_low" && <RecheckTimer since={current.created_at} ar={ar} />}
+        {canGive && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => giveDose()}
+                data-testid="give-dose"
+                className={`flex min-h-12 items-center justify-center rounded-xl bg-white px-2 text-base font-black ${red ? "text-rose-800" : "text-amber-900"}`}
+              >
+                <span>
+                  {ar ? "أعطيتها أنا" : "Give as"} <bdi>{currentCaregiver?.name}</bdi>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDoseUi({ id: current.id, picking: !ui.picking, msg: "" })}
+                aria-expanded={ui.picking}
+                data-testid="someone-else-gave"
+                className="flex min-h-12 items-center justify-center rounded-xl border-2 border-white px-2 text-base font-black text-white"
+              >
+                {ar ? "أعطاها شخص آخر" : "Someone else gave it"}
+              </button>
+            </div>
+            {ui.picking && (
+              <div className="rounded-xl bg-white p-2" role="group" aria-label={ar ? "من أعطاها؟" : "Who gave it?"}>
+                <p className="mb-1 text-sm font-bold text-slate-800">{ar ? "من أعطاها؟" : "Who gave it?"}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {otherGivers.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => giveDose(c.id)}
+                      className="min-h-12 rounded-xl border border-slate-300 px-2 text-base font-bold text-slate-900"
+                    >
+                      <bdi>{c.name}</bdi>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ui.msg && (
+              <p role="alert" className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-rose-800">
+                {ui.msg}
+              </p>
+            )}
+          </div>
+        )}
         {current.kind === "alertness" && (
           <Link href="/fast" className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-rose-800">
             {ar ? "افحص F.A.S.T. الآن" : "Do the F.A.S.T. check now"}
@@ -378,7 +478,7 @@ export function AlertCenter() {
             {ar ? "أقبل المناوبة" : "Accept duty"}
           </button>
         ) : (
-          (!red || contacts.doctor_phone) && seenButton
+          (!calls || contacts.doctor_phone) && seenButton
         )}
       </div>
     </div>

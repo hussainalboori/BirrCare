@@ -90,6 +90,7 @@ func main() {
 
 	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
 	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)
+	handlers.StartDoseWatcher(reminderCtx, database, notifier, broker)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),

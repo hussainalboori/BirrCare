@@ -108,13 +108,15 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT DEFAULT (datetime('now')),
     -- NULL: for every caregiver; otherwise only this one sees it (issue #18)
-    target_caregiver_id TEXT REFERENCES caregivers(id)
+    target_caregiver_id TEXT REFERENCES caregivers(id),
+    -- Set when the alert no longer applies for anyone (a late dose was logged, issue #55)
+    resolved_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
 
@@ -1020,6 +1022,60 @@ func Migrate(database *sql.DB) error {
 			PRAGMA foreign_keys = ON;
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts for sugar and fever: %w", err)
+		}
+	}
+
+	// Migrate alerts for dose_overdue: a scheduled dose nobody logged (issue #55).
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'dose_overdue'") {
+		log.Println("Migrating alerts: adding dose_overdue kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v12;
+			CREATE TABLE alerts_v12 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v12 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v12 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for dose_overdue: %w", err)
+		}
+	}
+	// Issue #55: after every alerts rebuild above. resolved_at clears an alert for
+	// everyone; one dose_overdue row per dose (ref_id = medication:date:slot).
+	var hasResolved int
+	_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'resolved_at'").Scan(&hasResolved)
+	if hasResolved == 0 {
+		if _, err := database.Exec(`ALTER TABLE alerts ADD COLUMN resolved_at TEXT`); err != nil {
+			return fmt.Errorf("failed adding alerts.resolved_at: %w", err)
+		}
+	}
+	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dose_overdue ON alerts(ref_id) WHERE kind = 'dose_overdue'`); err != nil {
+		return fmt.Errorf("failed creating uq_alerts_dose_overdue: %w", err)
+	}
+	// medications.remind: admins can turn overdue reminders off (e.g. a vitamin).
+	// medication_logs.recorded_by: who tapped, when logging for someone else who gave it.
+	for _, c := range []struct{ table, col, def string }{
+		{"medications", "remind", "INTEGER NOT NULL DEFAULT 1"},
+		{"medication_logs", "recorded_by", "TEXT REFERENCES caregivers(id)"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('"+c.table+"') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE " + c.table + " ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding %s.%s: %w", c.table, c.col, err)
+			}
 		}
 	}
 

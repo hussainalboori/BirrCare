@@ -22,7 +22,15 @@ let mockRole = "caregiver";
 vi.mock("@/lib/api", () => ({ fetchApi: (e: string, o?: RequestInit) => fetchApi(e, o) }));
 vi.mock("@/lib/alertSound", () => ({ playAlert: (k: string) => playAlert(k), installAudioUnlock: () => {} }));
 vi.mock("@/context/LanguageContext", () => ({ useLanguage: () => ({ locale: "en" }) }));
-vi.mock("@/context/CaregiverContext", () => ({ useCaregiver: () => ({ currentCaregiver: { id: "c1", role: mockRole } }) }));
+vi.mock("@/context/CaregiverContext", () => ({
+  useCaregiver: () => ({
+    currentCaregiver: { id: "c1", name: "Hussain", role: mockRole },
+    allCaregivers: [
+      { id: "c1", name: "Hussain" },
+      { id: "c2", name: "Ali" },
+    ],
+  }),
+}));
 
 import { AlertCenter, TimezoneMismatchBanner } from "@/components/AlertCenter";
 
@@ -126,6 +134,52 @@ describe("AlertCenter: every alert kind (issue #54, clinical/alert-kinds.json)",
     unacked = [{ ...crisis, id: "s2", kind: "sugar_low", payload: { blood_sugar: 3.1 }, emergency: true, created_at: new Date(Date.now() - 16 * 60_000).toISOString() }];
     render(<AlertCenter />);
     expect((await screen.findByTestId("sugar-recheck")).textContent).toBe("Recheck sugar now");
+  });
+});
+
+describe("AlertCenter: overdue dose (issue #55)", () => {
+  const overdue = {
+    id: "d1",
+    kind: "dose_overdue",
+    payload: { medication_id: "med_clop", name_en: "Clopidogrel", dosage: "75 mg", slot: "morning", scheduled_date: "2026-10-27", slot_time: "08:00", critical: true },
+    created_at: new Date().toISOString(),
+  };
+  const logCalls = () => fetchApi.mock.calls.filter(([e]) => e === "/medications/log").map(([, o]) => JSON.parse(String(o?.body)));
+
+  it("says which dose isn't logged, red for a blood thinner, without the call buttons", async () => {
+    unacked = [overdue];
+    render(<AlertCenter />);
+    const bar = await screen.findByTestId("alert-bar");
+    expect(bar.textContent).toContain("Clopidogrel 75 mg (08:00) isn't logged");
+    expect(bar.className).toContain("bg-rose-700");
+    expect(bar.querySelector('a[href^="tel:"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Seen" })).toBeTruthy();
+  });
+
+  it("Give as me logs the dose and the alert goes", async () => {
+    unacked = [overdue];
+    render(<AlertCenter />);
+    fireEvent.click(await screen.findByTestId("give-dose"));
+    await waitFor(() => expect(screen.queryByTestId("alert-bar")).toBeNull());
+    expect(logCalls()).toEqual([{ medication_id: "med_clop", slot: "morning", scheduled_date: "2026-10-27", status: "taken" }]);
+  });
+
+  it("Someone else gave it: pick the sibling, logged on their behalf", async () => {
+    unacked = [overdue];
+    render(<AlertCenter />);
+    fireEvent.click(await screen.findByTestId("someone-else-gave"));
+    expect(screen.queryByRole("button", { name: "Hussain" })).toBeNull(); // that's "Give as"
+    fireEvent.click(screen.getByRole("button", { name: "Ali" }));
+    await waitFor(() => expect(screen.queryByTestId("alert-bar")).toBeNull());
+    expect(logCalls()).toEqual([{ medication_id: "med_clop", slot: "morning", scheduled_date: "2026-10-27", status: "taken", given_by: "c2" }]);
+  });
+
+  it("a viewer sees the alert but no buttons to give it", async () => {
+    mockRole = "viewer";
+    unacked = [overdue];
+    render(<AlertCenter />);
+    await screen.findByTestId("alert-bar");
+    expect(screen.queryByTestId("give-dose")).toBeNull();
   });
 });
 
