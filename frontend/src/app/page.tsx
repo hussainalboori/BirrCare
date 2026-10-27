@@ -13,6 +13,7 @@ import { fetchApi } from "@/lib/api";
 import { OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { householdToday } from "@/lib/householdTime";
 import { useHouseholdZone } from "@/context/HouseholdTimeContext";
+import { CarePauseStart } from "@/components/CarePause";
 import { Ltr } from "@/components/Ltr";
 import { Calendar, CheckCircle2, Clock, Sparkles, Brain } from "lucide-react";
 import Link from "next/link";
@@ -234,6 +235,7 @@ export default function MedicationsPage() {
             })}
           </div>
         )}
+        <CarePauseStart />
       </main>
     </div>
   );

@@ -361,6 +361,11 @@ Reads or customizes clinical thresholds:
 
 ## Bedside Care (Repositioning, Fluids, Bowel)
 
+### Hospital stay / away (issue #59)
+- `GET /api/v1/care/pause` → `{paused, pause: {id, reason, started_at, started_by_name, notes}}`.
+- `POST /api/v1/care/pause` `{reason: "hospital" | "travel" | "other", notes}` (caregivers and admins): `201`, or `409 PAUSE_OPEN` if care is already paused. `POST /api/v1/care/resume`: `200`, or `409 NOT_PAUSED`. Both are audited and broadcast (`CARE_PAUSED`, `CARE_RESUMED`).
+- While paused the overdue-dose and repositioning watchers stay quiet (and a dose due during the pause is never chased afterwards; the repositioning clock restarts at the return home), and low-stock alerts wait. Logging is still allowed. The doctor report counts doses due in a pause as `paused` (per medicine and `total_paused`), not in `expected`, and lists the `pauses` of the period.
+
 Care tracking helps siblings prevent pressure sores (bedsores) and track nutrition.
 
 ### `GET /api/v1/care/status?kind={reposition|fluid|bowel}`

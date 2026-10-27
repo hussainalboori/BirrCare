@@ -521,6 +521,19 @@ func CheckRepositionOverdue(ctx context.Context, db *sql.DB, notifier *push.Noti
 		return err
 	}
 
+	// Issue #59: no alarm for an empty bed. While care is paused nothing is
+	// overdue, and after it the clock starts again from the return home.
+	if p, err := pausedAt(db, now); err != nil {
+		return err
+	} else if p != nil {
+		return nil
+	}
+	var lastEnded string
+	_ = db.QueryRowContext(ctx, `SELECT COALESCE(MAX(ended_at), '') FROM care_pauses WHERE ended_at IS NOT NULL`).Scan(&lastEnded)
+	if t, err := time.Parse(sqliteTimeLayout, lastEnded); err == nil && t.After(lastTime) {
+		lastTime = t
+	}
+
 	minutesSince := int(now.UTC().Sub(lastTime.UTC()).Minutes())
 	if minutesSince < criticalMinutes {
 		return nil

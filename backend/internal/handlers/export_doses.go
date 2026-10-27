@@ -27,6 +27,7 @@ type MedReport struct {
 	Refused      int      `json:"refused"`
 	Skipped      int      `json:"skipped"`
 	NotRecorded  int      `json:"not_recorded"`
+	Paused       int      `json:"paused"` // due while care was paused (issue #59); not in expected
 	Rate         float64  `json:"rate"`         // fully taken / expected, %
 	MissedDates  []string `json:"missed_dates"` // days with a dose not recorded, refused or skipped
 	// StoppedOn / StoppedBy (issue #57): the household date the medicine was stopped
@@ -80,6 +81,10 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 	if err != nil {
 		return nil, MedAdherence{}, err
 	}
+	pauses, err := pausesBetween(db, time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc), time.Date(end.Year(), end.Month(), end.Day()+1, 0, 0, 0, 0, loc))
+	if err != nil {
+		return nil, MedAdherence{}, err
+	}
 
 	// Every medicine, stopped ones too (issue #57): each day uses the schedule in
 	// effect that day.
@@ -125,6 +130,12 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 				if !logged && (!inEffect || !v.scheduledOn(date, slot) || (date == today && v.Times[slot] > nowClock)) {
 					continue
 				}
+				if !logged {
+					if due, err := time.ParseInLocation("2006-01-02 15:04", date+" "+v.Times[slot], loc); err == nil && inAnyPause(pauses, due) {
+						r.Paused++ // in hospital / away: not a missed dose
+						continue
+					}
+				}
 				r.Expected++
 				if !logged {
 					r.NotRecorded++
@@ -151,7 +162,7 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 				}
 			}
 		}
-		if r.Expected == 0 && inactive[r.MedicationID] {
+		if r.Expected == 0 && r.Paused == 0 && inactive[r.MedicationID] {
 			continue // stopped before this period and nothing recorded in it
 		}
 		for d := range missed {
@@ -174,6 +185,7 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 		total.TotalRefused += r.Refused
 		total.TotalSkipped += r.Skipped
 		total.TotalNotRecorded += r.NotRecorded
+		total.TotalPaused += r.Paused
 		out = append(out, r)
 	}
 	// Anticoagulants / antiplatelets (is_critical) first, then by name.

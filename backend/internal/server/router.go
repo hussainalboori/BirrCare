@@ -98,6 +98,7 @@ func NewRouter(o Options) http.Handler {
 	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
 	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
+	carePauseHandler := &handlers.CarePauseHandler{DB: o.DB, Broker: o.Broker}
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
@@ -310,6 +311,10 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/care/events", careHandler.LogEvent)
 				api.Get("/care/events", careHandler.ListEvents)
 				api.Post("/care/check-overdue", careHandler.CheckOverdue)
+				// Hospital stay / away (issue #59)
+				api.Get("/care/pause", carePauseHandler.Status)
+				api.Post("/care/pause", carePauseHandler.Pause)
+				api.Post("/care/resume", carePauseHandler.Resume)
 
 				// Bruises and bleeding signs, with photos (blood thinner)
 				api.Get("/bruises", bruiseHandler.List)

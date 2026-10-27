@@ -6,6 +6,7 @@ import { LanguageProvider } from "@/context/LanguageContext";
 import { LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import { CaregiverProvider } from "@/context/CaregiverContext";
 import { HouseholdTimeProvider } from "@/context/HouseholdTimeContext";
+import { CarePauseBanner } from "@/components/CarePause";
 import { PinPadModal } from "@/components/PinPadModal";
 import { SseToast } from "@/components/SseToast";
 import { OutboxBar } from "@/components/OutboxBar";
@@ -74,6 +75,7 @@ export default async function RootLayout({
           <CaregiverProvider>
             <EmergencySetupBanner />
             <HomeTimeBanner />
+            <CarePauseBanner />
             <UpdateBanner />
             {/* The version this page was loaded from (read at request time, like the emergency number). */}
             <NewVersionBanner pageVersion={process.env.GIT_SHA || ""} />

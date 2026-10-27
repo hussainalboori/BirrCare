@@ -1115,6 +1115,24 @@ func Migrate(database *sql.DB) error {
 		return err
 	}
 
+	// Issue #59: hospital stay / away. At most one open pause; times are UTC
+	// "2006-01-02 15:04:05".
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS care_pauses (
+			id TEXT PRIMARY KEY,
+			reason TEXT NOT NULL CHECK (reason IN ('hospital', 'travel', 'other')),
+			started_at TEXT NOT NULL,
+			ended_at TEXT,
+			started_by TEXT REFERENCES caregivers(id),
+			ended_by TEXT REFERENCES caregivers(id),
+			notes TEXT NOT NULL DEFAULT ''
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_care_pause_open ON care_pauses((1)) WHERE ended_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_care_pauses_started ON care_pauses(started_at);
+	`); err != nil {
+		return fmt.Errorf("failed creating care_pauses: %w", err)
+	}
+
 	// Ensure care_events table exists
 	if _, err := database.Exec(`
 		CREATE TABLE IF NOT EXISTS care_events (

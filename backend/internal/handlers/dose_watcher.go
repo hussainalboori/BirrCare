@@ -89,6 +89,14 @@ func CheckDoseOverdue(ctx context.Context, db *sql.DB, notifier *push.Notifier, 
 	if err != nil {
 		return err
 	}
+	// Issue #59: quiet while care is paused, and never for a dose due during a pause.
+	pauses, err := pausesBetween(db, now.Add(-48*time.Hour), now.Add(time.Second))
+	if err != nil {
+		return err
+	}
+	if inAnyPause(pauses, now) {
+		return nil
+	}
 
 	for _, m := range meds {
 		// Yesterday too: a 22:30 dose is escalated after midnight. Each day uses the
@@ -105,7 +113,7 @@ func CheckDoseOverdue(ctx context.Context, db *sql.DB, notifier *push.Notifier, 
 				if !v.scheduledOn(date, slot) {
 					continue
 				}
-				if err := checkDose(ctx, db, notifier, broker, now, dm, date, slot); err != nil {
+				if err := checkDose(ctx, db, notifier, broker, now, dm, date, slot, pauses); err != nil {
 					log.Printf("[DOSES] %s %s %s: %v", m.id, date, slot, err)
 				}
 			}
@@ -114,7 +122,7 @@ func CheckDoseOverdue(ctx context.Context, db *sql.DB, notifier *push.Notifier, 
 	return nil
 }
 
-func checkDose(ctx context.Context, db *sql.DB, notifier *push.Notifier, broker *sse.Broker, now time.Time, m watchedMed, date, slot string) error {
+func checkDose(ctx context.Context, db *sql.DB, notifier *push.Notifier, broker *sse.Broker, now time.Time, m watchedMed, date, slot string, pauses []CarePause) error {
 	due, err := time.ParseInLocation("2006-01-02 15:04", date+" "+m.times[slot], now.Location())
 	if err != nil {
 		return err
@@ -124,6 +132,9 @@ func checkDose(ctx context.Context, db *sql.DB, notifier *push.Notifier, broker 
 		first, escalate = criticalFirstWindow, criticalEscalateWindow
 	}
 	late := now.Sub(due)
+	if inAnyPause(pauses, due) {
+		return nil
+	}
 	if late < first || late > doseOverdueGiveUp || (!m.createdAt.IsZero() && m.createdAt.After(due)) {
 		return nil
 	}

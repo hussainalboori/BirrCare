@@ -41,6 +41,8 @@ type DoctorSummaryResponse struct {
 	InsulinLogs []InsulinLog `json:"insulin_logs"`
 	// PRN (as-needed) medication intake with reasons per day (issue #25).
 	PRNLogs []models.PRNExportLog `json:"prn_logs"`
+	// Hospital stays / time away in the period (issue #59), shown as grey bands.
+	Pauses []CarePause `json:"pauses"`
 }
 
 // DailyFluid is one household-local day of fluid intake (issue #28).
@@ -106,6 +108,8 @@ type MedAdherence struct {
 	TotalVomited   int `json:"total_vomited"`
 	// Expected doses with no entry at all: never counted as taken.
 	TotalNotRecorded int     `json:"total_not_recorded"`
+	// Doses due while care was paused (hospital, travel; issue #59): not expected.
+	TotalPaused int `json:"total_paused"`
 	AdherenceRate    float64 `json:"adherence_rate"` // fully taken / expected, e.g. 85.7 (%)
 }
 
@@ -345,6 +349,15 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		internalError(w, "failed to compute adherence", err)
 		return
 	}
+	loc = ClinicalLocation()
+	pauses, err := pausesBetween(h.DB, time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc), time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, loc))
+	if err != nil {
+		internalError(w, "failed to load pauses", err)
+		return
+	}
+	if pauses == nil {
+		pauses = []CarePause{}
+	}
 
 	// 3. Recent Handover notes
 	noteRows, err := h.DB.Query(handoverNoteSelect+`
@@ -526,6 +539,7 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		RecentVitals:    recentVitals,
 		InsulinLogs:     insulinLogs,
 		PRNLogs:         prnLogs,
+		Pauses:          pauses,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

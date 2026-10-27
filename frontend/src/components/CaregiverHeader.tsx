@@ -12,6 +12,7 @@ import type { LucideIcon } from "lucide-react";
 import { ROLE_METAS, isSuperAdmin, canManageMedications, isViewer } from "@/lib/permissions";
 import { UserManagementModal } from "./UserManagementModal";
 import { MedicationCatalogModal } from "./MedicationCatalogModal";
+import { OPEN_MED_CATALOG_EVENT } from "./CarePause";
 import { ScheduleManagementModal } from "./ScheduleManagementModal";
 import { ShiftManagementModal } from "./ShiftManagementModal";
 import { ChangePinModal } from "./ChangePinModal";
@@ -83,6 +84,13 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
       window.removeEventListener(RESYNC_EVENT, refresh);
     };
   }, [superAdmin]);
+
+  // Issue #59: "Did the hospital change any medicines? Yes" opens the medicine list.
+  useEffect(() => {
+    const open = () => setIsMedModalOpen(true);
+    window.addEventListener(OPEN_MED_CATALOG_EVENT, open);
+    return () => window.removeEventListener(OPEN_MED_CATALOG_EVENT, open);
+  }, []);
 
   // Issue #17: a shared tablet signs each person out after 20 minutes without use.
   const [sharedError, setSharedError] = useState(false);

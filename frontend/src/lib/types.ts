@@ -281,6 +281,7 @@ export interface DoctorSummary {
     total_refused?: number;
     total_vomited?: number;
     total_not_recorded?: number;
+    total_paused?: number;
     adherence_rate: number;
   };
   /** Per medication: given fully, partly, later vomited, refused, skipped. */
@@ -299,12 +300,16 @@ export interface DoctorSummary {
     refused: number;
     skipped: number;
     not_recorded: number;
+    /** Due while care was paused (hospital / away, issue #59); not expected. */
+    paused?: number;
     rate: number;
     missed_dates: string[];
     /** Issue #57: household date it was stopped, and by whom. */
     stopped_on?: string;
     stopped_by?: string;
   }[];
+  /** Hospital stays / time away in the period (issue #59). */
+  pauses?: { id: string; reason: "hospital" | "travel" | "other"; started_at: string; ended_at?: string; notes?: string }[];
   /** Blood pressure per household-local day. */
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];
   /** Lowest SpO2 and highest temperature per household-local day (issue #22). */

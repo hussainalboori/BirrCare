@@ -41,6 +41,9 @@ export default function DoctorExportPage() {
     }
   };
 
+  // The "Paused" column (issue #59) only when the period had a hospital stay or time away.
+  const showPaused = (summary?.per_medication ?? []).some((m) => (m.paused ?? 0) > 0);
+
   return (
     <div className="min-h-screen">
       <div className="no-print">
@@ -117,6 +120,22 @@ export default function DoctorExportPage() {
               </div>
             </div>
 
+            {/* Hospital stays / time away (issue #59): doses then are "paused", not missed. */}
+            {(summary.pauses ?? []).length > 0 && (
+              <div data-testid="report-pauses" className="mb-4 rounded-xl border border-slate-300 bg-slate-100 p-3 text-sm text-slate-800 print:mb-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
+                <p className="font-bold">{locale === "ar" ? "فترات في المستشفى أو خارج البيت (لا تُحسب الجرعات فيها فائتة)" : "Time in hospital or away (doses then are not counted as missed)"}</p>
+                <ul className="mt-1 space-y-0.5">
+                  {summary.pauses!.map((p) => (
+                    <li key={p.id}>
+                      {p.reason === "hospital" ? (locale === "ar" ? "المستشفى" : "Hospital") : p.reason === "travel" ? (locale === "ar" ? "سفر" : "Travel") : locale === "ar" ? "خارج البيت" : "Away"}:{" "}
+                      <bdi>{formatDateTime(p.started_at, locale)}</bdi> → <bdi>{p.ended_at ? formatDateTime(p.ended_at, locale) : locale === "ar" ? "مستمرة" : "ongoing"}</bdi>
+                      {p.notes && <> — <bdi>{p.notes}</bdi></>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Medications against the expected doses (issue #14). Critical ones first; a
                 dose nobody recorded is "not recorded" in red, never counted as taken. */}
             {(summary.per_medication ?? []).length > 0 && (
@@ -134,6 +153,7 @@ export default function DoctorExportPage() {
                         <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "جزئية / استفراغ" : "Partial / vomited"}</th>
                         <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "رفض / تخطي" : "Refused / skipped"}</th>
                         <th className="py-1.5 text-start font-semibold text-rose-700 dark:text-rose-300">{locale === "ar" ? "لم تُسجّل" : "Not recorded"}</th>
+                        {showPaused && <th className="py-1.5 text-start font-semibold text-slate-500">{locale === "ar" ? "متوقفة" : "Paused"}</th>}
                         <th className="py-1.5 text-start font-semibold">{locale === "ar" ? "الالتزام" : "Taken %"}</th>
                       </tr>
                     </thead>
@@ -142,7 +162,7 @@ export default function DoctorExportPage() {
                         <React.Fragment key={m.medication_id}>
                         {m.stopped_on && !all[i - 1]?.stopped_on && (
                           <tr data-testid="stopped-group">
-                            <th colSpan={7} className="pt-3 pb-1 text-start text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                            <th colSpan={showPaused ? 8 : 7} className="pt-3 pb-1 text-start text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                               {locale === "ar" ? "أدوية أُوقفت" : "Stopped medicines"}
                             </th>
                           </tr>
@@ -185,6 +205,7 @@ export default function DoctorExportPage() {
                           </td>
                           <td className="py-1.5 pe-2 align-top"><Ltr>{m.refused} / {m.skipped}</Ltr></td>
                           <td className={`py-1.5 pe-2 align-top ${m.not_recorded ? "font-black text-rose-700 dark:text-rose-300" : ""}`}><Ltr>{m.not_recorded}</Ltr></td>
+                          {showPaused && <td className="py-1.5 pe-2 align-top text-slate-500"><Ltr>{m.paused ?? 0}</Ltr></td>}
                           <td className="py-1.5 align-top font-bold"><Ltr>{m.expected ? `${Math.round(m.rate)}%` : "--"}</Ltr></td>
                         </tr>
                         </React.Fragment>

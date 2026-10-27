@@ -110,8 +110,14 @@ func changeStock(tx *sql.Tx, medID, logID, caregiverID, reason string, delta flo
 	r.DaysLeft = daysLeft(after, r.UnitsPerDose, r.rate)
 	r.Low = r.DaysLeft != nil && *r.DaysLeft < float64(r.ThresholdDays)
 	ch := &stockChange{Status: r.StockStatus}
+	// Issue #59: no low-stock alert while care is paused (she isn't at home);
+	// it comes with the next dose after the return.
+	paused, err := pausedAt(tx, now)
+	if err != nil {
+		return nil, err
+	}
 	switch {
-	case r.Low && !r.alerted:
+	case r.Low && !r.alerted && paused == nil:
 		if _, err := tx.Exec(`UPDATE medications SET low_stock_alerted_at = ? WHERE id = ?`, ts, medID); err != nil {
 			return nil, err
 		}
