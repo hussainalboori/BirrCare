@@ -85,6 +85,9 @@ export interface Medication {
   is_critical?: boolean;
   /** The server chases an unlogged dose (issue #55); default true. */
   remind?: boolean;
+  /** Lowercase INN and drug class (issue #61). */
+  active_ingredient?: string;
+  drug_class?: string;
   /** PRN (as-needed) medication (issue #25). */
   is_prn?: boolean;
   prn_min_hours?: number | null;

@@ -88,19 +88,27 @@ func nullableFloat(v sql.NullFloat64) *float64 {
 	return &f
 }
 
+// sameIngredientIDs is an SQL subquery taking one medication id: that medicine
+// and every other one with the same active ingredient (issue #61), so a brand and
+// its generic share one interval lock and one 24-hour limit.
+const sameIngredientIDs = `SELECT m2.id FROM medications m1 JOIN medications m2
+	ON m2.id = m1.id OR (COALESCE(m1.active_ingredient, '') <> '' AND m2.active_ingredient = m1.active_ingredient)
+	WHERE m1.id = ?`
+
 // queryer is satisfied by *sql.DB and *sql.Tx.
 type queryer interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// nearestTakenDose returns the taken dose of medicationID closest in time to at.
+// nearestTakenDose returns the taken dose of medicationID (or a medicine with the
+// same active ingredient) closest in time to at.
 func nearestTakenDose(q queryer, medicationID string, at time.Time) (*models.LastDose, error) {
 	var d models.LastDose
 	var takenAt string
 	err := q.QueryRow(`
 		SELECT l.taken_at, l.slot, l.scheduled_date, c.name, COALESCE(c.avatar_color, '')
 		FROM medication_logs l JOIN caregivers c ON c.id = l.caregiver_id
-		WHERE l.medication_id = ? AND l.status IN ('taken', 'partial') AND l.taken_at IS NOT NULL AND l.voided_at IS NULL
+		WHERE l.medication_id IN (`+sameIngredientIDs+`) AND l.status IN ('taken', 'partial') AND l.taken_at IS NOT NULL AND l.voided_at IS NULL
 		ORDER BY ABS(julianday(l.taken_at) - julianday(?)) LIMIT 1
 	`, medicationID, at.UTC().Format(sqliteTimeLayout)).Scan(&takenAt, &d.Slot, &d.ScheduledDate, &d.CaregiverName, &d.AvatarColor)
 	if errors.Is(err, sql.ErrNoRows) {

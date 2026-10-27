@@ -111,7 +111,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 		since24h := now.Add(-24 * time.Hour).Format(sqliteTimeLayout)
 		_ = h.DB.QueryRowContext(r.Context(), `
 			SELECT COUNT(*) FROM prn_logs
-			WHERE medication_id = ? AND voided_at IS NULL AND given_at >= ?
+			WHERE medication_id IN (`+sameIngredientIDs+`) AND voided_at IS NULL AND given_at >= ?
 		`, med.ID, since24h).Scan(&count24h)
 		status.CountLast24h = count24h
 
@@ -122,7 +122,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 			SELECT l.id, l.given_at, l.caregiver_id, c.name, COALESCE(c.avatar_color, ''), l.reason_tag
 			FROM prn_logs l
 			JOIN caregivers c ON l.caregiver_id = c.id
-			WHERE l.medication_id = ? AND l.voided_at IS NULL
+			WHERE l.medication_id IN (`+sameIngredientIDs+`) AND l.voided_at IS NULL
 			ORDER BY l.given_at DESC
 			LIMIT 1
 		`, med.ID).Scan(&last.LogID, &lastGivenAtStr, &last.CaregiverID, &last.CaregiverName, &last.AvatarColor, &last.ReasonTag)
@@ -153,7 +153,7 @@ func (h *MedicationHandler) GetPRNMedications(w http.ResponseWriter, r *http.Req
 			var earliestIn24hStr string
 			if err := h.DB.QueryRowContext(r.Context(), `
 				SELECT given_at FROM prn_logs
-				WHERE medication_id = ? AND voided_at IS NULL AND given_at >= ?
+				WHERE medication_id IN (`+sameIngredientIDs+`) AND voided_at IS NULL AND given_at >= ?
 				ORDER BY given_at ASC
 				LIMIT 1
 			`, med.ID, since24h).Scan(&earliestIn24hStr); err == nil {
@@ -348,7 +348,7 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 	var count24h int
 	err = tx.QueryRow(`
 		SELECT COUNT(*) FROM prn_logs
-		WHERE medication_id = ? AND voided_at IS NULL AND given_at >= ? AND given_at <= datetime(?, '+1 minute')
+		WHERE medication_id IN (`+sameIngredientIDs+`) AND voided_at IS NULL AND given_at >= ? AND given_at <= datetime(?, '+1 minute')
 	`, req.MedicationID, since24h, givenAtStr).Scan(&count24h)
 	if err != nil {
 		internalError(w, "failed to count 24h PRN doses", err)
@@ -362,7 +362,7 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 		SELECT l.id, l.given_at, c.name, COALESCE(c.avatar_color, ''), l.reason_tag
 		FROM prn_logs l
 		JOIN caregivers c ON l.caregiver_id = c.id
-		WHERE l.medication_id = ? AND l.voided_at IS NULL
+		WHERE l.medication_id IN (`+sameIngredientIDs+`) AND l.voided_at IS NULL
 		ORDER BY l.given_at DESC
 		LIMIT 1
 	`, req.MedicationID).Scan(&lastGivenID, &lastGivenAt, &lastGiverName, &lastAvatar, &lastReason)
@@ -375,7 +375,7 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 			var nextAllowed string
 			if err := tx.QueryRow(`
 				SELECT given_at FROM prn_logs
-				WHERE medication_id = ? AND voided_at IS NULL AND given_at >= ?
+				WHERE medication_id IN (`+sameIngredientIDs+`) AND voided_at IS NULL AND given_at >= ?
 				ORDER BY given_at ASC LIMIT 1
 			`, req.MedicationID, since24h).Scan(&earliestDoseStr); err == nil {
 				if t, err := time.Parse(sqliteTimeLayout, earliestDoseStr); err == nil {
@@ -407,7 +407,7 @@ func (h *MedicationHandler) LogPRNDose(w http.ResponseWriter, r *http.Request) {
 	nearErr := tx.QueryRow(`
 		SELECT l.given_at, c.name, COALESCE(c.avatar_color, '')
 		FROM prn_logs l JOIN caregivers c ON l.caregiver_id = c.id
-		WHERE l.medication_id = ? AND l.voided_at IS NULL
+		WHERE l.medication_id IN (`+sameIngredientIDs+`) AND l.voided_at IS NULL
 		ORDER BY ABS(julianday(l.given_at) - julianday(?)) ASC
 		LIMIT 1
 	`, req.MedicationID, givenAtStr).Scan(&nearAt, &nearName, &nearAvatar)

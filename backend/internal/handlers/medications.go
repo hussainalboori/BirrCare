@@ -103,7 +103,8 @@ func normalizeSlotTimes(times map[string]string, slots []string) map[string]stri
 func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
-		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1)
+		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1),
+		       COALESCE(active_ingredient, ''), COALESCE(drug_class, '')
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -124,7 +125,7 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var createdAtStr string
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass); err != nil {
 			continue
 		}
 		m.PhotoURLs = parsePhotoURLs(photosJSON)
@@ -197,6 +198,8 @@ type CreateMedicationRequest struct {
 	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	// Optional stock tracking (issue #20).
 	StockSettings
+	// Active ingredient and drug class (issue #61).
+	IngredientFields
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +266,24 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 
 	slotTimes := normalizeSlotTimes(req.SlotTimes, req.FrequencySlots)
 
+	// Issue #61: the same active ingredient under another name.
+	if code, msg := req.IngredientFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	ingredient, drugClass := "", ""
+	if req.ActiveIngredient != nil {
+		ingredient = *req.ActiveIngredient
+	}
+	if req.DrugClass != nil {
+		drugClass = *req.DrugClass
+	}
+	confirmedDup, ok := checkDuplicate(w, h.DB, req.IngredientFields, ingredient, "")
+	if !ok {
+		return
+	}
+	warning := bloodThinnerWarning(h.DB, drugClass, "")
+
 	id := "med_" + uuid.New().String()[:8]
 	if msg := req.StockSettings.validate(); msg != "" {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_STOCK", msg)
@@ -285,9 +306,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -303,6 +324,13 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	if err := audit.Record(tx, caregiver.ID, "CREATE_MEDICATION", "medication", id, auditDetail); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return
+	}
+	if confirmedDup != nil {
+		if err := audit.Record(tx, caregiver.ID, "DUPLICATE_INGREDIENT_CONFIRMED", "medication", id,
+			fmt.Sprintf("Added %s (%s) although %s (%s) has the same ingredient %q. Reason: %s", req.NameEn, id, confirmedDup.NameEn, confirmedDup.ID, ingredient, req.DuplicateReason)); err != nil {
+			internalError(w, "failed to record audit log", err)
+			return
+		}
 	}
 
 	var stockCh *stockChange
@@ -338,10 +366,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":      id,
-		"message": "Prescription created",
-	})
+	out := map[string]interface{}{"id": id, "message": "Prescription created"}
+	if warning != "" {
+		out["warnings"] = []string{warning}
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 type UpdateMedicationRequest struct {
@@ -364,6 +393,8 @@ type UpdateMedicationRequest struct {
 	// EffectiveFrom: a schedule or dose change applies from "today" (default) or
 	// "tomorrow" (issue #57); earlier days keep the schedule they had.
 	EffectiveFrom string `json:"effective_from,omitempty"`
+	// Active ingredient and drug class (issue #61).
+	IngredientFields
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        *bool    `json:"is_prn,omitempty"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -419,6 +450,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusBadRequest, "INVALID_EFFECTIVE_FROM", err.Error())
 		return
 	}
+	if code, msg := req.IngredientFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -429,6 +464,47 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 	if err := ensureScheduleVersion(tx, medID); err != nil {
 		internalError(w, "failed to read the schedule history", err)
 		return
+	}
+	// Issue #61: a changed ingredient, or a stopped medicine started again, must
+	// not duplicate another active one.
+	var curIngredient, curClass string
+	var curActive bool
+	if err := tx.QueryRow(`SELECT COALESCE(active_ingredient, ''), COALESCE(drug_class, ''), COALESCE(is_active, 1) FROM medications WHERE id = ?`, medID).
+		Scan(&curIngredient, &curClass, &curActive); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		internalError(w, "failed to query medication", err)
+		return
+	}
+	newIngredient, newClass, willBeActive := curIngredient, curClass, curActive
+	if req.ActiveIngredient != nil {
+		newIngredient = *req.ActiveIngredient
+	}
+	if req.DrugClass != nil {
+		newClass = *req.DrugClass
+	}
+	if req.IsActive != nil {
+		willBeActive = *req.IsActive
+	}
+	var confirmedDup *sameMedicine
+	var warning string
+	if willBeActive && (newIngredient != curIngredient || !curActive) {
+		var ok bool
+		if confirmedDup, ok = checkDuplicate(w, tx, req.IngredientFields, newIngredient, medID); !ok {
+			return
+		}
+	}
+	if willBeActive && (newClass != curClass || !curActive) {
+		warning = bloodThinnerWarning(tx, newClass, medID)
+	}
+	if _, err := tx.Exec(`UPDATE medications SET active_ingredient = ?, drug_class = ? WHERE id = ?`, newIngredient, newClass, medID); err != nil {
+		internalError(w, "failed to update medication", err)
+		return
+	}
+	if confirmedDup != nil {
+		if err := audit.Record(tx, caregiver.ID, "DUPLICATE_INGREDIENT_CONFIRMED", "medication", medID,
+			fmt.Sprintf("%s has the same ingredient %q as %s (%s). Reason: %s", medID, newIngredient, confirmedDup.NameEn, confirmedDup.ID, req.DuplicateReason)); err != nil {
+			internalError(w, "failed to record audit log", err)
+			return
+		}
 	}
 
 	var before struct {
@@ -693,10 +769,11 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Medication updated successfully",
-	})
+	out := map[string]interface{}{"status": "success", "message": "Medication updated successfully"}
+	if warning != "" {
+		out["warnings"] = []string{warning}
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 type UpdateScheduleRequest struct {

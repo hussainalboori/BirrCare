@@ -219,6 +219,8 @@ Creates a new scheduled medication.
   "slot_times": {"afternoon": "14:00"},
   "is_critical": true,
   "remind": true,
+  "active_ingredient": "clopidogrel",
+  "drug_class": "antiplatelet",
   "min_hours_between": 18,
   "track_stock": true,
   "stock_units": 30,
@@ -240,6 +242,8 @@ Updates dosing slots, clock times, and days of week for a medication.
 
 ### `GET /api/v1/medications/schedule?date=YYYY-MM-DD`
 Returns scheduled medication cards for a given day (defaults to today in household local time). Includes dose status, caregiver attribution, and interval locking countdowns.
+
+**Same ingredient, two names (issue #61).** `POST /medications` and `PUT /medications/{id}` take `active_ingredient` (normalised to lowercase, e.g. `clopidogrel`) and `drug_class` (`antiplatelet`, `anticoagulant`, `insulin`, `antidiabetic`, `antihypertensive`, `statin`, `anticonvulsant`, `painkiller`, `other`). A second active medicine with the same ingredient (on create, an ingredient change, or re-activation) answers `409 DUPLICATE_INGREDIENT` with `existing: {id, name_ar, name_en, dosage}`; send `confirm_duplicate: true` with a `duplicate_reason` to save it anyway (audited as `DUPLICATE_INGREDIENT_CONFIRMED`). A second anticoagulant or antiplatelet saves with `warnings: ["two_blood_thinners"]`. The interval lock and PRN limits count doses across every medicine with the same ingredient.
 
 **Schedule history (issue #57).** `PUT /api/v1/medications/{id}` and `PUT /api/v1/medications/{id}/schedule` take `effective_from: "today" | "tomorrow"` (default today): a change of slots, days, times or dosage applies from that day, and earlier days keep the schedule they had (`medication_schedule_versions`). Deactivating a medicine stops it from today; its past doses and gaps stay. `GET /medications/schedule?date=` and the doctor report use the schedule in effect on each day, include stopped medicines, and always show a dose that was logged. The report's `per_medication` rows carry `stopped_on` and `stopped_by` for a stopped medicine.
 

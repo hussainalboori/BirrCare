@@ -22,6 +22,7 @@ import {
   FileText,
 } from "lucide-react";
 import { StartingWhen, type StartingWhenValue } from "./StartingWhen";
+import { DRUG_CLASSES, KNOWN_INGREDIENTS, suggestIngredient, type DrugClass } from "@/lib/ingredients";
 
 interface MedicationCatalogModalProps {
   isOpen: boolean;
@@ -100,6 +101,13 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   // PRN (issue #25)
   const [isPRN, setIsPRN] = useState(false);
   const [remind, setRemind] = useState(true);
+  // Issue #61: active ingredient and type; a same-ingredient clash asks before saving.
+  const [ingredient, setIngredient] = useState("");
+  const [drugClass, setDrugClass] = useState<DrugClass>("");
+  const [duplicate, setDuplicate] = useState<{ name_ar: string; name_en: string; dosage: string } | null>(null);
+  const [duplicateReason, setDuplicateReason] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
   const [startingWhen, setStartingWhen] = useState<StartingWhenValue>("today");
   const [prnMax24h, setPrnMax24h] = useState("4");
   const [prnMinHours, setPrnMinHours] = useState("4");
@@ -152,6 +160,11 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setMinHours("");
     setIsCritical(false);
     setRemind(true);
+    setIngredient("");
+    setDrugClass("");
+    setDuplicate(null);
+    setDuplicateReason("");
+    setSaveError("");
     setTrackStock(false);
     setStockCount("");
     setStockTouched(false);
@@ -182,6 +195,11 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setIsCritical(!!med.is_critical);
     setRemind(med.remind !== false);
+    setIngredient(med.active_ingredient || "");
+    setDrugClass((med.drug_class as DrugClass) || "");
+    setDuplicate(null);
+    setDuplicateReason("");
+    setSaveError("");
     setStartingWhen("today");
     setTrackStock(med.stock_units != null);
     setStockCount(med.stock_units != null ? String(med.stock_units) : "");
@@ -233,12 +251,24 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     return p;
   };
 
-  const handleSaveMedication = async (e: React.FormEvent) => {
+  const handleSaveMedication = async (e: React.FormEvent, confirmDuplicate = false) => {
     e.preventDefault();
     if (!nameAr.trim() || !dosage.trim() || (!isPRN && selectedSlots.length === 0)) return;
+    if (confirmDuplicate && !duplicateReason.trim()) {
+      setSaveError(locale === "ar" ? "اكتب لماذا يلزم الاثنان." : "Write why both are needed.");
+      return;
+    }
 
     setIsSubmitting(true);
+    setSaveError("");
+    setSaveNotice("");
+    const ingredientPayload = {
+      active_ingredient: ingredient.trim(),
+      drug_class: drugClass,
+      ...(confirmDuplicate ? { confirm_duplicate: true, duplicate_reason: duplicateReason.trim() } : {}),
+    };
     try {
+      let res: { warnings?: string[] } | null = null;
       const prnPayload = isPRN
         ? {
             is_prn: true,
@@ -256,7 +286,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
       if (editingMed) {
         // Edit medication
-        await fetchApi(`/medications/${editingMed.id}`, {
+        res = await fetchApi<{ warnings?: string[] }>(`/medications/${editingMed.id}`, {
           method: "PUT",
           body: JSON.stringify({
             name_ar: nameAr.trim(),
@@ -269,13 +299,14 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             is_critical: isCritical,
             remind,
             effective_from: startingWhen,
+            ...ingredientPayload,
             ...prnPayload,
             ...stockPayload(),
           }),
         });
       } else {
         // Add new medication
-        await fetchApi("/medications", {
+        res = await fetchApi<{ warnings?: string[] }>("/medications", {
           method: "POST",
           body: JSON.stringify({
             name_ar: nameAr.trim(),
@@ -287,18 +318,28 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             photo_urls: photos,
             is_critical: isCritical,
             remind,
+            ...ingredientPayload,
             ...prnPayload,
             ...stockPayload(),
           }),
         });
       }
 
+      if (res?.warnings?.includes("two_blood_thinners")) {
+        setSaveNotice(locale === "ar" ? "راجع الطبيب: يوجد الآن مميّعان للدم." : "Check with the doctor: two blood thinners.");
+      }
+      setDuplicate(null);
+      setDuplicateReason("");
       setShowForm(false);
       setEditingMed(null);
       await loadMeds();
       onUpdated?.();
     } catch (err: any) {
-      alert(err.message || "Failed to save prescription");
+      if (err.data?.error === "DUPLICATE_INGREDIENT" && err.data.existing) {
+        setDuplicate(err.data.existing);
+      } else {
+        setSaveError(err.data?.message || err.message || (locale === "ar" ? "تعذر الحفظ" : "Failed to save prescription"));
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -383,6 +424,11 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-5">
+          {saveNotice && (
+            <p role="status" data-testid="save-notice" className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              {saveNotice}
+            </p>
+          )}
           {error && (
             <div className="mb-4 rounded-2xl bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-900 flex items-center gap-2">
               <AlertCircle className="h-4 w-4 shrink-0" />
@@ -652,6 +698,58 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                 </>
               )}
 
+              {/* ACTIVE INGREDIENT AND TYPE (issue #61) */}
+              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  {locale === "ar" ? "المادة الفعالة (بالإنجليزية، مثل clopidogrel)" : "Active ingredient (e.g. clopidogrel)"}
+                  <input
+                    value={ingredient}
+                    onChange={(e) => setIngredient(e.target.value)}
+                    list="known-ingredients"
+                    dir="ltr"
+                    data-testid="med-ingredient"
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-base text-slate-800 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-800"
+                  />
+                  <datalist id="known-ingredients">
+                    {KNOWN_INGREDIENTS.map((x) => (
+                      <option key={x} value={x} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  {locale === "ar" ? "النوع" : "Type"}
+                  <select
+                    value={drugClass}
+                    onChange={(e) => setDrugClass(e.target.value as DrugClass)}
+                    className="mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-base text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    {DRUG_CLASSES.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {locale === "ar" ? c.ar : c.en}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {(() => {
+                  const s = suggestIngredient(nameEn, nameAr);
+                  if (!s || (s.inn === ingredient.trim().toLowerCase() && (drugClass || "") === s.cls)) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIngredient(s.inn);
+                        setDrugClass(s.cls);
+                      }}
+                      data-testid="use-suggested-ingredient"
+                      className="min-h-12 rounded-lg border border-emerald-300 bg-emerald-50 px-3 text-start text-sm font-bold text-emerald-900 sm:col-span-2 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    >
+                      {locale === "ar" ? "يبدو أنه: " : "Looks like: "}
+                      <bdi dir="ltr">{s.inn}</bdi> — {locale === "ar" ? "استخدمه" : "use it"}
+                    </button>
+                  );
+                })()}
+              </div>
+
               {/* CRITICAL MEDICATION (doctor report) */}
               <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                 <input type="checkbox" checked={isCritical} onChange={(e) => setIsCritical(e.target.checked)} className="h-5 w-5" />
@@ -912,6 +1010,39 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                   />
                 </div>
               </div>
+
+              {/* Same active ingredient as another medicine (issue #61) */}
+              {duplicate && (
+                <div role="alert" data-testid="duplicate-ingredient" className="mb-4 space-y-2 rounded-xl border-2 border-rose-600 bg-rose-50 p-3 text-rose-950 dark:bg-rose-950/40 dark:text-rose-50">
+                  <p className="text-base font-black">
+                    {locale === "ar" ? "نفس دواء " : "Same medicine as "}
+                    <bdi>{locale === "ar" ? duplicate.name_ar : duplicate.name_en}</bdi> <bdi dir="ltr">{duplicate.dosage}</bdi>
+                    {locale === "ar" ? " (نفس المادة الفعالة)." : " (same active ingredient)."}
+                  </p>
+                  <p className="text-sm font-semibold">
+                    {locale === "ar" ? "إعطاء الاثنين قد يضاعف الجرعة. إن طلب الطبيب ذلك، اكتب السبب:" : "Giving both could double the dose. If the doctor asked for both, write why:"}
+                  </p>
+                  <input
+                    value={duplicateReason}
+                    onChange={(e) => setDuplicateReason(e.target.value)}
+                    aria-label={locale === "ar" ? "السبب" : "Reason"}
+                    className="w-full rounded-lg border border-rose-300 bg-white px-2.5 py-2 text-base text-slate-900 focus:bg-white dark:border-rose-800 dark:bg-slate-900 dark:text-white dark:focus:bg-slate-900"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={(e) => handleSaveMedication(e, true)} className="min-h-12 rounded-xl bg-rose-700 px-3 text-base font-bold text-white">
+                      {locale === "ar" ? "أضفه مع ذلك" : "Add it anyway"}
+                    </button>
+                    <button type="button" onClick={() => setDuplicate(null)} className="min-h-12 rounded-xl border-2 border-rose-700 px-3 text-base font-bold text-rose-900 dark:text-rose-100">
+                      {locale === "ar" ? "إلغاء" : "Cancel"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {saveError && (
+                <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                  {saveError}
+                </p>
+              )}
 
               {/* From when a schedule or dose change applies (issue #57) */}
               {editingMed && <StartingWhen value={startingWhen} onChange={setStartingWhen} ar={locale === "ar"} />}

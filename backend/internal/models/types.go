@@ -75,6 +75,9 @@ type Medication struct {
 	IsCritical bool `json:"is_critical"`
 	// Remind: the server chases an unlogged dose (issue #55).
 	Remind bool `json:"remind"`
+	// Active ingredient (lowercase INN) and drug class (issue #61).
+	ActiveIngredient string `json:"active_ingredient,omitempty"`
+	DrugClass        string `json:"drug_class,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`

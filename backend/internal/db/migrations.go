@@ -1161,6 +1161,18 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating care_pauses: %w", err)
 	}
 
+	// Issue #61: the active ingredient (lowercase INN) and drug class, so a brand
+	// and its generic are recognised as the same medicine.
+	for _, c := range []string{"active_ingredient", "drug_class"} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c + " TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c, err)
+			}
+		}
+	}
+
 	// Ensure care_events table exists
 	if _, err := database.Exec(`
 		CREATE TABLE IF NOT EXISTS care_events (
