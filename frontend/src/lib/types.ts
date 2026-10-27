@@ -383,13 +383,12 @@ export interface InsulinPlanStatus {
   recent: InsulinLog[];
 }
 
-export type TrustReason = "paired_device" | "geofence" | "trusted_ip" | "untrusted";
+export type TrustReason = "paired_device" | "trusted_ip" | "untrusted";
 
 export interface TrustStatus {
   trusted: boolean;
   reason: TrustReason;
   device_name?: string;
-  home_geofence_configured?: boolean;
 }
 
 export interface PairedDevice {
@@ -400,12 +399,6 @@ export interface PairedDevice {
   is_active: boolean;
 }
 
-export interface HomeLocation {
-  latitude: number;
-  longitude: number;
-  radius_meters: number;
-  updated_at?: string;
-}
 export type CareKind = "reposition" | "fluid" | "bowel" | "hygiene" | "physio";
 export type RepositionSide = "left" | "back" | "right";
 export type SkinCondition = "ok" | "red_area" | "";

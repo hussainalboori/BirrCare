@@ -6,7 +6,7 @@ import { LanguageProvider } from "@/context/LanguageContext";
 import { SiblingBar } from "@/components/SiblingBar";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { DevicePairingModal } from "@/components/DevicePairingModal";
-import { Caregiver, CaregiverOption, TrustStatus, PairedDevice, HomeLocation } from "@/lib/types";
+import { Caregiver, CaregiverOption, TrustStatus, PairedDevice } from "@/lib/types";
 
 // Mock router
 vi.mock("next/navigation", () => ({
@@ -44,12 +44,6 @@ let pairedDevicesData: PairedDevice[] = [
   { id: "p1", device_name: "Bedside iPad", created_at: "2026-10-21T00:00:00Z", is_active: true },
 ];
 
-let homeLocationData: HomeLocation = {
-  latitude: 26.123456,
-  longitude: 50.123456,
-  radius_meters: 75,
-};
-
 const switchCaregiverHandler = vi.fn(async (body: any) => {
   if (trustStatusData.trusted) {
     return {
@@ -81,7 +75,6 @@ const fetchApiMock = vi.fn(async (endpoint: string, opts?: RequestInit) => {
     return switchCaregiverHandler(body);
   }
   if (endpoint === "/auth/paired-devices") return pairedDevicesData;
-  if (endpoint === "/settings/home-location") return homeLocationData;
   if (endpoint === "/auth/pair-device") {
     const body = opts?.body ? JSON.parse(opts.body as string) : {};
     const newDev: PairedDevice = {
@@ -96,11 +89,6 @@ const fetchApiMock = vi.fn(async (endpoint: string, opts?: RequestInit) => {
   if (endpoint.startsWith("/auth/paired-devices/") && opts?.method === "DELETE") {
     pairedDevicesData = [];
     return { status: "revoked" };
-  }
-  if (endpoint === "/settings/home-location" && opts?.method === "PUT") {
-    const body = opts?.body ? JSON.parse(opts.body as string) : {};
-    homeLocationData = { ...homeLocationData, ...body };
-    return { status: "updated", location: homeLocationData };
   }
   return {};
 });
@@ -154,11 +142,10 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
       fireEvent.click(aliBtn);
     });
 
-    // Should call switch-caregiver
+    // Should call switch-caregiver with nothing but the target: the phone's
+    // location is never sent as proof of being at home (issue #53).
     await waitFor(() => {
-      expect(switchCaregiverHandler).toHaveBeenCalledWith(
-        expect.objectContaining({ caregiver_id: "c2" })
-      );
+      expect(switchCaregiverHandler).toHaveBeenCalledWith({ caregiver_id: "c2" });
     });
 
     // PIN modal should NOT be opened
@@ -257,7 +244,7 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     });
   });
 
-  it("allows pairing bedside devices and configuring geofence in DevicePairingModal", async () => {
+  it("pairs bedside devices and offers no home-location (geofence) trust in DevicePairingModal", async () => {
     const onClose = vi.fn();
 
     render(
@@ -272,6 +259,11 @@ describe("Smart Caregiver Auth (Issue #29)", () => {
     await waitFor(() => {
       expect(screen.getByText("Bedside iPad")).toBeDefined();
     });
+
+    // Issue #53: a phone's location can be faked, so it is no longer offered
+    // as a way to skip the PIN, and the home address is not fetched.
+    expect(screen.queryByText(/النطاق الجغرافي|Geofence/)).toBeNull();
+    expect(fetchApiMock.mock.calls.some(([e]) => e.startsWith("/settings/home-location"))).toBe(false);
 
     // Pair a new device
     const input = screen.getByPlaceholderText(/آيباد غرفة الوالد/);

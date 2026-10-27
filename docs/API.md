@@ -127,24 +127,22 @@ These endpoints do not require an active session cookie:
 
 ## Caregiver Account & Device Pairing
 
-Birrcare supports both 4-digit PIN entry and seamless 1-tap profile switching when devices are at home.
+Birrcare supports both 4-digit PIN entry and 1-tap profile switching on trusted home devices. One tap only ever reaches **caregiver** accounts; admins, super admins and viewers always enter their own PIN (issue #53).
 
 ### `GET /api/v1/auth/me`
 Returns the signed-in caregiver's profile, whether the device is in shared mode, and remaining idle timeout minutes.
 
 ### `GET /api/v1/auth/trust-status`
-Checks if the current client is in a trusted environment (on the home Wi-Fi IP, inside the home GPS geofence, or using a paired bedside tablet).
+Checks if the current client is trusted: a paired bedside device (its `HttpOnly` cookie) or the configured home IP (`TRUSTED_HOME_IP`). The phone's GPS position is never used: it can be faked.
 
 ### `POST /api/v1/auth/switch-caregiver`
-Switches active caregiver with a single tap without re-entering a PIN when at home:
+Switches to a caregiver account with a single tap, without a PIN, on a trusted home device:
 ```json
 {
-  "caregiver_id": "cg_fatima",
-  "latitude": 26.2235,
-  "longitude": 50.5876
+  "caregiver_id": "cg_fatima"
 }
 ```
-*Returns `403 PIN_REQUIRED` if the device is outside the trusted home environment.*
+*Returns `403 PIN_REQUIRED` if the device is not trusted or the target is not a caregiver account, and `429 TOO_MANY_REQUESTS` after 10 switches a minute from one device. Every one-tap switch is audited as `1TAP_SWITCH` with the trust reason, paired device and client IP.*
 
 ### `POST /api/v1/auth/device-mode`
 Toggles between a personal phone (30-day session) and a shared household tablet (20-minute idle sign-out):
@@ -164,7 +162,7 @@ Updates your own 4-digit PIN. Requires `current_pin` and `new_pin`. Signs out yo
 Keeps the current device signed in and revokes all other active sessions for your user.
 
 ### `POST /api/v1/auth/pair-device`
-Pairs a shared tablet (e.g., bedside iPad) so all family members can use 1-tap switching for 1 year. Requires an admin PIN:
+Pairs a shared tablet (e.g., bedside iPad) so caregivers can use 1-tap switching on it for 1 year. Requires an admin PIN. The device token is set only as an `HttpOnly` cookie, never returned in the body:
 ```json
 {
   "device_name": "Bedside iPad",
@@ -177,7 +175,7 @@ Pairs a shared tablet (e.g., bedside iPad) so all family members can use 1-tap s
 Lists or revokes paired household devices (Admin only).
 
 ### `GET /api/v1/settings/home-location` & `PUT /api/v1/settings/home-location`
-Reads or updates the home GPS coordinates and radius (meters) used for geofenced 1-tap switching.
+Reads or updates the stored home GPS coordinates and radius (meters). Admin only, both ways. They no longer grant 1-tap switching (issue #53).
 
 ### `POST /api/v1/auth/verify-admin-pin` (Admin)
 Checks the signed-in admin's own PIN before a destructive action: `{"pin": "4829"}` → `{"status": "verified"}`, or `403 INCORRECT_PIN`. Rate-limited like the PIN keypad.
@@ -561,7 +559,7 @@ Birrcare returns errors in JSON format:
 - `DOSE_ALREADY_LOGGED`: Dose already recorded for this scheduled time card.
 - `DOSE_TOO_SOON`: Blocked by minimum safety interval between doses.
 - `HYPO_NO_INSULIN`: Correction insulin rejected because blood sugar is below 3.9 mmol/L.
-- `PIN_REQUIRED`: 1-tap profile switch rejected because device is outside the home network.
+- `PIN_REQUIRED`: 1-tap profile switch rejected because the device is not trusted or the target account always needs its PIN.
 - `PRN_TOO_SOON` / `PRN_LIMIT`: an as-needed dose is inside its minimum gap, or the 24-hour maximum is reached.
 - `INSULIN_TOO_SOON`: inside the insulin plan's minimum interval.
 - `ALREADY_VOIDED`: the dose entry was already cancelled.

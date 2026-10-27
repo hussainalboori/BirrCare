@@ -55,7 +55,7 @@ Birrcare lets family members switch profiles with one tap when caring for a pare
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUSTED_HOME_IP` | Empty | Public IP address of the household internet connection (as seen by Cloudflare). Devices connecting from this IP can switch profiles with 1 tap. |
+| `TRUSTED_HOME_IP` | Empty | Public IP address of the household internet connection (as seen by Cloudflare). Devices connecting from this IP can switch to caregiver profiles with 1 tap (admins always enter their PIN). Leave empty if your provider shares one public IP between homes (CGNAT). |
 | `TRUSTED_HOME_SUBNETS` | Empty | Optional comma-separated CIDR ranges for home subnets (e.g., `192.168.1.0/24`). |
 
 *Tip: Pairing a bedside tablet in **Menu → Home Devices** is even simpler and survives dynamic router IP changes.*

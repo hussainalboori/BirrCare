@@ -34,20 +34,6 @@ interface CaregiverContextType {
 
 const CaregiverContext = createContext<CaregiverContextType | undefined>(undefined);
 
-function getCurrentLocation(): Promise<{ latitude: number; longitude: number } | null> {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined" || !navigator.geolocation) {
-      resolve(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-      () => resolve(null),
-      { timeout: 2500, maximumAge: 60000, enableHighAccuracy: false }
-    );
-  });
-}
-
 export function CaregiverProvider({ children }: { children: React.ReactNode }) {
   const [currentCaregiver, setCurrentCaregiver] = useState<Caregiver | null>(null);
   const [allCaregivers, setAllCaregivers] = useState<CaregiverOption[]>([]);
@@ -82,13 +68,9 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
 
   const checkTrustStatus = useCallback(async (): Promise<TrustStatus | null> => {
     try {
-      // Ask for GPS only when an admin set a home location and nothing else
-      // already trusts this device: no location prompt for everyone else.
-      let res = await fetchApi<TrustStatus>("/auth/trust-status");
-      if (res && !res.trusted && res.home_geofence_configured) {
-        const loc = await getCurrentLocation();
-        if (loc) res = await fetchApi<TrustStatus>(`/auth/trust-status?latitude=${loc.latitude}&longitude=${loc.longitude}`);
-      }
+      // Only a paired device or the home IP is trusted; the phone's location
+      // never is (issue #53), so there is no GPS prompt.
+      const res = await fetchApi<TrustStatus>("/auth/trust-status");
       if (res) {
         setTrustStatus(res);
         return res;
@@ -101,15 +83,9 @@ export function CaregiverProvider({ children }: { children: React.ReactNode }) {
 
   const switchCaregiverDirect = async (caregiverId: string): Promise<boolean> => {
     try {
-      const loc = trustStatus?.reason === "geofence" ? await getCurrentLocation() : null;
-      const payload: { caregiver_id: string; latitude?: number; longitude?: number } = { caregiver_id: caregiverId };
-      if (loc) {
-        payload.latitude = loc.latitude;
-        payload.longitude = loc.longitude;
-      }
       const res = await fetchApi<{ status: string; caregiver?: Caregiver; trust?: TrustStatus }>("/auth/switch-caregiver", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ caregiver_id: caregiverId }),
       });
       if (res?.caregiver) {
         setCurrentCaregiver(res.caregiver);

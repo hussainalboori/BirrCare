@@ -22,6 +22,8 @@ type AuthHandler struct {
 	DB      *sql.DB
 	Broker  *sse.Broker
 	Limiter *auth.PINLimiter // nil = auth.DefaultPINLimiter
+	// SwitchLimiter throttles one-tap switches per device (nil = 10 per minute).
+	SwitchLimiter *IPRateLimiter
 }
 
 // switcherEntry is all the public PIN switcher needs. It's a separate struct so

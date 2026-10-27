@@ -65,7 +65,7 @@ func TestEvaluateTrustPairedDevice(t *testing.T) {
 	// 1. External cellular IP without pairing token
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
 	req.RemoteAddr = "203.0.113.195:48212" // Public external cellular IP
-	status := auth.EvaluateTrust(req, database, nil, nil)
+	status := auth.EvaluateTrust(req, database)
 	if status.IsTrusted {
 		t.Errorf("expected external cellular IP to be untrusted, got trusted")
 	}
@@ -94,7 +94,7 @@ func TestEvaluateTrustPairedDevice(t *testing.T) {
 		Value: token,
 	})
 
-	statusPaired := auth.EvaluateTrust(reqPaired, database, nil, nil)
+	statusPaired := auth.EvaluateTrust(reqPaired, database)
 	if !statusPaired.IsTrusted {
 		t.Errorf("expected paired device to be trusted, got untrusted")
 	}
@@ -107,47 +107,227 @@ func TestEvaluateTrustPairedDevice(t *testing.T) {
 
 	// 3. Revoke paired device
 	_, _ = database.Exec("UPDATE paired_devices SET is_revoked = 1 WHERE id = ?", deviceID)
-	statusRevoked := auth.EvaluateTrust(reqPaired, database, nil, nil)
+	statusRevoked := auth.EvaluateTrust(reqPaired, database)
 	if statusRevoked.IsTrusted {
 		t.Errorf("expected revoked device to be untrusted")
 	}
 }
 
-func TestEvaluateTrustGeofence(t *testing.T) {
-	database, _, cleanup := setupSmartAuthTestDB(t)
+// pairTestDevice registers a paired home device and returns its cookie value.
+func pairTestDevice(t *testing.T, database *sql.DB, name string) string {
+	t.Helper()
+	deviceID := auth.GenerateRandomID(16)
+	if _, err := database.Exec(`
+		INSERT INTO paired_devices (id, name, paired_by, device_token_hash, created_at, last_used_at, is_revoked)
+		VALUES (?, ?, NULL, ?, datetime('now'), datetime('now'), 0)
+	`, deviceID, name, auth.HomeDeviceHash(deviceID)); err != nil {
+		t.Fatalf("failed inserting paired device: %v", err)
+	}
+	return auth.NewHomeDeviceToken(deviceID)
+}
+
+func switchReq(target string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver", strings.NewReader(fmt.Sprintf(`{"caregiver_id":%q}`, target)))
+	req.RemoteAddr = "203.0.113.10:48212" // external cellular IP
+	return req
+}
+
+// Issue #53: the phone's reported position, and a device token sent in a
+// header, can be forged, so neither may skip the PIN.
+func TestSwitchCaregiverIgnoresClientSuppliedTrust(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
 	defer cleanup()
+	authH := &handlers.AuthHandler{DB: database, Broker: broker, SwitchLimiter: handlers.NewIPRateLimiter(100)}
+	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
+	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_latitude', '24.713600'), ('home_longitude', '46.675300'), ('home_geofence_meters', '75')")
+	token := pairTestDevice(t, database, "Bedside iPad")
 
-	// Configure home coordinates (e.g. Riyadh home: 24.713600, 46.675300, radius: 75m)
-	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_latitude', '24.713600')")
-	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_longitude', '46.675300')")
-	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_geofence_meters', '75')")
-
-	// 1. Within 20 meters of home coordinates
-	nearLat := 24.713700
-	nearLon := 46.675350
-	reqNear := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
-	reqNear.RemoteAddr = "203.0.113.10:48212" // External cellular IP
-
-	statusNear := auth.EvaluateTrust(reqNear, database, &nearLat, &nearLon)
-	if !statusNear.IsTrusted {
-		t.Errorf("expected coordinates within geofence to be trusted")
+	for name, req := range map[string]*http.Request{
+		"body": httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver",
+			strings.NewReader(`{"caregiver_id":"caregiver2","latitude":24.7137,"longitude":46.67535}`)),
+		"query": httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver?latitude=24.7137&longitude=46.67535",
+			strings.NewReader(`{"caregiver_id":"caregiver2"}`)),
+		"geo headers":  switchReq("caregiver2"),
+		"token header": switchReq("caregiver2"),
+	} {
+		req.RemoteAddr = "203.0.113.10:48212"
+		if name == "geo headers" {
+			req.Header.Set("X-Geo-Lat", "24.7137")
+			req.Header.Set("X-Geo-Lon", "46.67535")
+		}
+		if name == "token header" {
+			req.Header.Set("X-Home-Device-Token", token)
+		}
+		rec := httptest.NewRecorder()
+		authH.SwitchCaregiver(rec, req)
+		var body map[string]interface{}
+		json.NewDecoder(rec.Body).Decode(&body)
+		if rec.Code != http.StatusForbidden || body["error"] != "PIN_REQUIRED" {
+			t.Errorf("%s: expected 403 PIN_REQUIRED, got %d %v", name, rec.Code, body)
+		}
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == auth.SessionCookieName && c.Value != "" {
+				t.Errorf("%s: a session cookie was issued", name)
+			}
+		}
 	}
-	if statusNear.TrustReason != "geofence" {
-		t.Errorf("expected trust reason 'geofence', got %s", statusNear.TrustReason)
+
+	// The trust status shown to the phone agrees.
+	st := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status?latitude=24.7137&longitude=46.67535", nil)
+	st.Header.Set("X-Home-Device-Token", token)
+	rec := httptest.NewRecorder()
+	authH.GetTrustStatus(rec, st)
+	var body map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body["trusted"] != false || body["reason"] != "untrusted" {
+		t.Errorf("expected {trusted:false, reason:untrusted}, got %v", body)
+	}
+}
+
+func TestGetHomeLocationAdminOnly(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
+	defer cleanup()
+	authH := &handlers.AuthHandler{DB: database, Broker: broker}
+	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_latitude', '24.713600'), ('home_longitude', '46.675300')")
+
+	for _, tc := range []struct {
+		who  *models.Caregiver
+		code int
+	}{
+		{nil, http.StatusForbidden},
+		{&models.Caregiver{ID: "v1", Role: "viewer"}, http.StatusForbidden},
+		{&models.Caregiver{ID: "c1", Role: "caregiver"}, http.StatusForbidden},
+		{&models.Caregiver{ID: "a1", Role: "admin"}, http.StatusOK},
+		{&models.Caregiver{ID: "s1", Role: "super_admin"}, http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/home-location", nil)
+		if tc.who != nil {
+			req = req.WithContext(context.WithValue(req.Context(), auth.CaregiverContextKey, tc.who))
+		}
+		rec := httptest.NewRecorder()
+		authH.GetHomeLocation(rec, req)
+		if rec.Code != tc.code {
+			t.Errorf("%+v: expected %d, got %d", tc.who, tc.code, rec.Code)
+		}
+		if tc.code == http.StatusForbidden && strings.Contains(rec.Body.String(), "24.71") {
+			t.Errorf("%+v: home coordinates leaked: %s", tc.who, rec.Body.String())
+		}
+	}
+}
+
+// Issue #53: even on a paired tablet, one tap reaches only caregiver accounts.
+// Admins, super admins and viewers always enter their own PIN, so a one-tap
+// session can never edit medications.
+func TestSwitchCaregiverOneTapOnlyToCaregivers(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
+	defer cleanup()
+	authH := &handlers.AuthHandler{DB: database, Broker: broker, SwitchLimiter: handlers.NewIPRateLimiter(100)}
+	createTestCaregiver(t, database, "admin1", "Admin Sarah", "admin", "1234")
+	createTestCaregiver(t, database, "super1", "Super Admin", "super_admin", "8888")
+	createTestCaregiver(t, database, "viewer1", "Uncle", "viewer", "5678")
+	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "4321")
+	token := pairTestDevice(t, database, "Bedside iPad")
+	deviceID, _ := auth.ParseHomeDeviceToken(token)
+
+	tap := func(target string) *httptest.ResponseRecorder {
+		req := switchReq(target)
+		req.AddCookie(&http.Cookie{Name: auth.HomeDeviceCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		authH.SwitchCaregiver(rec, req)
+		return rec
 	}
 
-	// 2. Outside geofence (e.g. 5 kilometers away)
-	farLat := 24.750000
-	farLon := 46.720000
-	reqFar := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
-	reqFar.RemoteAddr = "203.0.113.10:48212"
-
-	statusFar := auth.EvaluateTrust(reqFar, database, &farLat, &farLon)
-	if statusFar.IsTrusted {
-		t.Errorf("expected coordinates outside geofence to be untrusted")
+	for _, target := range []string{"admin1", "super1", "viewer1"} {
+		rec := tap(target)
+		var body map[string]interface{}
+		json.NewDecoder(rec.Body).Decode(&body)
+		if rec.Code != http.StatusForbidden || body["error"] != "PIN_REQUIRED" {
+			t.Errorf("one tap to %s: expected 403 PIN_REQUIRED, got %d %v", target, rec.Code, body)
+		}
 	}
-	if statusFar.TrustReason != "untrusted" {
-		t.Errorf("expected trust reason 'untrusted', got %s", statusFar.TrustReason)
+
+	rec := tap("caregiver2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("one tap to a caregiver: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The switch is audited with the trust reason, device and client IP.
+	var details string
+	if err := database.QueryRow(`SELECT details FROM audit_logs WHERE action = '1TAP_SWITCH' AND caregiver_id = 'caregiver2'`).Scan(&details); err != nil {
+		t.Fatalf("expected a 1TAP_SWITCH audit row: %v", err)
+	}
+	for _, want := range []string{"paired_device", deviceID, "203.0.113.10"} {
+		if !strings.Contains(details, want) {
+			t.Errorf("audit detail %q is missing %q", details, want)
+		}
+	}
+
+	// The session that one tap produced cannot change a prescription.
+	var session string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.SessionCookieName {
+			session = c.Value
+		}
+	}
+	mw := auth.MiddlewareWithConfig(database, auth.Config{})
+	medH := &handlers.MedicationHandler{DB: database, Broker: broker}
+	put := httptest.NewRequest(http.MethodPut, "/api/v1/medications/m1", strings.NewReader(`{"name_en":"Changed"}`))
+	put.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: session})
+	putRec := httptest.NewRecorder()
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		me := auth.GetCaregiverFromContext(r.Context())
+		if me == nil || me.ID != "caregiver2" {
+			t.Fatalf("expected the one-tap session to be caregiver2, got %+v", me)
+		}
+		rc := chi.NewRouteContext()
+		rc.URLParams.Add("id", "m1")
+		medH.UpdateMedication(w, r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rc)))
+	})).ServeHTTP(putRec, put)
+	if putRec.Code != http.StatusForbidden {
+		t.Errorf("one-tap session editing a medication: expected 403, got %d", putRec.Code)
+	}
+}
+
+func TestSwitchCaregiverRateLimitedPerDevice(t *testing.T) {
+	database, broker, cleanup := setupSmartAuthTestDB(t)
+	defer cleanup()
+	authH := &handlers.AuthHandler{DB: database, Broker: broker, SwitchLimiter: handlers.NewIPRateLimiter(10)}
+	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
+	tablet := pairTestDevice(t, database, "Bedside iPad")
+	other := pairTestDevice(t, database, "Kitchen tablet")
+
+	tap := func(token string) int {
+		req := switchReq("caregiver2")
+		req.AddCookie(&http.Cookie{Name: auth.HomeDeviceCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		authH.SwitchCaregiver(rec, req)
+		return rec.Code
+	}
+
+	limited := 0
+	for i := 0; i < 20; i++ {
+		code := tap(tablet)
+		if i < 10 && code != http.StatusOK {
+			t.Fatalf("switch %d: expected 200 within the budget, got %d", i+1, code)
+		}
+		if code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited != 10 {
+		t.Errorf("expected the last 10 of 20 rapid switches to get 429, got %d", limited)
+	}
+	if code := tap(other); code != http.StatusOK {
+		t.Errorf("another paired device has its own budget: expected 200, got %d", code)
+	}
+
+	// Untrusted callers are throttled too, so the endpoint can't be probed freely.
+	for i := 0; i < 11; i++ {
+		rec := httptest.NewRecorder()
+		authH.SwitchCaregiver(rec, switchReq("caregiver2"))
+		if i == 10 && rec.Code != http.StatusTooManyRequests {
+			t.Errorf("11th untrusted switch from one IP: expected 429, got %d", rec.Code)
+		}
 	}
 }
 
@@ -161,7 +341,7 @@ func TestEvaluateTrustHomeIP(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:8080", "192.168.1.15:52341", "172.18.0.3:40000", "10.0.0.5:1234"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
 		req.RemoteAddr = addr
-		if st := auth.EvaluateTrust(req, database, nil, nil); st.IsTrusted {
+		if st := auth.EvaluateTrust(req, database); st.IsTrusted {
 			t.Errorf("%s must not be trusted by itself (reason %s)", addr, st.TrustReason)
 		}
 	}
@@ -171,7 +351,7 @@ func TestEvaluateTrustHomeIP(t *testing.T) {
 	spoof.RemoteAddr = "127.0.0.1:8080"
 	spoof.Header.Set("X-Forwarded-For", "198.51.100.7")
 	spoof.Header.Set("X-Real-IP", "198.51.100.7")
-	if st := auth.EvaluateTrust(spoof, database, nil, nil); st.IsTrusted {
+	if st := auth.EvaluateTrust(spoof, database); st.IsTrusted {
 		t.Errorf("X-Forwarded-For / X-Real-IP must not grant trust")
 	}
 
@@ -179,14 +359,14 @@ func TestEvaluateTrustHomeIP(t *testing.T) {
 	home := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
 	home.RemoteAddr = "127.0.0.1:8080"
 	home.Header.Set("Cf-Connecting-Ip", "198.51.100.7")
-	if st := auth.EvaluateTrust(home, database, nil, nil); !st.IsTrusted || st.TrustReason != "trusted_ip" {
+	if st := auth.EvaluateTrust(home, database); !st.IsTrusted || st.TrustReason != "trusted_ip" {
 		t.Errorf("expected Cf-Connecting-Ip = TRUSTED_HOME_IP to be trusted_ip, got %+v", st)
 	}
 
 	// CIDR form.
 	t.Setenv("TRUSTED_HOME_IP", "")
 	t.Setenv("TRUSTED_HOME_SUBNETS", "198.51.100.0/24")
-	if st := auth.EvaluateTrust(home, database, nil, nil); !st.IsTrusted {
+	if st := auth.EvaluateTrust(home, database); !st.IsTrusted {
 		t.Errorf("expected TRUSTED_HOME_SUBNETS CIDR match to be trusted")
 	}
 }
@@ -195,26 +375,20 @@ func TestTrustStatusJSONMatchesFrontend(t *testing.T) {
 	database, broker, cleanup := setupSmartAuthTestDB(t)
 	defer cleanup()
 	authH := &handlers.AuthHandler{DB: database, Broker: broker}
-	_, _ = database.Exec("INSERT INTO app_settings (key, value) VALUES ('home_latitude', '24.713600'), ('home_longitude', '46.675300')")
+	token := pairTestDevice(t, database, "Bedside iPad")
 
-	// The frontend sends ?latitude=&longitude= and reads trusted / reason.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status?latitude=24.7137&longitude=46.67535", nil)
+	// The frontend reads trusted / reason / device_name.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+	req.AddCookie(&http.Cookie{Name: auth.HomeDeviceCookieName, Value: token})
 	rec := httptest.NewRecorder()
 	authH.GetTrustStatus(rec, req)
 	var body map[string]interface{}
 	json.NewDecoder(rec.Body).Decode(&body)
-	if body["trusted"] != true || body["reason"] != "geofence" {
-		t.Errorf("expected {trusted:true, reason:geofence}, got %v", body)
+	if body["trusted"] != true || body["reason"] != "paired_device" || body["device_name"] != "Bedside iPad" {
+		t.Errorf("expected {trusted:true, reason:paired_device, device_name:Bedside iPad}, got %v", body)
 	}
-
-	// Switch with latitude / longitude in the body, as the frontend sends it.
-	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
-	sw := httptest.NewRequest(http.MethodPost, "/api/v1/auth/switch-caregiver",
-		bytes.NewBufferString(`{"caregiver_id":"caregiver2","latitude":24.7137,"longitude":46.67535}`))
-	swRec := httptest.NewRecorder()
-	authH.SwitchCaregiver(swRec, sw)
-	if swRec.Code != http.StatusOK {
-		t.Errorf("expected 1-tap switch inside the geofence, got %d (%s)", swRec.Code, swRec.Body.String())
+	if strings.Contains(rec.Body.String(), "home_device") || strings.Contains(rec.Body.String(), "geofence") {
+		t.Errorf("trust status must not expose device ids or geofence state: %s", rec.Body.String())
 	}
 }
 
@@ -222,7 +396,7 @@ func TestSwitchCaregiver1TapOnTrusted(t *testing.T) {
 	database, broker, cleanup := setupSmartAuthTestDB(t)
 	defer cleanup()
 
-	authH := &handlers.AuthHandler{DB: database, Broker: broker}
+	authH := &handlers.AuthHandler{DB: database, Broker: broker, SwitchLimiter: handlers.NewIPRateLimiter(100)}
 
 	createTestCaregiver(t, database, "caregiver1", "Hussain", "caregiver", "1234")
 	createTestCaregiver(t, database, "caregiver2", "Zainab", "caregiver", "1234")
@@ -332,9 +506,31 @@ func TestDevicePairingAndManagement(t *testing.T) {
 	var pairResp map[string]interface{}
 	json.NewDecoder(recPair.Body).Decode(&pairResp)
 	deviceID, _ := pairResp["device_id"].(string)
-	token, _ := pairResp["token"].(string)
-	if deviceID == "" || token == "" {
-		t.Fatalf("expected device_id and token in pair response")
+	if deviceID == "" {
+		t.Fatalf("expected device_id in pair response")
+	}
+	// Issue #53: the token lives only in the HttpOnly cookie.
+	if _, ok := pairResp["token"]; ok {
+		t.Errorf("pair response must not contain the device token: %v", pairResp)
+	}
+	var cookie *http.Cookie
+	for _, c := range recPair.Result().Cookies() {
+		if c.Name == auth.HomeDeviceCookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || !cookie.HttpOnly || cookie.Value == "" {
+		t.Fatalf("expected an HttpOnly paired-device cookie, got %+v", cookie)
+	}
+	paired := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+	paired.AddCookie(cookie)
+	if st := auth.EvaluateTrust(paired, database); !st.IsTrusted || st.TrustReason != "paired_device" {
+		t.Errorf("the issued cookie should make this device trusted, got %+v", st)
+	}
+	header := httptest.NewRequest(http.MethodGet, "/api/v1/auth/trust-status", nil)
+	header.Header.Set("X-Home-Device-Token", cookie.Value)
+	if st := auth.EvaluateTrust(header, database); st.IsTrusted {
+		t.Errorf("a device token in a header must not be trusted, got %+v", st)
 	}
 
 	// 2. List paired devices

@@ -16,23 +16,43 @@ import (
 )
 
 // GetTrustStatus checks whether the current request is from a trusted environment
-// (paired home device, within home geofence, or local LAN/subnet).
+// (paired home device or the configured home IP).
 func (h *AuthHandler) GetTrustStatus(w http.ResponseWriter, r *http.Request) {
-	lat, lon := extractGeoCoords(r)
-	status := auth.EvaluateTrust(r, h.DB, lat, lon)
+	status := auth.EvaluateTrust(r, h.DB)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
 
 type SwitchCaregiverRequest struct {
-	CaregiverID string   `json:"caregiver_id"`
-	Latitude    *float64 `json:"latitude,omitempty"`
-	Longitude   *float64 `json:"longitude,omitempty"`
+	CaregiverID string `json:"caregiver_id"`
 }
 
-// SwitchCaregiver performs an optimistic 1-tap profile switch without a PIN prompt
-// if the request comes from a trusted home network, paired bedside tablet, or home geofence.
+// defaultSwitchLimiter caps one-tap switches per device (issue #53): the
+// endpoint is public, so without it anyone could probe it as fast as they like.
+var defaultSwitchLimiter = NewIPRateLimiter(10)
+
+func (h *AuthHandler) switchLimiter() *IPRateLimiter {
+	if h.SwitchLimiter != nil {
+		return h.SwitchLimiter
+	}
+	return defaultSwitchLimiter
+}
+
+func writePINRequired(w http.ResponseWriter, caregiverID, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":        "PIN_REQUIRED",
+		"message":      message,
+		"caregiver_id": caregiverID,
+	})
+}
+
+// SwitchCaregiver performs a 1-tap profile switch without a PIN prompt when the
+// request comes from a paired bedside device or the configured home IP. Only
+// caregiver accounts can be reached this way: admins, super admins and viewers
+// always enter their own PIN (issue #53).
 func (h *AuthHandler) SwitchCaregiver(w http.ResponseWriter, r *http.Request) {
 	var req SwitchCaregiverRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CaregiverID == "" {
@@ -40,30 +60,35 @@ func (h *AuthHandler) SwitchCaregiver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lat, lon := req.Latitude, req.Longitude
-	if lat == nil || lon == nil {
-		lat, lon = extractGeoCoords(r)
+	clientIP := auth.GetClientIP(r)
+	limitKey := "ip:" + clientIP
+	if id := auth.HomeDeviceID(r); id != "" {
+		limitKey = "home_device:" + id
+	}
+	if !h.switchLimiter().Allow(limitKey, time.Now()) {
+		w.Header().Set("Retry-After", "60")
+		writeJSONError(w, http.StatusTooManyRequests, "TOO_MANY_REQUESTS", "too many profile switches, try again in a minute")
+		return
 	}
 
-	trust := auth.EvaluateTrust(r, h.DB, lat, lon)
+	trust := auth.EvaluateTrust(r, h.DB)
 	if !trust.IsTrusted {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":        "PIN_REQUIRED",
-			"message":      "Device is outside trusted home network; 4-digit PIN required.",
-			"caregiver_id": req.CaregiverID,
-		})
+		writePINRequired(w, req.CaregiverID, "Device is not a trusted home device; 4-digit PIN required.")
 		return
 	}
 
 	// Verify target caregiver exists and is active
+	var role string
 	var totpEnabled bool
 	err := h.DB.QueryRow(`
-		SELECT totp_enabled FROM caregivers WHERE id = ? AND is_active = 1
-	`, req.CaregiverID).Scan(&totpEnabled)
+		SELECT role, totp_enabled FROM caregivers WHERE id = ? AND is_active = 1
+	`, req.CaregiverID).Scan(&role, &totpEnabled)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "CAREGIVER_NOT_FOUND", "caregiver not found")
+		return
+	}
+	if role != "caregiver" {
+		writePINRequired(w, req.CaregiverID, "This account always needs its own 4-digit PIN.")
 		return
 	}
 
@@ -79,14 +104,18 @@ func (h *AuthHandler) SwitchCaregiver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditDetail := fmt.Sprintf("1-tap switch on trusted network (reason: %s", trust.TrustReason)
-	if trust.PairedDeviceName != "" {
-		auditDetail += fmt.Sprintf(", device: %s)", trust.PairedDeviceName)
-	} else {
-		auditDetail += ")"
+	// No audit row, no session: every one-tap switch must be reviewable.
+	auditDetail := fmt.Sprintf("1-tap switch (reason: %s, ip: %s", trust.TrustReason, clientIP)
+	if trust.PairedDeviceID != "" {
+		auditDetail += fmt.Sprintf(", device: %s [%s]", trust.PairedDeviceName, trust.PairedDeviceID)
+	}
+	auditDetail += ")"
+	if err := audit.Record(h.DB, req.CaregiverID, "1TAP_SWITCH", "caregiver", req.CaregiverID, auditDetail); err != nil {
+		internalError(w, "failed to record the switch", err)
+		return
 	}
 
-	h.completeLogin(w, r, req.CaregiverID, auditDetail)
+	h.completeLogin(w, r, req.CaregiverID, "Switched profile with one tap on a trusted home device")
 }
 
 type PairDeviceRequest struct {
@@ -144,12 +173,12 @@ func (h *AuthHandler) PairDevice(w http.ResponseWriter, r *http.Request) {
 
 	audit.Log(h.DB, caregiver.ID, "DEVICE_PAIRED", "paired_device", deviceID, fmt.Sprintf("Paired home device: %s", name))
 
+	// The token lives only in the HttpOnly cookie: page scripts never see it.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "success",
 		"device_id": deviceID,
 		"name":      name,
-		"token":     token,
 	})
 }
 
@@ -216,8 +245,15 @@ func (h *AuthHandler) RevokePairedDevice(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
-// GetHomeLocation returns the configured home geofence coordinates.
+// GetHomeLocation returns the configured home geofence coordinates (admin only:
+// it is the family's home address).
 func (h *AuthHandler) GetHomeLocation(w http.ResponseWriter, r *http.Request) {
+	caregiver := auth.GetCaregiverFromContext(r.Context())
+	if caregiver == nil || (caregiver.Role != "admin" && caregiver.Role != "super_admin") {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Admin permissions required")
+		return
+	}
+
 	var latStr, lonStr, radiusStr string
 	_ = h.DB.QueryRow("SELECT value FROM app_settings WHERE key = 'home_latitude'").Scan(&latStr)
 	_ = h.DB.QueryRow("SELECT value FROM app_settings WHERE key = 'home_longitude'").Scan(&lonStr)
@@ -415,27 +451,4 @@ func requireAdminPIN(w http.ResponseWriter, db *sql.DB, lim *auth.PINLimiter, ca
 	}
 	lim.Done(key, true)
 	return true
-}
-
-func extractGeoCoords(r *http.Request) (*float64, *float64) {
-	latStr := r.URL.Query().Get("latitude")
-	lonStr := r.URL.Query().Get("longitude")
-	if latStr == "" {
-		latStr = r.Header.Get("X-Geo-Lat")
-	}
-	if lonStr == "" {
-		lonStr = r.Header.Get("X-Geo-Lon")
-	}
-
-	if latStr == "" || lonStr == "" {
-		return nil, nil
-	}
-
-	lat, err1 := strconv.ParseFloat(latStr, 64)
-	lon, err2 := strconv.ParseFloat(lonStr, 64)
-	if err1 != nil || err2 != nil {
-		return nil, nil
-	}
-
-	return &lat, &lon
 }

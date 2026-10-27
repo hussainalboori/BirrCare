@@ -10,23 +10,32 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	HomeDeviceCookieName        = "birrcare_home_device"
-	HomeDeviceHeaderName        = "X-Home-Device-Token"
 	HomeDeviceCookieTTL         = 365 * 24 * time.Hour
 	DefaultGeofenceRadiusMeters = 75.0
 )
 
 type TrustStatus struct {
-	IsTrusted              bool   `json:"trusted"`
-	TrustReason            string `json:"reason"` // "paired_device", "geofence", "trusted_ip", "untrusted"
-	HomeGeofenceConfigured bool   `json:"home_geofence_configured"`
-	PairedDeviceName       string `json:"device_name,omitempty"`
+	IsTrusted        bool   `json:"trusted"`
+	TrustReason      string `json:"reason"` // "paired_device", "trusted_ip", "untrusted"
+	PairedDeviceName string `json:"device_name,omitempty"`
+	PairedDeviceID   string `json:"-"`
+}
+
+// HomeDeviceID returns the paired-device id from this browser's HttpOnly
+// cookie (signature checked, not yet looked up), or "".
+func HomeDeviceID(r *http.Request) string {
+	c, err := r.Cookie(HomeDeviceCookieName)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	id, _ := ParseHomeDeviceToken(c.Value)
+	return id
 }
 
 type HomeLocationSettings struct {
@@ -136,95 +145,40 @@ func IsTrustedHomeIP(ipStr string) bool {
 	return false
 }
 
-// EvaluateTrust checks all 3 layers:
-// Layer 1: Paired Home Device Token
-// Layer 2: Geofence Coordinates (Haversine <= 75m)
-// Layer 3: Configured home IP / subnet (TRUSTED_HOME_IP)
-func EvaluateTrust(r *http.Request, db *sql.DB, lat, lon *float64) TrustStatus {
-	// Check if home geofence is configured in settings
-	var homeLatStr, homeLonStr, homeRadiusStr string
-	_ = db.QueryRow("SELECT value FROM app_settings WHERE key = 'home_latitude'").Scan(&homeLatStr)
-	_ = db.QueryRow("SELECT value FROM app_settings WHERE key = 'home_longitude'").Scan(&homeLonStr)
-	_ = db.QueryRow("SELECT value FROM app_settings WHERE key = 'home_geofence_meters'").Scan(&homeRadiusStr)
-
-	homeConfigured := false
-	var homeLat, homeLon float64
-	var homeRadius = DefaultGeofenceRadiusMeters
-
-	if homeLatStr != "" && homeLonStr != "" {
-		var err1, err2 error
-		homeLat, err1 = strconv.ParseFloat(homeLatStr, 64)
-		homeLon, err2 = strconv.ParseFloat(homeLonStr, 64)
-		if err1 == nil && err2 == nil {
-			homeConfigured = true
-		}
-	}
-	if homeRadiusStr != "" {
-		if rVal, err := strconv.ParseFloat(homeRadiusStr, 64); err == nil && rVal > 0 {
-			homeRadius = rVal
-		}
-	}
-
+// EvaluateTrust decides whether this browser may switch profile without a PIN.
+// Only things the server itself issued or observes count (issue #53):
+// Layer 1: the paired-device HttpOnly cookie
+// Layer 2: the configured home IP / subnet (TRUSTED_HOME_IP), as Cloudflare reports it
+// Anything the phone reports about itself (GPS position, a token in a header)
+// can be forged, so it never grants trust.
+func EvaluateTrust(r *http.Request, db *sql.DB) TrustStatus {
 	// -------------------------------------------------------------
-	// Layer 1: Paired Home Device Token (persistent bedside tablet / phone)
+	// Layer 1: Paired Home Device cookie (persistent bedside tablet / phone)
 	// -------------------------------------------------------------
-	var token string
-	if c, err := r.Cookie(HomeDeviceCookieName); err == nil && c.Value != "" {
-		token = c.Value
-	} else if hTok := r.Header.Get(HomeDeviceHeaderName); hTok != "" {
-		token = hTok
-	}
-
-	if token != "" {
-		if deviceID, ok := ParseHomeDeviceToken(token); ok {
-			var deviceName string
-			var isRevoked int
-			err := db.QueryRow(`
-				SELECT name, is_revoked FROM paired_devices WHERE device_token_hash = ?
-			`, HomeDeviceHash(deviceID)).Scan(&deviceName, &isRevoked)
-			if err == nil && isRevoked == 0 {
-				// Record last used time
-				_, _ = db.Exec("UPDATE paired_devices SET last_used_at = datetime('now') WHERE device_token_hash = ?", HomeDeviceHash(deviceID))
-				return TrustStatus{
-					IsTrusted:              true,
-					TrustReason:            "paired_device",
-					HomeGeofenceConfigured: homeConfigured,
-					PairedDeviceName:       deviceName,
-				}
-			}
-		}
-	}
-
-	// -------------------------------------------------------------
-	// Layer 2: Geofence Fallback (Haversine formula <= 75m)
-	// -------------------------------------------------------------
-	if homeConfigured && lat != nil && lon != nil {
-		dist := DistanceMeters(*lat, *lon, homeLat, homeLon)
-		if dist <= homeRadius {
+	if deviceID := HomeDeviceID(r); deviceID != "" {
+		var deviceName string
+		var isRevoked int
+		err := db.QueryRow(`
+			SELECT name, is_revoked FROM paired_devices WHERE device_token_hash = ?
+		`, HomeDeviceHash(deviceID)).Scan(&deviceName, &isRevoked)
+		if err == nil && isRevoked == 0 {
+			// Record last used time
+			_, _ = db.Exec("UPDATE paired_devices SET last_used_at = datetime('now') WHERE device_token_hash = ?", HomeDeviceHash(deviceID))
 			return TrustStatus{
-				IsTrusted:              true,
-				TrustReason:            "geofence",
-				HomeGeofenceConfigured: true,
+				IsTrusted:        true,
+				TrustReason:      "paired_device",
+				PairedDeviceName: deviceName,
+				PairedDeviceID:   deviceID,
 			}
 		}
 	}
 
 	// -------------------------------------------------------------
-	// Layer 3: Configured home IP / subnet (TRUSTED_HOME_IP)
+	// Layer 2: Configured home IP / subnet (TRUSTED_HOME_IP)
 	// -------------------------------------------------------------
-	clientIP := GetClientIP(r)
-	if IsTrustedHomeIP(clientIP) {
-		return TrustStatus{
-			IsTrusted:              true,
-			TrustReason:            "trusted_ip",
-			HomeGeofenceConfigured: homeConfigured,
-		}
+	if IsTrustedHomeIP(GetClientIP(r)) {
+		return TrustStatus{IsTrusted: true, TrustReason: "trusted_ip"}
 	}
 
-	// Untrusted (e.g., cellular network outside geofence, not paired)
-	return TrustStatus{
-		IsTrusted:              false,
-		TrustReason:            "untrusted",
-		HomeGeofenceConfigured: homeConfigured,
-	}
+	return TrustStatus{IsTrusted: false, TrustReason: "untrusted"}
 }

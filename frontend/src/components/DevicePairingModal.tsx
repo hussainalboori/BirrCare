@@ -4,8 +4,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi } from "@/lib/api";
-import { PairedDevice, HomeLocation, TrustStatus } from "@/lib/types";
-import { X, Tablet, MapPin, ShieldCheck, ShieldAlert, Trash2, CheckCircle2, Laptop, Navigation } from "lucide-react";
+import { PairedDevice, TrustStatus } from "@/lib/types";
+import { X, Tablet, ShieldCheck, ShieldAlert, Trash2, CheckCircle2, Laptop } from "lucide-react";
 
 interface DevicePairingModalProps {
   isOpen: boolean;
@@ -25,27 +25,12 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Home location
-  const [latitude, setLatitude] = useState<string>("");
-  const [longitude, setLongitude] = useState<string>("");
-  const [radiusMeters, setRadiusMeters] = useState<string>("75");
-  const [savingLocation, setSavingLocation] = useState(false);
-  const [gettingCoords, setGettingCoords] = useState(false);
-
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [devList, loc] = await Promise.all([
-        fetchApi<PairedDevice[]>("/auth/paired-devices").catch(() => []),
-        fetchApi<HomeLocation>("/settings/home-location").catch(() => null),
-      ]);
+      const devList = await fetchApi<PairedDevice[]>("/auth/paired-devices").catch(() => []);
       setDevices(devList || []);
-      if (loc && loc.latitude !== 0 && loc.longitude !== 0) {
-        setLatitude(String(loc.latitude));
-        setLongitude(String(loc.longitude));
-        setRadiusMeters(String(loc.radius_meters || 75));
-      }
     } catch (err: any) {
       setError(err?.message || (ar ? "تعذر تحميل البيانات" : "Failed loading data"));
     } finally {
@@ -101,52 +86,6 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
     }
   };
 
-  const handleUseCurrentGPS = () => {
-    if (!navigator.geolocation) {
-      setError(ar ? "الموقع الجغرافي غير مدعوم في متصفحك" : "Geolocation not supported in browser");
-      return;
-    }
-    setGettingCoords(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLatitude(pos.coords.latitude.toFixed(6));
-        setLongitude(pos.coords.longitude.toFixed(6));
-        setGettingCoords(false);
-      },
-      (err) => {
-        setGettingCoords(false);
-        setError(err.message || (ar ? "تعذر جلب إحداثيات الموقع" : "Could not retrieve GPS coordinates"));
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  const handleSaveLocation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const lat = parseFloat(latitude);
-    const lon = parseFloat(longitude);
-    const rad = parseFloat(radiusMeters) || 75;
-    if (isNaN(lat) || isNaN(lon)) {
-      setError(ar ? "يرجى إدخال إحداثيات صالحة" : "Please provide valid coordinates");
-      return;
-    }
-    setSavingLocation(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await fetchApi("/settings/home-location", {
-        method: "PUT",
-        body: JSON.stringify({ latitude: lat, longitude: lon, radius_meters: rad }),
-      });
-      setSuccess(ar ? "تم حفظ النطاق الجغرافي للمنزل بنجاح" : "Home geofence coordinates saved successfully");
-      await checkTrustStatus();
-    } catch (err: any) {
-      setError(err?.message || (ar ? "فشل حفظ الموقع" : "Failed to save location"));
-    } finally {
-      setSavingLocation(false);
-    }
-  };
-
   const getReasonLabel = (trust?: TrustStatus | null) => {
     if (!trust?.trusted) {
       return ar ? "خارج المنزل / غير معتمد (يلزم رمز المرور)" : "External / Untrusted (PIN Required)";
@@ -156,8 +95,6 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
         return ar
           ? `جهاز منزلي معتمد (${trust.device_name || "جهاز سرير المريض"})`
           : `Paired Home Device (${trust.device_name || "Bedside Device"})`;
-      case "geofence":
-        return ar ? "ضمن النطاق الجغرافي للمنزل (Geofence)" : "Inside Home Geofence";
       case "trusted_ip":
         return ar ? "عنوان IP منزلي معتمد" : "Trusted Home IP";
       default:
@@ -188,7 +125,9 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
                 {ar ? "أجهزة وشبكة المنزل (التبديل الذكي)" : "Home Devices & Smart Network"}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {ar ? "التبديل بلمسة واحدة دون الحاجة للرمز السري" : "1-Tap switching without PIN on trusted home devices"}
+                {ar
+                  ? "التبديل بلمسة واحدة لمقدمي الرعاية على أجهزة المنزل المعتمدة؛ المشرفون يدخلون رمزهم دائماً"
+                  : "1-tap switching for caregivers on trusted home devices; admins always enter their PIN"}
               </p>
             </div>
           </div>
@@ -332,84 +271,6 @@ export function DevicePairingModal({ isOpen, onClose }: DevicePairingModalProps)
                 ))}
               </div>
             )}
-          </div>
-
-          {/* Home Geofence Configuration */}
-          <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  {ar ? "النطاق الجغرافي للمنزل (Geofence)" : "Home Geofence"}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={handleUseCurrentGPS}
-                disabled={gettingCoords}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              >
-                <Navigation className="h-3 w-3" />
-                <span>{gettingCoords ? (ar ? "جارٍ التحديد..." : "Locating...") : (ar ? "استخدام موقعي الحالي" : "Use GPS")}</span>
-              </button>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {ar
-                ? "يسمح لهواتف الأبناء بالتبديل السريع عند التواجد داخل المنزل حتى عبر بيانات الهاتف (4G/5G)."
-                : "Allows siblings to 1-tap switch when inside the home even when using mobile cellular data (4G/5G)."}
-            </p>
-
-            <form onSubmit={handleSaveLocation} className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    {ar ? "خط العرض (Latitude)" : "Latitude"}
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={latitude}
-                    onChange={(e) => setLatitude(e.target.value)}
-                    placeholder="26.123456"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-base text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    {ar ? "خط الطول (Longitude)" : "Longitude"}
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={longitude}
-                    onChange={(e) => setLongitude(e.target.value)}
-                    placeholder="50.123456"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-base text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    {ar ? "نصف القطر (متر)" : "Radius (meters)"}
-                  </label>
-                  <input
-                    type="number"
-                    value={radiusMeters}
-                    onChange={(e) => setRadiusMeters(e.target.value)}
-                    placeholder="75"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-base text-slate-900 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={savingLocation || !latitude || !longitude}
-                  className="self-end rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white transition-opacity hover:bg-slate-800 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-                >
-                  {savingLocation ? (ar ? "جارٍ الحفظ..." : "Saving...") : (ar ? "حفظ النطاق" : "Save Geofence")}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       </div>
