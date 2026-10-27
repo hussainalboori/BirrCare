@@ -21,6 +21,7 @@ import {
   AlertCircle,
   FileText,
 } from "lucide-react";
+import { StartingWhen, type StartingWhenValue } from "./StartingWhen";
 
 interface MedicationCatalogModalProps {
   isOpen: boolean;
@@ -99,6 +100,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   // PRN (issue #25)
   const [isPRN, setIsPRN] = useState(false);
   const [remind, setRemind] = useState(true);
+  const [startingWhen, setStartingWhen] = useState<StartingWhenValue>("today");
   const [prnMax24h, setPrnMax24h] = useState("4");
   const [prnMinHours, setPrnMinHours] = useState("4");
   const [slotTimes, setSlotTimes] = useState<Record<string, string>>({
@@ -180,6 +182,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setMinHours(med.min_hours_between == null ? "" : String(med.min_hours_between));
     setIsCritical(!!med.is_critical);
     setRemind(med.remind !== false);
+    setStartingWhen("today");
     setTrackStock(med.stock_units != null);
     setStockCount(med.stock_units != null ? String(med.stock_units) : "");
     setStockTouched(false);
@@ -265,6 +268,7 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
             photo_urls: photos,
             is_critical: isCritical,
             remind,
+            effective_from: startingWhen,
             ...prnPayload,
             ...stockPayload(),
           }),
@@ -908,6 +912,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                   />
                 </div>
               </div>
+
+              {/* From when a schedule or dose change applies (issue #57) */}
+              {editingMed && <StartingWhen value={startingWhen} onChange={setStartingWhen} ar={locale === "ar"} />}
 
               {/* ACTIONS */}
               <div className="flex items-center justify-between gap-2">

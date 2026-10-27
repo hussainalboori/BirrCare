@@ -241,6 +241,8 @@ Updates dosing slots, clock times, and days of week for a medication.
 ### `GET /api/v1/medications/schedule?date=YYYY-MM-DD`
 Returns scheduled medication cards for a given day (defaults to today in household local time). Includes dose status, caregiver attribution, and interval locking countdowns.
 
+**Schedule history (issue #57).** `PUT /api/v1/medications/{id}` and `PUT /api/v1/medications/{id}/schedule` take `effective_from: "today" | "tomorrow"` (default today): a change of slots, days, times or dosage applies from that day, and earlier days keep the schedule they had (`medication_schedule_versions`). Deactivating a medicine stops it from today; its past doses and gaps stay. `GET /medications/schedule?date=` and the doctor report use the schedule in effect on each day, include stopped medicines, and always show a dose that was logged. The report's `per_medication` rows carry `stopped_on` and `stopped_by` for a stopped medicine.
+
 ### `POST /api/v1/medications/log`
 Records a scheduled dose.
 ```json

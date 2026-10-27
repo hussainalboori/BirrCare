@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"slices"
-	"strings"
 	"time"
 
 	"birrcare/backend/internal/models"
@@ -87,16 +85,27 @@ func CheckDoseOverdue(ctx context.Context, db *sql.DB, notifier *push.Notifier, 
 		meds = append(meds, m)
 	}
 	rows.Close() // release the single pooled connection before the next query
+	versions, err := loadScheduleVersions(db)
+	if err != nil {
+		return err
+	}
 
 	for _, m := range meds {
-		// Yesterday too: a 22:30 dose is escalated after midnight.
+		// Yesterday too: a 22:30 dose is escalated after midnight. Each day uses the
+		// schedule in effect that day (issue #57).
 		for _, day := range []time.Time{now.AddDate(0, 0, -1), now} {
-			if !slices.Contains(m.days, strings.ToLower(day.Weekday().String()[:3])) {
+			date := day.Format("2006-01-02")
+			v, ok := versionOn(versions[m.id], date)
+			if !ok {
 				continue
 			}
-			date := day.Format("2006-01-02")
-			for _, slot := range m.slots {
-				if err := checkDose(ctx, db, notifier, broker, now, m, date, slot); err != nil {
+			dm := m
+			dm.times = v.Times
+			for _, slot := range v.Slots {
+				if !v.scheduledOn(date, slot) {
+					continue
+				}
+				if err := checkDose(ctx, db, notifier, broker, now, dm, date, slot); err != nil {
 					log.Printf("[DOSES] %s %s %s: %v", m.id, date, slot, err)
 				}
 			}

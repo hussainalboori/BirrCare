@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/db"
@@ -291,8 +292,17 @@ func TestMedicationScheduleManagement(t *testing.T) {
 		t.Fatalf("Expected 200 OK for admin updating schedule, got %d: %s", recAdmin.Code, recAdmin.Body.String())
 	}
 
-	// 3. 2026-10-19 is a Monday -> med_aspirin MUST be in schedule with time 07:30
-	reqMon := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date=2026-10-19", nil)
+	// 3. Next Monday -> med_aspirin MUST be in schedule with time 07:30. (Future
+	// dates: a past day keeps the schedule it had, and the medicine is new, #57.)
+	nextDay := func(wd time.Weekday) string {
+		d := time.Now().In(handlers.ClinicalLocation()).AddDate(0, 0, 1)
+		for d.Weekday() != wd {
+			d = d.AddDate(0, 0, 1)
+		}
+		return d.Format("2006-01-02")
+	}
+	monday, sunday := nextDay(time.Monday), nextDay(time.Sunday)
+	reqMon := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date="+monday, nil)
 	recMon := httptest.NewRecorder()
 	medHandler.GetSchedule(recMon, reqMon)
 	if recMon.Code != http.StatusOK {
@@ -312,11 +322,11 @@ func TestMedicationScheduleManagement(t *testing.T) {
 		}
 	}
 	if !foundAspirin {
-		t.Fatalf("Expected med_aspirin to be scheduled on Monday 2026-10-19")
+		t.Fatalf("Expected med_aspirin to be scheduled on Monday %s", monday)
 	}
 
-	// 4. 2026-10-18 is a Sunday -> med_aspirin MUST NOT be in schedule
-	reqSun := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date=2026-10-18", nil)
+	// 4. Next Sunday -> med_aspirin MUST NOT be in schedule
+	reqSun := httptest.NewRequest(http.MethodGet, "/api/v1/medications/schedule?date="+sunday, nil)
 	recSun := httptest.NewRecorder()
 	medHandler.GetSchedule(recSun, reqSun)
 	var sunResp struct {
@@ -325,7 +335,7 @@ func TestMedicationScheduleManagement(t *testing.T) {
 	json.NewDecoder(recSun.Body).Decode(&sunResp)
 	for _, dose := range sunResp.Schedule {
 		if dose.Medication.ID == "med_aspirin" {
-			t.Fatalf("med_aspirin should NOT be scheduled on Sunday 2026-10-18")
+			t.Fatalf("med_aspirin should NOT be scheduled on Sunday %s", sunday)
 		}
 	}
 }

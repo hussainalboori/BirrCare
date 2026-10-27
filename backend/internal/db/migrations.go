@@ -1079,6 +1079,42 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 
+	// Issue #57: dated schedule history, so stopping a medicine or changing its
+	// schedule never rewrites the past. One open version (effective_to NULL) per
+	// active medicine; dates are household-local YYYY-MM-DD.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS medication_schedule_versions (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			effective_from TEXT NOT NULL,
+			effective_to TEXT,
+			frequency_slots TEXT NOT NULL,
+			days_of_week TEXT NOT NULL,
+			slot_times TEXT NOT NULL,
+			dosage TEXT NOT NULL,
+			created_by TEXT REFERENCES caregivers(id),
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE INDEX IF NOT EXISTS idx_med_versions ON medication_schedule_versions(medication_id, effective_from);
+	`); err != nil {
+		return fmt.Errorf("failed creating medication_schedule_versions: %w", err)
+	}
+	for _, c := range []struct{ col, def string }{
+		{"stopped_on", "TEXT"},                         // household date it was stopped
+		{"stopped_by", "TEXT REFERENCES caregivers(id)"}, // who stopped it
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if err := backfillScheduleVersions(database); err != nil {
+		return err
+	}
+
 	// Ensure care_events table exists
 	if _, err := database.Exec(`
 		CREATE TABLE IF NOT EXISTS care_events (
@@ -1502,5 +1538,83 @@ func seedShifts(database *sql.DB) error {
 	}
 
 	log.Println("Seeded default 24-hour caregiver shift configuration.")
+	return nil
+}
+
+// backfillScheduleVersions gives every medicine without a schedule history one
+// version from the household day it was added (issue #57). A medicine already
+// stopped ends the day before it was deactivated (from the audit log), or has no
+// expected doses if that is unknown; its logged doses still show.
+func backfillScheduleVersions(database *sql.DB) error {
+	loc := time.Local
+	if tz := os.Getenv("APP_TIMEZONE"); tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	type med struct {
+		id, slots, days, times, dosage, created string
+		active                                  bool
+	}
+	rows, err := database.Query(`SELECT m.id, m.frequency_slots, COALESCE(m.days_of_week, ''), COALESCE(m.slot_times, ''), m.dosage,
+			COALESCE(m.created_at, ''), COALESCE(m.is_active, 1)
+		FROM medications m
+		WHERE NOT EXISTS (SELECT 1 FROM medication_schedule_versions v WHERE v.medication_id = m.id)`)
+	if err != nil {
+		return fmt.Errorf("listing medications for schedule history: %w", err)
+	}
+	var meds []med
+	for rows.Next() {
+		var m med
+		if err := rows.Scan(&m.id, &m.slots, &m.days, &m.times, &m.dosage, &m.created, &m.active); err != nil {
+			rows.Close()
+			return err
+		}
+		meds = append(meds, m)
+	}
+	rows.Close()
+	if len(meds) == 0 {
+		return nil
+	}
+	localDate := func(sqliteTime string) (time.Time, bool) {
+		t, err := time.Parse("2006-01-02 15:04:05", sqliteTime)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return t.In(loc), true
+	}
+	for _, m := range meds {
+		from := "2000-01-01"
+		if t, ok := localDate(m.created); ok {
+			from = t.Format("2006-01-02")
+		}
+		if m.days == "" {
+			m.days = `["sun","mon","tue","wed","thu","fri","sat"]`
+		}
+		if m.times == "" {
+			m.times = "{}"
+		}
+		var to interface{}
+		if !m.active {
+			var at, by string
+			stopped := from
+			if database.QueryRow(`SELECT created_at, COALESCE(caregiver_id, '') FROM audit_logs WHERE action = 'DEACTIVATE_MEDICATION' AND entity_id = ?
+				ORDER BY created_at DESC LIMIT 1`, m.id).Scan(&at, &by) == nil {
+				if t, ok := localDate(at); ok {
+					stopped = t.Format("2006-01-02")
+				}
+				if _, err := database.Exec(`UPDATE medications SET stopped_on = COALESCE(stopped_on, ?), stopped_by = COALESCE(stopped_by, NULLIF(?, '')) WHERE id = ?`, stopped, by, m.id); err != nil {
+					return err
+				}
+			}
+			d, _ := time.Parse("2006-01-02", stopped)
+			to = d.AddDate(0, 0, -1).Format("2006-01-02")
+		}
+		if _, err := database.Exec(`INSERT INTO medication_schedule_versions (id, medication_id, effective_from, effective_to, frequency_slots, days_of_week, slot_times, dosage)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "msv_"+m.id, m.id, from, to, m.slots, m.days, m.times, m.dosage); err != nil {
+			return fmt.Errorf("backfilling schedule history for %s: %w", m.id, err)
+		}
+	}
+	log.Printf("Schedule history: added a starting version for %d medicine(s).", len(meds))
 	return nil
 }

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -30,6 +29,10 @@ type MedReport struct {
 	NotRecorded  int      `json:"not_recorded"`
 	Rate         float64  `json:"rate"`         // fully taken / expected, %
 	MissedDates  []string `json:"missed_dates"` // days with a dose not recorded, refused or skipped
+	// StoppedOn / StoppedBy (issue #57): the household date the medicine was stopped
+	// and by whom; empty while it is still given.
+	StoppedOn string `json:"stopped_on,omitempty"`
+	StoppedBy string `json:"stopped_by,omitempty"`
 }
 
 type doseKey struct{ med, date, slot string }
@@ -42,7 +45,7 @@ type loggedDose struct {
 
 var weekdayKeys = [...]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
-// buildDoseReport counts expected doses for every active medication over the
+// buildDoseReport counts expected doses for every medication over the
 // household-local dates [start, end] (inclusive). On "today", a slot whose time
 // hasn't come yet is only counted if it was already logged.
 func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdherence, error) {
@@ -73,37 +76,30 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 		return nil, MedAdherence{}, err
 	}
 
-	type med struct {
-		MedReport
-		slots   []string
-		days    []string
-		times   map[string]string
-		created string // local YYYY-MM-DD
+	versions, err := loadScheduleVersions(db)
+	if err != nil {
+		return nil, MedAdherence{}, err
 	}
-	var meds []med
-	mrows, err := db.Query(`SELECT id, name_ar, name_en, dosage, frequency_slots, COALESCE(days_of_week, ''), COALESCE(slot_times, ''),
-		COALESCE(created_at, ''), COALESCE(is_critical, 0) FROM medications WHERE is_active = 1`)
+
+	// Every medicine, stopped ones too (issue #57): each day uses the schedule in
+	// effect that day.
+	var meds []MedReport
+	inactive := map[string]bool{}
+	mrows, err := db.Query(`SELECT m.id, m.name_ar, m.name_en, m.dosage, COALESCE(m.is_critical, 0),
+			COALESCE(m.stopped_on, ''), COALESCE(c.name, ''), COALESCE(m.is_active, 1)
+		FROM medications m LEFT JOIN caregivers c ON c.id = m.stopped_by`)
 	if err != nil {
 		return nil, MedAdherence{}, fmt.Errorf("loading medications: %w", err)
 	}
 	for mrows.Next() {
-		var m med
-		var slotsJSON, daysJSON, timesJSON, created string
-		if err := mrows.Scan(&m.MedicationID, &m.NameAr, &m.NameEn, &m.Dosage, &slotsJSON, &daysJSON, &timesJSON, &created, &m.IsCritical); err != nil {
+		var r MedReport
+		var active bool
+		if err := mrows.Scan(&r.MedicationID, &r.NameAr, &r.NameEn, &r.Dosage, &r.IsCritical, &r.StoppedOn, &r.StoppedBy, &active); err != nil {
 			mrows.Close()
 			return nil, MedAdherence{}, fmt.Errorf("reading medications: %w", err)
 		}
-		_ = json.Unmarshal([]byte(slotsJSON), &m.slots)
-		_ = json.Unmarshal([]byte(daysJSON), &m.days)
-		if len(m.days) == 0 {
-			m.days = allDaysOfWeek
-		}
-		_ = json.Unmarshal([]byte(timesJSON), &m.times)
-		m.times = normalizeSlotTimes(m.times, m.slots)
-		if t, err := time.Parse(sqliteTimeLayout, created); err == nil {
-			m.created = t.In(loc).Format("2006-01-02")
-		}
-		meds = append(meds, m)
+		inactive[r.MedicationID] = !active
+		meds = append(meds, r)
 	}
 	mrows.Close()
 	if err := mrows.Err(); err != nil {
@@ -114,19 +110,19 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 	nowClock := now.In(loc).Format("15:04")
 	var total MedAdherence
 	out := make([]MedReport, 0, len(meds))
-	for _, m := range meds {
-		r := m.MedReport
+	for _, r := range meds {
 		r.MissedDates = []string{}
 		missed := map[string]bool{}
 		dosages := map[string]bool{}
+		vs := versions[r.MedicationID]
 		for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
 			date := d.Format("2006-01-02")
-			// A dose someone logged always counts. An unlogged one is only expected on
-			// a scheduled weekday, from the day the medication was added, once due.
-			scheduledDay := (m.created == "" || date >= m.created) && slices.Contains(m.days, weekdayKeys[d.Weekday()])
-			for _, slot := range m.slots {
-				l, logged := logs[doseKey{m.MedicationID, date, slot}]
-				if !logged && (!scheduledDay || (date == today && m.times[slot] > nowClock)) {
+			v, inEffect := versionOn(vs, date)
+			// A dose someone logged always counts. An unlogged one is only expected
+			// when that day's schedule had it, once due.
+			for _, slot := range allSlotsInOrder {
+				l, logged := logs[doseKey{r.MedicationID, date, slot}]
+				if !logged && (!inEffect || !v.scheduledOn(date, slot) || (date == today && v.Times[slot] > nowClock)) {
 					continue
 				}
 				r.Expected++
@@ -154,6 +150,9 @@ func buildDoseReport(db *sql.DB, start, end, now time.Time) ([]MedReport, MedAdh
 					r.Vomited++
 				}
 			}
+		}
+		if r.Expected == 0 && inactive[r.MedicationID] {
+			continue // stopped before this period and nothing recorded in it
 		}
 		for d := range missed {
 			r.MissedDates = append(r.MissedDates, d)

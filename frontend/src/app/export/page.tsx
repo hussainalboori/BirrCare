@@ -138,8 +138,16 @@ export default function DoctorExportPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {(summary.per_medication ?? []).map((m) => (
-                        <tr key={m.medication_id} className={m.not_recorded ? "bg-rose-50 dark:bg-rose-950/30" : undefined}>
+                      {[...(summary.per_medication ?? []).filter((m) => !m.stopped_on), ...(summary.per_medication ?? []).filter((m) => m.stopped_on)].map((m, i, all) => (
+                        <React.Fragment key={m.medication_id}>
+                        {m.stopped_on && !all[i - 1]?.stopped_on && (
+                          <tr data-testid="stopped-group">
+                            <th colSpan={7} className="pt-3 pb-1 text-start text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                              {locale === "ar" ? "أدوية أُوقفت" : "Stopped medicines"}
+                            </th>
+                          </tr>
+                        )}
+                        <tr className={m.not_recorded ? "bg-rose-50 dark:bg-rose-950/30" : undefined}>
                           <td className="py-1.5 pe-2 align-top">
                             <span className="font-semibold">
                               {m.is_critical && <span className="me-1 rounded bg-rose-700 px-1.5 py-0.5 text-xs font-bold text-white">{locale === "ar" ? "حرج" : "critical"}</span>}
@@ -149,6 +157,18 @@ export default function DoctorExportPage() {
                               <span className="block text-xs text-amber-700 dark:text-amber-400">
                                 {locale === "ar" ? "جرعة سابقة في الفترة: " : "Earlier dose in period: "}
                                 <Auto>{m.past_dosages!.join(", ")}</Auto>
+                              </span>
+                            )}
+                            {m.stopped_on && (
+                              <span className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                                {locale === "ar" ? "أُوقف في " : "Stopped on "}
+                                <Ltr>{m.stopped_on}</Ltr>
+                                {m.stopped_by && (
+                                  <>
+                                    {locale === "ar" ? " بواسطة " : " by "}
+                                    <bdi>{m.stopped_by}</bdi>
+                                  </>
+                                )}
                               </span>
                             )}
                             {m.missed_dates.length > 0 && (
@@ -167,6 +187,7 @@ export default function DoctorExportPage() {
                           <td className={`py-1.5 pe-2 align-top ${m.not_recorded ? "font-black text-rose-700 dark:text-rose-300" : ""}`}><Ltr>{m.not_recorded}</Ltr></td>
                           <td className="py-1.5 align-top font-bold"><Ltr>{m.expected ? `${Math.round(m.rate)}%` : "--"}</Ltr></td>
                         </tr>
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>

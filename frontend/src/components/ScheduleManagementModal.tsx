@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Info,
 } from "lucide-react";
+import { StartingWhen, type StartingWhenValue } from "./StartingWhen";
 
 interface ScheduleManagementModalProps {
   isOpen: boolean;
@@ -62,6 +63,7 @@ export function ScheduleManagementModal({
     Record<string, { days: string[]; slots: string[]; times: Record<string, string> }>
   >({});
   const [savingMedId, setSavingMedId] = useState<string | null>(null);
+  const [startingWhen, setStartingWhen] = useState<StartingWhenValue>("today");
   const [savedSuccessId, setSavedSuccessId] = useState<string | null>(null);
 
   const canEdit = canManageMedications(currentCaregiver?.role);
@@ -189,6 +191,7 @@ export function ScheduleManagementModal({
           days_of_week: draft.days,
           frequency_slots: draft.slots,
           slot_times: draft.times,
+          effective_from: startingWhen,
         }),
       });
 
@@ -276,6 +279,7 @@ export function ScheduleManagementModal({
             </div>
           ) : (
             <div className="space-y-4">
+              {canEdit && <StartingWhen value={startingWhen} onChange={setStartingWhen} ar={locale === "ar"} />}
               {meds.map((med) => {
                 const draft = scheduleDrafts[med.id] || {
                   days: ALL_DAY_IDS,

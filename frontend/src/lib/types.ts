@@ -301,6 +301,9 @@ export interface DoctorSummary {
     not_recorded: number;
     rate: number;
     missed_dates: string[];
+    /** Issue #57: household date it was stopped, and by whom. */
+    stopped_on?: string;
+    stopped_by?: string;
   }[];
   /** Blood pressure per household-local day. */
   daily_bp?: { date: string; avg_sys: number; avg_dia: number; max_sys: number; min_sys: number; readings: number }[];

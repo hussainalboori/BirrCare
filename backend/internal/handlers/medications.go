@@ -294,6 +294,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Issue #57: its schedule history starts today.
+	if err := syncScheduleVersion(tx, id, caregiver.ID, clinicalToday()); err != nil {
+		internalError(w, "failed to record the schedule", err)
+		return
+	}
 	auditDetail := fmt.Sprintf("Added prescription: %s (%s)", req.NameAr, req.Dosage)
 	if err := audit.Record(tx, caregiver.ID, "CREATE_MEDICATION", "medication", id, auditDetail); err != nil {
 		internalError(w, "failed to record audit log", err)
@@ -356,6 +361,9 @@ type UpdateMedicationRequest struct {
 	MinHoursBetween json.RawMessage `json:"min_hours_between,omitempty"`
 	IsCritical      *bool           `json:"is_critical,omitempty"`
 	Remind          *bool           `json:"remind,omitempty"`
+	// EffectiveFrom: a schedule or dose change applies from "today" (default) or
+	// "tomorrow" (issue #57); earlier days keep the schedule they had.
+	EffectiveFrom string `json:"effective_from,omitempty"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        *bool    `json:"is_prn,omitempty"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
@@ -406,6 +414,11 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusBadRequest, "INVALID_INTERVAL", "min_hours_between must be null or between 0 and 72 hours")
 		return
 	}
+	from, err := effectiveFrom(req.EffectiveFrom, time.Now())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_EFFECTIVE_FROM", err.Error())
+		return
+	}
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -413,6 +426,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer tx.Rollback()
+	if err := ensureScheduleVersion(tx, medID); err != nil {
+		internalError(w, "failed to read the schedule history", err)
+		return
+	}
 
 	var before struct {
 		NameAr          string
@@ -641,11 +658,16 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		afterMap["min_hours_between"] = after.MinHoursBetween.Float64
 	}
 
+	if err := syncScheduleVersion(tx, medID, caregiver.ID, from); err != nil {
+		internalError(w, "failed to record the schedule", err)
+		return
+	}
 	auditPayload, _ := json.Marshal(map[string]any{
-		"action": "Updated prescription",
-		"id":     medID,
-		"before": beforeMap,
-		"after":  afterMap,
+		"action":         "Updated prescription",
+		"id":             medID,
+		"before":         beforeMap,
+		"after":          afterMap,
+		"effective_from": from,
 	})
 	if err := audit.Record(tx, caregiver.ID, "UPDATE_MEDICATION", "medication", medID, string(auditPayload)); err != nil {
 		internalError(w, "failed to record audit log", err)
@@ -681,6 +703,7 @@ type UpdateScheduleRequest struct {
 	DaysOfWeek     []string          `json:"days_of_week"`
 	FrequencySlots []string          `json:"frequency_slots,omitempty"`
 	SlotTimes      map[string]string `json:"slot_times"`
+	EffectiveFrom  string            `json:"effective_from,omitempty"` // "today" (default) or "tomorrow", issue #57
 }
 
 // UpdateSchedule allows Admins and Super Admins to configure the times and days of a medication
@@ -743,6 +766,11 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 	daysJSON, _ := json.Marshal(daysToSave)
 	slotsJSONToSave, _ := json.Marshal(slots)
 	timesJSON, _ := json.Marshal(normalizedTimes)
+	from, err := effectiveFrom(req.EffectiveFrom, time.Now())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_EFFECTIVE_FROM", err.Error())
+		return
+	}
 
 	tx, err := h.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -750,6 +778,10 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback()
+	if err := ensureScheduleVersion(tx, medID); err != nil {
+		internalError(w, "failed to read the schedule history", err)
+		return
+	}
 
 	_, err = tx.Exec(`
 		UPDATE medications
@@ -763,7 +795,11 @@ func (h *MedicationHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := audit.Record(tx, caregiver.ID, "UPDATE_SCHEDULE", "medication", medID, fmt.Sprintf("Updated schedule for %s", medID)); err != nil {
+	if err := syncScheduleVersion(tx, medID, caregiver.ID, from); err != nil {
+		internalError(w, "failed to record the schedule", err)
+		return
+	}
+	if err := audit.Record(tx, caregiver.ID, "UPDATE_SCHEDULE", "medication", medID, fmt.Sprintf("Updated schedule for %s: days %s, slots %s, times %s, from %s", medID, daysJSON, slotsJSONToSave, timesJSON, from)); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return
 	}
@@ -837,9 +873,18 @@ func (h *MedicationHandler) DeleteMedication(w http.ResponseWriter, r *http.Requ
 	}
 	defer tx.Rollback()
 
+	if err := ensureScheduleVersion(tx, medID); err != nil {
+		internalError(w, "failed to read the schedule history", err)
+		return
+	}
 	_, err = tx.Exec("UPDATE medications SET is_active = 0 WHERE id = ?", medID)
 	if err != nil {
 		internalError(w, "failed to deactivate medication", err)
+		return
+	}
+	// Stopped from today: earlier days keep their doses and gaps (issue #57).
+	if err := syncScheduleVersion(tx, medID, caregiver.ID, clinicalToday()); err != nil {
+		internalError(w, "failed to record the stop", err)
 		return
 	}
 
@@ -903,10 +948,16 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// 1. Fetch all active medications including days_of_week and slot_times
+	// 1. Every medication, stopped ones too: a past day shows the schedule it had
+	// then (issue #57). Which ones apply is decided per day below.
+	versions, err := loadScheduleVersions(h.DB)
+	if err != nil {
+		internalError(w, "failed to load the schedule history", err)
+		return
+	}
 	medRows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0), COALESCE(photo_urls, '[]')
-		FROM medications WHERE is_active = 1
+		FROM medications
 	`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch medications"}`, http.StatusInternalServerError)
@@ -1013,6 +1064,38 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		l.Events = events[l.ID]
 		logsMap[key] = l
 	}
+
+	// The schedule in effect on this date, plus any dose logged that day whatever
+	// the schedule said; a medicine with neither isn't shown.
+	kept := meds[:0]
+	for _, m := range meds {
+		var logged []string
+		for _, slot := range allSlotsInOrder {
+			key := m.ID + ":" + slot
+			if _, ok := logsMap[key]; ok || len(voidedMap[key]) > 0 {
+				logged = append(logged, slot)
+			}
+		}
+		v, ok := versionOn(versions[m.ID], dateStr)
+		if !ok && len(logged) == 0 {
+			continue
+		}
+		if ok {
+			m.FrequencySlots, m.DaysOfWeek, m.SlotTimes, m.Dosage = v.Slots, v.Days, v.Times, v.Dosage
+		} else {
+			m.FrequencySlots, m.DaysOfWeek, m.SlotTimes = nil, []string{}, normalizeSlotTimes(nil, logged)
+		}
+		for _, slot := range logged {
+			if !slices.Contains(m.FrequencySlots, slot) {
+				m.FrequencySlots = append(m.FrequencySlots, slot)
+				if m.SlotTimes[slot] == "" {
+					m.SlotTimes[slot] = defaultSlotTimes[slot]
+				}
+			}
+		}
+		kept = append(kept, m)
+	}
+	meds = kept
 
 	// 3. Last taken dose of each medication, on any date (interval lock, issue #7).
 	now := time.Now()
@@ -1241,16 +1324,25 @@ func (h *MedicationHandler) LogDose(w http.ResponseWriter, r *http.Request) {
 	}
 	var slots []string
 	_ = json.Unmarshal([]byte(slotsJSON), &slots)
-	if !slices.Contains(slots, req.Slot) {
-		writeJSONError(w, http.StatusBadRequest, "INVALID_SLOT", "medication is not scheduled for this slot")
-		return
-	}
-
 	var slotTimes map[string]string
 	if timesJSON.Valid {
 		_ = json.Unmarshal([]byte(timesJSON.String), &slotTimes)
 	}
-	minHours := intervalHours(nullableFloat(minHoursCol), slots, normalizeSlotTimes(slotTimes, slots))
+	slotTimes = normalizeSlotTimes(slotTimes, slots)
+	// The schedule that day decides (a change "from tomorrow" leaves today as it
+	// was, issue #57); the current one is accepted too.
+	versions, err := loadScheduleVersions(h.DB)
+	if err != nil {
+		internalError(w, "failed to load the schedule history", err)
+		return
+	}
+	if v, ok := versionOn(versions[req.MedicationID], req.ScheduledDate); ok && slices.Contains(v.Slots, req.Slot) {
+		slots, slotTimes = v.Slots, v.Times
+	} else if !slices.Contains(slots, req.Slot) {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_SLOT", "medication is not scheduled for this slot")
+		return
+	}
+	minHours := intervalHours(nullableFloat(minHoursCol), slots, slotTimes)
 
 	logID := uuid.New().String()
 
