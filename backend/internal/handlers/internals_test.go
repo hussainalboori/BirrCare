@@ -32,3 +32,7 @@ func DecideBackupForTest(now time.Time, loc *time.Location, sch BackupSchedule, 
 func NextBackupSlotForTest(now time.Time, loc *time.Location, times []string) time.Time {
 	return nextBackupSlot(now, loc, times)
 }
+
+// Emergency card internals (issue #56), for the external tests.
+var EmergencyTokenHashForTest = emergencyTokenHash
+var TotalDoseForTest = totalDose

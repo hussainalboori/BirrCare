@@ -17,13 +17,24 @@ export interface EmergencyCard {
     baseline_bp: string;
     notes: string;
   };
-  medications: { name_ar: string; name_en: string; dosage: string; slots: string[]; times?: string[]; blood_thinner: boolean }[];
+  medications: {
+    name_ar: string;
+    name_en: string;
+    dosage: string;
+    slots: string[];
+    times?: string[];
+    blood_thinner: boolean;
+    /** Issue #56: the latest taken/partial dose that wasn't cancelled. */
+    last_dose?: { at: string; status: "taken" | "partial"; hours_ago: number; vomited: boolean };
+  }[];
   last_bp: { systolic: number; diastolic: number; pulse?: number; recorded_at: string }[];
   last_sugar?: { value: string; recorded_at: string };
   last_spo2?: { value: string; recorded_at: string };
   last_temperature?: { value: string; recorded_at: string };
   last_alertness?: { value: string; recorded_at: string };
   last_fast?: { face: boolean; arm: boolean; speech: boolean; recorded_at: string; last_normal_at?: string };
+  last_insulin?: { at: string; units: number; plan_name_ar: string; plan_name_en: string; blood_sugar?: number };
+  prn_24h?: { name_ar: string; name_en: string; dosage: string; count: number; total_dose?: string; last_at: string }[];
   contacts: { emergency_number?: string; doctor_name?: string; doctor_phone?: string };
   family: { name: string; phone: string }[];
   generated_at: string;
@@ -58,6 +69,39 @@ function when(iso: string | undefined, tz: string, ar: boolean): string {
   } catch {
     return d.toLocaleString(ar ? "ar-SA-u-nu-latn-ca-gregory" : "en-GB", opts);
   }
+}
+
+/** "UTC+3" for the household zone at that moment, so a hospital elsewhere isn't misled. */
+function offset(iso: string, tz: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    const name = new Intl.DateTimeFormat("en-US", { timeZone: tz || "UTC", timeZoneName: "shortOffset" }).formatToParts(d).find((x) => x.type === "timeZoneName")?.value || "";
+    return name.replace(/^GMT/, "UTC") || "UTC";
+  } catch {
+    return "";
+  }
+}
+
+/** An absolute time with its UTC offset: "26 Oct, 23:30 UTC+3". */
+function whenAbs(iso: string | undefined, tz: string, ar: boolean): string {
+  if (!iso) return "";
+  return `${when(iso, tz, ar)} ${offset(iso, tz)}`.trim();
+}
+
+/** 8.25 → "8 h 15 min" / "8 س 15 د". */
+function ago(hours: number, ar: boolean): string {
+  const total = Math.max(0, Math.round(hours * 60));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (ar) return h ? `${h} س ${m} د` : `${m} د`;
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+
+function hoursSince(iso: string, generated: string): number {
+  const t = new Date(iso).getTime();
+  const g = new Date(generated).getTime();
+  return Number.isNaN(t) || Number.isNaN(g) ? 0 : (g - t) / 3_600_000;
 }
 
 function age(dob: string, now: Date): string {
@@ -96,6 +140,10 @@ th{font-size:14px;color:#475569} .num{font-weight:800;font-variant-numeric:tabul
 a.tel{display:inline-block;background:#0f172a;color:#fff;text-decoration:none;font-weight:800;border-radius:10px;padding:10px 14px;margin:4px 0;font-size:20px}
 a.sos{background:#b91c1c}
 .empty{color:#64748b;font-size:16px}
+.now{border:3px solid #b91c1c;border-radius:12px;padding:4px 12px 8px;margin:12px 0 4px}
+.now .row:last-of-type{border-bottom:0}
+.now .thinrow .v{color:#b91c1c;font-size:22px;font-weight:900}
+.flag{display:inline-block;background:#fef3c7;color:#78350f;font-weight:800;border-radius:6px;padding:0 6px;font-size:16px}
 @media print{.top{background:#fff;color:#b91c1c;border-bottom:3px solid #b91c1c}a.tel{background:#fff;color:#0f172a;border:2px solid #0f172a}body{font-size:14px}h1{font-size:24px}}
 `;
 
@@ -120,6 +168,46 @@ export function renderEmergencyCard(c: EmergencyCard, now = new Date()): string 
         })
         .join("")
     : '<p class="empty">No medicines recorded · لا توجد أدوية مسجلة</p>';
+
+  // Issue #56: "When did she last take her blood thinner?" first, before anything else.
+  const flags = (d: { status: string; vomited: boolean }, ar: boolean) =>
+    [d.status === "partial" && (ar ? "جزئية" : "partial"), d.vomited && (ar ? "استفرغتها" : "vomited")].filter(Boolean).map((x) => ` <span class="flag">${esc(x)}</span>`).join("");
+  const thinners = c.medications
+    .filter((m) => m.blood_thinner)
+    .map((m) => {
+      const d = m.last_dose;
+      const en = d
+        ? `${esc(m.name_en)} <span class="num">${esc(m.dosage)}</span> — last dose <bdi class="num">${esc(whenAbs(d.at, tz, false))}</bdi> (${esc(ago(d.hours_ago, false))} ago)${flags(d, false)}`
+        : `${esc(m.name_en)} <span class="num">${esc(m.dosage)}</span> — no dose recorded in this app`;
+      const ar = d
+        ? `${esc(m.name_ar)} <span class="num">${esc(m.dosage)}</span> — آخر جرعة <bdi class="num">${esc(whenAbs(d.at, tz, true))}</bdi> (قبل ${esc(ago(d.hours_ago, true))})${flags(d, true)}`
+        : `${esc(m.name_ar)} <span class="num">${esc(m.dosage)}</span> — لا توجد جرعة مسجلة في التطبيق`;
+      return row("Blood thinner", en, "مميّع للدم", ar, "thinrow");
+    })
+    .join("");
+  const li = c.last_insulin;
+  const insulin = li
+    ? row(
+        "Last insulin",
+        `<span class="num">${esc(li.units)} u</span> ${esc(li.plan_name_en)} — <bdi class="num">${esc(whenAbs(li.at, tz, false))}</bdi> (${esc(ago(hoursSince(li.at, c.generated_at), false))} ago)${li.blood_sugar != null ? ` · sugar <span class="num">${esc(li.blood_sugar)} mmol/L</span>` : ""}`,
+        "آخر إنسولين",
+        `<span class="num">${esc(li.units)} u</span> ${esc(li.plan_name_ar)} — <bdi class="num">${esc(whenAbs(li.at, tz, true))}</bdi> (قبل ${esc(ago(hoursSince(li.at, c.generated_at), true))})${li.blood_sugar != null ? ` · السكر <span class="num">${esc(li.blood_sugar)} mmol/L</span>` : ""}`,
+      )
+    : "";
+  const prn = (c.prn_24h || [])
+    .map((x) =>
+      row(
+        "As-needed, last 24 h",
+        `${esc(x.name_en)} <span class="num">${esc(x.dosage)}</span> ×<span class="num">${esc(x.count)}</span>${x.total_dose ? ` = <span class="num">${esc(x.total_dose)}</span>` : ""} — last <bdi class="num">${esc(whenAbs(x.last_at, tz, false))}</bdi>`,
+        "عند الحاجة، آخر 24 ساعة",
+        `${esc(x.name_ar)} <span class="num">${esc(x.dosage)}</span> ×<span class="num">${esc(x.count)}</span>${x.total_dose ? ` = <span class="num">${esc(x.total_dose)}</span>` : ""} — آخرها <bdi class="num">${esc(whenAbs(x.last_at, tz, true))}</bdi>`,
+      ),
+    )
+    .join("");
+  const recent =
+    thinners || insulin || prn
+      ? `<section class="now" data-testid="recent-doses">${thinners}${insulin}${prn}<p class="empty">As of · حتى <bdi class="num">${esc(whenAbs(c.generated_at, tz, false))}</bdi></p></section>`
+      : "";
 
   const bp = c.last_bp.length
     ? `<table><tr><th>BP mmHg · الضغط</th><th>Pulse · النبض</th><th>Time · الوقت</th></tr>${c.last_bp
@@ -150,6 +238,7 @@ export function renderEmergencyCard(c: EmergencyCard, now = new Date()): string 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Emergency medical card</title><style>${STYLE}</style></head><body>
 <div class="top"><span>EMERGENCY MEDICAL CARD</span><span dir="rtl" lang="ar">بطاقة طبية للطوارئ</span></div>
 <main>
+${recent}
 <h1>${esc(p.name || "Patient · المريضة")}</h1>
 <p class="sub">${years ? `Age ${esc(years)} · العمر ${esc(years)}` : ""}${p.dob ? ` · DOB <span class="num">${esc(p.dob)}</span>` : ""}${p.blood_type ? ` · Blood type · فصيلة الدم <span class="num">${esc(p.blood_type)}</span>` : ""}</p>
 <span class="asof">As of · حتى <span class="num">${esc(asOfEn)}</span></span>

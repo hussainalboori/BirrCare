@@ -69,3 +69,51 @@ describe("emergency card HTML", () => {
     expect(m).toContain("غير صالح");
   });
 });
+
+describe("emergency card: recent doses first (issue #56)", () => {
+  const withDoses: EmergencyCard = {
+    ...card,
+    medications: [
+      { ...card.medications[0], last_dose: { at: "2026-10-20T20:30:00Z", status: "taken", hours_ago: 8.25, vomited: false } },
+      { name_ar: "أتورفاستاتين", name_en: "Atorvastatin", dosage: "20 mg", slots: ["bedtime"], blood_thinner: false },
+    ],
+    last_insulin: { at: "2026-10-21T08:10:00Z", units: 4, plan_name_ar: "نوفورابيد", plan_name_en: "NovoRapid", blood_sugar: 12.5 },
+    prn_24h: [{ name_ar: "باراسيتامول", name_en: "Paracetamol", dosage: "1 g", count: 3, total_dose: "3 g", last_at: "2026-10-21T07:10:00Z" }],
+    generated_at: "2026-10-21T04:45:00Z",
+  };
+  const html = renderEmergencyCard(withDoses, new Date("2026-10-21T05:00:00Z"));
+
+  it("puts the blood thinner's last dose before anything else, with the household offset", () => {
+    const recent = html.indexOf('data-testid="recent-doses"');
+    expect(recent).toBeGreaterThan(-1);
+    expect(recent).toBeLessThan(html.indexOf("<h1>"));
+    expect(html).toContain("Blood thinner");
+    expect(html).toContain("مميّع للدم");
+    // 20:30 UTC is 23:30 in Riyadh.
+    expect(html).toMatch(/last dose <bdi class="num">20 Oct, 23:30 UTC\+3<\/bdi> \(8 h 15 min ago\)/);
+    expect(html).toContain("(قبل 8 س 15 د)");
+  });
+
+  it("shows the last insulin and as-needed doses of the last 24 h", () => {
+    expect(html).toContain("Last insulin");
+    expect(html).toContain("4 u</span> NovoRapid");
+    expect(html).toMatch(/Paracetamol <span class="num">1 g<\/span> ×<span class="num">3<\/span> = <span class="num">3 g<\/span>/);
+  });
+
+  it("flags a partial or vomited dose, and says when no dose is recorded", () => {
+    const partial = renderEmergencyCard({
+      ...withDoses,
+      medications: [{ ...card.medications[0], last_dose: { at: "2026-10-21T04:00:00Z", status: "partial", hours_ago: 0.75, vomited: true } }],
+    });
+    expect(partial).toContain('<span class="flag">partial</span>');
+    expect(partial).toContain('<span class="flag">vomited</span>');
+    expect(partial).toContain('<span class="flag">استفرغتها</span>');
+    const none = renderEmergencyCard({ ...withDoses, medications: [card.medications[0]], last_insulin: undefined, prn_24h: [] });
+    expect(none).toContain("no dose recorded in this app");
+  });
+
+  it("no blood thinner, insulin or as-needed doses: no block", () => {
+    const plain = renderEmergencyCard({ ...card, medications: [withDoses.medications[1]] });
+    expect(plain).not.toContain("recent-doses");
+  });
+});

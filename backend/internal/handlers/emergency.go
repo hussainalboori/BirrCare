@@ -7,8 +7,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +59,36 @@ type EmergencyMed struct {
 	Slots    []string `json:"slots"`
 	Times    []string `json:"times,omitempty"`
 	Critical bool     `json:"blood_thinner"` // anticoagulant / antiplatelet
+	// LastDose (issue #56): the latest taken or partial dose that wasn't cancelled.
+	// "When did she last take her blood thinner?" decides stroke treatment.
+	LastDose *EmergencyDose `json:"last_dose,omitempty"`
+	id       string
+}
+
+type EmergencyDose struct {
+	At       string  `json:"at"`        // RFC3339
+	Status   string  `json:"status"`    // taken | partial
+	HoursAgo float64 `json:"hours_ago"` // at generated_at
+	Vomited  bool    `json:"vomited"`
+}
+
+// EmergencyInsulin is the last insulin actually injected (issue #56).
+type EmergencyInsulin struct {
+	At         string   `json:"at"`
+	Units      float64  `json:"units"`
+	PlanNameAr string   `json:"plan_name_ar"`
+	PlanNameEn string   `json:"plan_name_en"`
+	BloodSugar *float64 `json:"blood_sugar,omitempty"`
+}
+
+// EmergencyPRN sums one as-needed medicine over the last 24 hours (issue #56).
+type EmergencyPRN struct {
+	NameAr    string `json:"name_ar"`
+	NameEn    string `json:"name_en"`
+	Dosage    string `json:"dosage"`
+	Count     int    `json:"count"`
+	TotalDose string `json:"total_dose,omitempty"` // "3 g" when the dosage is a plain amount
+	LastAt    string `json:"last_at"`
 }
 
 type EmergencyBP struct {
@@ -74,6 +107,8 @@ type EmergencyCard struct {
 	LastTemp    *EmergencyValue   `json:"last_temperature,omitempty"`
 	LastAlert   *EmergencyValue   `json:"last_alertness,omitempty"`
 	LastFAST    *EmergencyFAST    `json:"last_fast,omitempty"`
+	LastInsulin *EmergencyInsulin `json:"last_insulin,omitempty"`
+	PRN24h      []EmergencyPRN    `json:"prn_24h"`
 	Contacts    Contacts          `json:"contacts"`
 	Family      []EmergencyFamily `json:"family"`
 	GeneratedAt string            `json:"generated_at"`
@@ -112,10 +147,11 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC().Truncate(time.Second)
 	card := &EmergencyCard{Patient: p, Contacts: h.Contacts, Medications: []EmergencyMed{}, LastBP: []EmergencyBP{}, Family: []EmergencyFamily{},
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339), TimeZone: ClinicalLocation().String()}
+		PRN24h: []EmergencyPRN{}, GeneratedAt: now.Format(time.RFC3339), TimeZone: ClinicalLocation().String()}
 
-	rows, err := h.DB.Query(`SELECT name_ar, name_en, dosage, frequency_slots, COALESCE(slot_times, ''), COALESCE(is_critical, 0)
+	rows, err := h.DB.Query(`SELECT id, name_ar, name_en, dosage, frequency_slots, COALESCE(slot_times, ''), COALESCE(is_critical, 0)
 		FROM medications WHERE is_active = 1 ORDER BY is_critical DESC, name_en`)
 	if err != nil {
 		return nil, err
@@ -123,7 +159,7 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	for rows.Next() {
 		var m EmergencyMed
 		var slots, times string
-		if err := rows.Scan(&m.NameAr, &m.NameEn, &m.Dosage, &slots, &times, &m.Critical); err != nil {
+		if err := rows.Scan(&m.id, &m.NameAr, &m.NameEn, &m.Dosage, &slots, &times, &m.Critical); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -139,6 +175,9 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 		card.Medications = append(card.Medications, m)
 	}
 	rows.Close()
+	if err := h.addRecentDoses(card, now); err != nil {
+		return nil, err
+	}
 
 	// Corrected readings (issue #15) are replaced by their correction.
 	bp, err := h.DB.Query(`SELECT systolic, diastolic, pulse, recorded_at FROM vitals_logs
@@ -207,6 +246,84 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	}
 	fam.Close()
 	return card, nil
+}
+
+// addRecentDoses fills each medicine's last dose, the last insulin and the
+// as-needed doses of the last 24 hours (issue #56). Cancelled entries never count.
+func (h *EmergencyHandler) addRecentDoses(card *EmergencyCard, now time.Time) error {
+	for i := range card.Medications {
+		m := &card.Medications[i]
+		var at, status string
+		var vomited bool
+		err := h.DB.QueryRow(`SELECT l.taken_at, l.status,
+				EXISTS (SELECT 1 FROM medication_log_events e WHERE e.log_id = l.id AND e.type = 'vomited')
+			FROM medication_logs l
+			WHERE l.medication_id = ? AND l.voided_at IS NULL AND l.status IN ('taken', 'partial')
+			ORDER BY datetime(l.taken_at) DESC LIMIT 1`, m.id).Scan(&at, &status, &vomited)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		d := &EmergencyDose{At: sqliteToRFC3339(at), Status: status, Vomited: vomited}
+		if t, err := time.Parse(time.RFC3339, d.At); err == nil {
+			d.HoursAgo = math.Round(now.Sub(t).Hours()*10) / 10
+		}
+		m.LastDose = d
+	}
+
+	var ins EmergencyInsulin
+	var sugar sql.NullFloat64
+	var at string
+	err := h.DB.QueryRow(`SELECT l.given_at, l.units, p.name_ar, p.name_en, l.blood_sugar
+		FROM insulin_logs l JOIN insulin_plans p ON p.id = l.plan_id
+		WHERE l.status = 'given' AND l.voided_at IS NULL
+		ORDER BY datetime(l.given_at) DESC LIMIT 1`).Scan(&at, &ins.Units, &ins.PlanNameAr, &ins.PlanNameEn, &sugar)
+	if err == nil {
+		ins.At = sqliteToRFC3339(at)
+		if sugar.Valid {
+			ins.BloodSugar = &sugar.Float64
+		}
+		card.LastInsulin = &ins
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	rows, err := h.DB.Query(`SELECT m.name_ar, m.name_en, COALESCE(MAX(l.dosage_snapshot), m.dosage), COUNT(*), MAX(datetime(l.given_at))
+		FROM prn_logs l JOIN medications m ON m.id = l.medication_id
+		WHERE l.voided_at IS NULL AND datetime(l.given_at) >= datetime(?)
+		GROUP BY l.medication_id ORDER BY MAX(datetime(l.given_at)) DESC`, now.Add(-24*time.Hour).Format(sqliteTimeLayout))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p EmergencyPRN
+		var last string
+		if err := rows.Scan(&p.NameAr, &p.NameEn, &p.Dosage, &p.Count, &last); err != nil {
+			return err
+		}
+		p.LastAt = sqliteToRFC3339(last)
+		p.TotalDose = totalDose(p.Dosage, p.Count)
+		card.PRN24h = append(card.PRN24h, p)
+	}
+	return rows.Err()
+}
+
+var plainDose = regexp.MustCompile(`^\s*(\d+(?:\.\d+)?)\s*([A-Za-zµ]+)\s*$`)
+
+// totalDose multiplies a plain dosage ("500 mg") by the count ("1500 mg"); for
+// anything else ("1 tablet twice") it returns "" rather than guess.
+func totalDose(dosage string, count int) string {
+	m := plainDose.FindStringSubmatch(dosage)
+	if m == nil {
+		return ""
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatFloat(v*float64(count), 'f', -1, 64) + " " + m[2]
 }
 
 func emergencyTokenHash(token string) string {

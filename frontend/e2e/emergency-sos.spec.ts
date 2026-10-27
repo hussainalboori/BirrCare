@@ -36,3 +36,39 @@ for (const locale of ["ar", "en"] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }
+
+// Issue #56: on the card itself, the blood thinner's last dose is the first thing
+// a paramedic sees on a phone, and it survives printing. The card is rendered by
+// the same function the /emergency/[token] route uses.
+test("the blood-thinner last-dose line is the first content block at 375 px, on screen and in print", async ({ page }) => {
+  const { renderEmergencyCard } = await import("../src/lib/emergencyCard");
+  const html = renderEmergencyCard({
+    patient: { name: "Amina", dob: "1950-03-02", diagnosis_ar: "", diagnosis_en: "Ischaemic stroke", stroke_date: "", allergies_ar: "", allergies_en: "", blood_type: "", baseline_bp: "", notes: "" },
+    medications: [
+      { name_ar: "أبيكسابان", name_en: "Apixaban", dosage: "5 mg", slots: ["morning", "bedtime"], blood_thinner: true, last_dose: { at: "2026-10-20T20:30:00Z", status: "taken", hours_ago: 8.25, vomited: false } },
+    ],
+    last_bp: [],
+    last_insulin: { at: "2026-10-21T02:45:00Z", units: 4, plan_name_ar: "نوفورابيد", plan_name_en: "NovoRapid" },
+    prn_24h: [{ name_ar: "باراسيتامول", name_en: "Paracetamol", dosage: "1 g", count: 3, total_dose: "3 g", last_at: "2026-10-21T03:00:00Z" }],
+    contacts: { emergency_number: "997" },
+    family: [],
+    generated_at: "2026-10-21T04:45:00Z",
+    time_zone: "Asia/Riyadh",
+  });
+  await page.setViewportSize({ width: 375, height: 667 });
+  for (const media of ["screen", "print"] as const) {
+    await page.emulateMedia({ media });
+    await page.setContent(html);
+    const first = page.locator("main > *").first();
+    await expect(first).toHaveAttribute("data-testid", "recent-doses");
+    const thin = first.locator(".thinrow");
+    await expect(thin).toContainText("Blood thinner");
+    await expect(thin).toContainText("Apixaban 5 mg — last dose 20 Oct, 23:30 UTC+3 (8 h 15 min ago)");
+    await expect(thin).toContainText("مميّع للدم");
+    await expect(thin).toBeInViewport({ ratio: 1 });
+    const size = await thin.locator(".en .v").evaluate((el) => ({ px: parseFloat(getComputedStyle(el).fontSize), weight: Number(getComputedStyle(el).fontWeight) }));
+    expect(size.px, `${media} font size`).toBeGreaterThanOrEqual(14);
+    expect(size.weight, `${media} bold`).toBeGreaterThanOrEqual(700);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+});

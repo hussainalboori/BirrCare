@@ -481,7 +481,9 @@ The recipient accepts the duty assignment. If not accepted within 15 minutes, an
 
 ### `GET /api/v1/emergency/{token}` (Public)
 Publicly accessible without login (configured with Cloudflare Access Bypass). Designed for emergency paramedics scanning a fridge QR code.
-- Lists active medications (blood thinners highlighted).
+- Lists active medications (blood thinners highlighted). Each carries `last_dose: {at, status, hours_ago, vomited}` from its latest taken or partial dose that wasn't cancelled (issue #56).
+- `last_insulin: {at, units, plan_name_ar, plan_name_en, blood_sugar}` (the last insulin actually given) and `prn_24h: [{name_ar, name_en, dosage, count, total_dose, last_at}]` (as-needed doses in the last 24 hours; `total_dose` only when the dosage is a plain amount such as `1 g`).
+- The card page shows these first, the blood thinner's last dose in bold, with times in the household zone and their UTC offset, and its "as of" time.
 - Shows the last 3 blood pressure readings, blood sugar, and alertness.
 - Shows the last F.A.S.T. stroke assessment with "last seen normal" time.
 - Displays emergency contacts and doctor telephone numbers.
