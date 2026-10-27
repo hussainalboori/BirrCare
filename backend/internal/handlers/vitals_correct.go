@@ -193,7 +193,7 @@ func (h *VitalsHandler) CorrectVitals(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// The corrected reading raises its own alerts if it is still a crisis, low, etc.
-	newAlert, newKind, err := raiseVitalAlerts(tx, newID, me.ID, bpStatus, &req.LogVitalsRequest, alertness)
+	raised, err := raiseVitalAlerts(tx, newID, me.ID, bpStatus, &req.LogVitalsRequest, alertness)
 	if err != nil {
 		fail("failed to record alert", err)
 		return
@@ -216,10 +216,10 @@ func (h *VitalsHandler) CorrectVitals(w http.ResponseWriter, r *http.Request) {
 		"systolic": req.Systolic, "diastolic": req.Diastolic, "alert_id": correctionAlert,
 	}
 	switch {
-	case newAlert != "":
-		payload["alert_id"] = newAlert
-		h.Broker.BroadcastAlert(newAlert, "VITAL_CORRECTED", actorOf(me), payload)
-		h.Push.NotifyAsync(newAlert, newKind, me.ID)
+	case raised.ID != "":
+		payload["alert_id"] = raised.ID
+		h.Broker.BroadcastAlert(raised.ID, "VITAL_CORRECTED", actorOf(me), payload)
+		pushRaised(h.Push, raised, me.ID)
 	case correctionAlert != "":
 		h.Broker.BroadcastAlert(correctionAlert, "VITAL_CORRECTED", actorOf(me), payload)
 		h.Push.NotifyAsync(correctionAlert, "correction", me.ID)

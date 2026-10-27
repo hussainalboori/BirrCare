@@ -36,13 +36,15 @@ func SetBPLowThresholds(t BPLowThresholds) { bpLow.Store(&t) }
 
 // OxygenFeverThresholds (issue #22): SpO2 <= SpO2Warn is LOW (re-check, call the
 // doctor), <= SpO2Critical is CRITICAL (alert); temperature >= FeverC is FEVER.
+// FeverHighC (issue #54) raises the red fever_high alert for everyone.
 type OxygenFeverThresholds struct {
 	SpO2Warn     int     `json:"spo2_warn"`
 	SpO2Critical int     `json:"spo2_critical"`
 	FeverC       float64 `json:"fever_c"`
+	FeverHighC   float64 `json:"fever_high_c"`
 }
 
-var defaultOxygenFever = OxygenFeverThresholds{SpO2Warn: 92, SpO2Critical: 88, FeverC: 38.0}
+var defaultOxygenFever = OxygenFeverThresholds{SpO2Warn: 92, SpO2Critical: 88, FeverC: 38.0, FeverHighC: 39.0}
 var oxygenFever atomic.Pointer[OxygenFeverThresholds]
 
 func currentOxygenFever() OxygenFeverThresholds {
@@ -52,8 +54,14 @@ func currentOxygenFever() OxygenFeverThresholds {
 	return defaultOxygenFever
 }
 
-// SetOxygenFeverThresholds replaces the in-memory thresholds (startup, admin change, tests).
-func SetOxygenFeverThresholds(t OxygenFeverThresholds) { oxygenFever.Store(&t) }
+// SetOxygenFeverThresholds replaces the in-memory thresholds (startup, admin change,
+// tests). A missing high-fever threshold falls back to one degree above fever.
+func SetOxygenFeverThresholds(t OxygenFeverThresholds) {
+	if t.FeverHighC <= t.FeverC {
+		t.FeverHighC = math.Max(defaultOxygenFever.FeverHighC, t.FeverC+1.0)
+	}
+	oxygenFever.Store(&t)
+}
 
 var defaultRepositionInterval = 120 // 2 hours default
 var repositionInterval atomic.Int64
@@ -110,10 +118,12 @@ func LoadClinicalSettings(db *sql.DB) {
 			}
 		}
 	}
-	var fv string
-	if db.QueryRow(`SELECT value FROM app_settings WHERE key = 'fever_c'`).Scan(&fv) == nil {
-		if f, err := strconv.ParseFloat(fv, 64); err == nil {
-			o.FeverC = f
+	for key, dst := range map[string]*float64{"fever_c": &o.FeverC, "fever_high_c": &o.FeverHighC} {
+		var v string
+		if db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, key).Scan(&v) == nil {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*dst = f
+			}
 		}
 	}
 	SetOxygenFeverThresholds(o)
@@ -163,13 +173,14 @@ type clinicalSettingsRequest struct {
 	SpO2Warn                  *int     `json:"spo2_warn"`
 	SpO2Critical              *int     `json:"spo2_critical"`
 	FeverC                    *float64 `json:"fever_c"`
+	FeverHighC                *float64 `json:"fever_high_c"`
 	RepositionIntervalMinutes *int     `json:"reposition_interval_minutes"`
 	FluidDailyTargetML        *int     `json:"fluid_daily_target_ml"`
 }
 
 // Put sets the doctor's thresholds (admin). Fields left out keep their value.
 // Low BP: systolic 70-120, diastolic 40-80. SpO2: critical 80-94, warning above
-// it and at most 96. Fever: 37.5-39.0 C.
+// it and at most 96. Fever: 37.5-39.0 C; high fever above it, 38.5-40.0 C.
 func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	me := auth.GetCaregiverFromContext(r.Context())
 	if !auth.CanManageMedications(me) {
@@ -197,6 +208,9 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	if req.FeverC != nil {
 		o.FeverC = math.Round(*req.FeverC*10) / 10
 	}
+	if req.FeverHighC != nil {
+		o.FeverHighC = math.Round(*req.FeverHighC*10) / 10
+	}
 	if bp.LowSystolic < 70 || bp.LowSystolic > 120 || bp.LowDiastolic < 40 || bp.LowDiastolic > 80 {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "bp_low_systolic must be 70-120 and bp_low_diastolic 40-80")
 		return
@@ -207,6 +221,10 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	if o.FeverC < 37.5 || o.FeverC > 39.0 {
 		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fever_c must be 37.5-39.0")
+		return
+	}
+	if o.FeverHighC < 38.5 || o.FeverHighC > 40.0 || o.FeverHighC <= o.FeverC {
+		writeJSONError(w, http.StatusBadRequest, "INVALID_THRESHOLDS", "fever_high_c must be 38.5-40.0 and above fever_c")
 		return
 	}
 	repInterval := currentRepositionInterval()
@@ -233,15 +251,15 @@ func (h *ClinicalSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES
-		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?), ('reposition_interval_minutes', ?), ('fluid_daily_target_ml', ?)
+		('bp_low_systolic', ?), ('bp_low_diastolic', ?), ('spo2_warn', ?), ('spo2_critical', ?), ('fever_c', ?), ('fever_high_c', ?), ('reposition_interval_minutes', ?), ('fluid_daily_target_ml', ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		strconv.Itoa(bp.LowSystolic), strconv.Itoa(bp.LowDiastolic), strconv.Itoa(o.SpO2Warn), strconv.Itoa(o.SpO2Critical),
-		strconv.FormatFloat(o.FeverC, 'f', 1, 64), strconv.Itoa(repInterval), strconv.Itoa(fluidTarget)); err != nil {
+		strconv.FormatFloat(o.FeverC, 'f', 1, 64), strconv.FormatFloat(o.FeverHighC, 'f', 1, 64), strconv.Itoa(repInterval), strconv.Itoa(fluidTarget)); err != nil {
 		internalError(w, "failed to save thresholds", err)
 		return
 	}
 	if err := audit.Record(tx, me.ID, "CLINICAL_SETTINGS", "app_settings", "thresholds",
-		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C; reposition %d min; fluid target %d ml", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, repInterval, fluidTarget)); err != nil {
+		fmt.Sprintf("Low BP %d/%d; SpO2 warn <=%d, critical <=%d; fever >=%.1f C, high >=%.1f C; reposition %d min; fluid target %d ml", bp.LowSystolic, bp.LowDiastolic, o.SpO2Warn, o.SpO2Critical, o.FeverC, o.FeverHighC, repInterval, fluidTarget)); err != nil {
 		internalError(w, "failed to record audit log", err)
 		return
 	}

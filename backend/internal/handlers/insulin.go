@@ -15,6 +15,7 @@ import (
 	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
+	"birrcare/backend/internal/push"
 	"birrcare/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -49,6 +50,7 @@ const (
 type InsulinHandler struct {
 	DB     *sql.DB
 	Broker *sse.Broker
+	Push   *push.Notifier
 }
 
 type ScaleRow struct {
@@ -683,6 +685,21 @@ func (h *InsulinHandler) LogInsulin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A low sugar found at an insulin check (usually a held dose) alerts everyone
+	// like one logged on the vitals page (issue #54).
+	var raised raisedAlert
+	if req.BloodSugar != nil && *req.BloodSugar < hypoThreshold {
+		aid, err := recordAlert(tx, "sugar_low", *vitalID, caregiver.ID, map[string]interface{}{
+			"blood_sugar": *req.BloodSugar, "insulin_status": req.Status, "name_ar": plan.NameAr, "name_en": plan.NameEn,
+		})
+		if err != nil {
+			tx.Rollback()
+			internalError(w, "failed to record alert", err)
+			return
+		}
+		raised = raisedAlert{ID: aid, Kind: "sugar_low"}
+	}
+
 	details := fmt.Sprintf("%s %s: %.1f units (plan said %s), sugar %s", plan.NameEn, req.Status, req.Units, fmtUnits(expected), fmtSugar(req.BloodSugar))
 	if req.OverrideInterval {
 		details += " [INTERVAL OVERRIDE]"
@@ -713,7 +730,13 @@ func (h *InsulinHandler) LogInsulin(w http.ResponseWriter, r *http.Request) {
 		"given_at":     now.Format(time.RFC3339),
 		"reason":       req.Reason,
 	}
-	h.Broker.Broadcast("INSULIN_LOGGED", actorOf(caregiver), payload)
+	if raised.ID != "" {
+		payload["alert_id"] = raised.ID
+		h.Broker.BroadcastAlert(raised.ID, "INSULIN_LOGGED", actorOf(caregiver), payload)
+		pushRaised(h.Push, raised, caregiver.ID)
+	} else {
+		h.Broker.Broadcast("INSULIN_LOGGED", actorOf(caregiver), payload)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

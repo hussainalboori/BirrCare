@@ -307,7 +307,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to log vitals", err)
 		return
 	}
-	alertID, alertKind, err := raiseVitalAlerts(tx, id, caregiver.ID, bpStatus, &req, alertness)
+	raised, err := raiseVitalAlerts(tx, id, caregiver.ID, bpStatus, &req, alertness)
 	if err != nil {
 		tx.Rollback()
 		internalError(w, "failed to record alert", err)
@@ -350,7 +350,7 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 	// Broadcast SSE event (a crisis carries its alert id, also as the SSE "id:").
 	vitalPayload := map[string]interface{}{
 		"id":              id,
-		"alert_id":        alertID,
+		"alert_id":        raised.ID,
 		"recorded_at":     now.Format(time.RFC3339),
 		"vital_type":      vitalType,
 		"systolic":        req.Systolic,
@@ -369,9 +369,9 @@ func (h *VitalsHandler) LogVitals(w http.ResponseWriter, r *http.Request) {
 		"caregiver_name":  caregiver.Name,
 		"avatar_color":    caregiver.AvatarColor,
 	}
-	if alertID != "" {
-		h.Broker.BroadcastAlert(alertID, "VITAL_LOGGED", actorOf(caregiver), vitalPayload)
-		h.Push.NotifyAsync(alertID, alertKind, caregiver.ID)
+	if raised.ID != "" {
+		h.Broker.BroadcastAlert(raised.ID, "VITAL_LOGGED", actorOf(caregiver), vitalPayload)
+		pushRaised(h.Push, raised, caregiver.ID)
 	} else {
 		h.Broker.Broadcast("VITAL_LOGGED", actorOf(caregiver), vitalPayload)
 	}
@@ -481,20 +481,27 @@ func validateMeasurements(req *LogVitalsRequest) (code, msg string) {
 }
 
 // raiseVitalAlerts records the alerts a reading triggers, most urgent first, in the
-// caller's transaction (issues #12, #13). The first one is pushed and carried by the
-// SSE event.
-func raiseVitalAlerts(tx *sql.Tx, vitalID, caregiverID, bpStatus string, req *LogVitalsRequest, alertness *string) (string, string, error) {
+// caller's transaction (issues #12, #13, #54). The first one is pushed and carried
+// by the SSE event. Emergencies go to everyone; a fever or a very high sugar goes
+// to whoever is on duty (everyone if nobody is assigned).
+func raiseVitalAlerts(tx *sql.Tx, vitalID, caregiverID, bpStatus string, req *LogVitalsRequest, alertness *string) (raisedAlert, error) {
 	type pending struct {
 		kind    string
 		payload map[string]interface{}
+		onDuty  bool
 	}
+	t := currentOxygenFever()
 	var toRaise []pending
 	if req.FastResult != nil && req.FastResult.Positive() {
-		toRaise = append(toRaise, pending{"fast_positive", map[string]interface{}{"face": req.FastResult.Face, "arm": req.FastResult.Arm, "speech": req.FastResult.Speech}})
+		toRaise = append(toRaise, pending{"fast_positive", map[string]interface{}{"face": req.FastResult.Face, "arm": req.FastResult.Arm, "speech": req.FastResult.Speech}, false})
 	}
 	switch bpStatus {
 	case "CRISIS":
-		toRaise = append(toRaise, pending{"bp_crisis", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
+		toRaise = append(toRaise, pending{"bp_crisis", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}, false})
+	}
+	sugar := CalculateSugarStatus(req.BloodSugar)
+	if sugar == "LOW" {
+		toRaise = append(toRaise, pending{"sugar_low", map[string]interface{}{"blood_sugar": *req.BloodSugar}, false})
 	}
 	if CalculateSpO2Status(req.SpO2) == "CRITICAL" {
 		p := map[string]interface{}{"spo2": *req.SpO2}
@@ -504,26 +511,49 @@ func raiseVitalAlerts(tx *sql.Tx, vitalID, caregiverID, bpStatus string, req *Lo
 		if req.TemperatureC != nil {
 			p["temperature_c"] = *req.TemperatureC
 		}
-		toRaise = append(toRaise, pending{"spo2_low", p})
+		toRaise = append(toRaise, pending{"spo2_low", p, false})
+	}
+	if req.TemperatureC != nil && *req.TemperatureC >= t.FeverC {
+		p := map[string]interface{}{"temperature_c": *req.TemperatureC}
+		if req.SpO2 != nil {
+			p["spo2"] = *req.SpO2
+		}
+		// A high fever, or a fever with low oxygen (possible aspiration), is red.
+		if *req.TemperatureC >= t.FeverHighC || (req.SpO2 != nil && *req.SpO2 <= t.SpO2Warn) {
+			toRaise = append(toRaise, pending{"fever_high", p, false})
+		} else {
+			toRaise = append(toRaise, pending{"fever", p, true})
+		}
 	}
 	switch bpStatus {
 	case "LOW":
-		toRaise = append(toRaise, pending{"bp_low", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}})
+		toRaise = append(toRaise, pending{"bp_low", map[string]interface{}{"systolic": *req.Systolic, "diastolic": *req.Diastolic}, false})
 	}
 	if alertness != nil && (*alertness == "confused" || *alertness == "drowsy") {
-		toRaise = append(toRaise, pending{"alertness", map[string]interface{}{"level": *alertness}})
+		toRaise = append(toRaise, pending{"alertness", map[string]interface{}{"level": *alertness}, false})
 	}
-	var firstID, firstKind string
+	if sugar == "VERY_HIGH" {
+		toRaise = append(toRaise, pending{"sugar_very_high", map[string]interface{}{"blood_sugar": *req.BloodSugar}, true})
+	}
+	var first raisedAlert
+	onDuty, lookedUp := "", false
 	for _, a := range toRaise {
-		aid, err := recordAlert(tx, a.kind, vitalID, caregiverID, a.payload)
-		if err != nil {
-			return "", "", err
+		target := ""
+		if a.onDuty {
+			if !lookedUp {
+				onDuty, lookedUp = onDutyCaregiverID(tx), true
+			}
+			target = onDuty
 		}
-		if firstID == "" {
-			firstID, firstKind = aid, a.kind
+		aid, err := recordAlertFor(tx, a.kind, vitalID, caregiverID, target, a.payload)
+		if err != nil {
+			return raisedAlert{}, err
+		}
+		if first.ID == "" {
+			first = raisedAlert{ID: aid, Kind: a.kind, Target: target}
 		}
 	}
-	return firstID, firstKind, nil
+	return first, nil
 }
 
 func nullIfEmpty(s string) interface{} {

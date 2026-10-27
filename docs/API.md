@@ -336,7 +336,8 @@ Logs stroke vitals and clinical assessments:
 }
 ```
 - **Stroke F.A.S.T. Assessment:** Send `vital_type: "fast"` with `fast_result: {"face": false, "arm": true, "speech": false}`.
-- **Alert Triggers:** Blood pressure crisis (≥180/120 mmHg), low SpO₂ (≤88%), confusion, drowsiness, or any positive F.A.S.T. indicator automatically notifies all siblings immediately.
+- **Alert Triggers:** Blood pressure crisis (≥180/120 mmHg), low blood sugar (<3.9 mmol/L, `sugar_low`), low SpO₂ (≤88%), high fever (≥ `fever_high_c`, or ≥ `fever_c` with SpO₂ ≤ `spo2_warn`: `fever_high`), low blood pressure, confusion, drowsiness, or any positive F.A.S.T. indicator automatically notifies all siblings immediately. A fever (≥ `fever_c`, `fever`) or a very high sugar (≥13.9 mmol/L, `sugar_very_high`) goes to the caregiver on duty, or to everyone if nobody is assigned.
+- An insulin log (`POST /api/v1/insulin/log`) with a blood sugar below 3.9 raises `sugar_low` too, usually with a held dose.
 
 ### `POST /api/v1/vitals/{id}/correct`
 Supersedes a mistaken reading with a corrected entry. The original record is retained for medical audit integrity and linked via `correction_id`.
@@ -348,7 +349,8 @@ Records the exact timestamp when a stroke patient was last seen symptom-free ("l
 Reads or customizes clinical thresholds:
 - `bp_low_systolic` / `bp_low_diastolic` (defaults: 90 / 60 mmHg).
 - `spo2_warn` / `spo2_critical` (defaults: 92% / 88%).
-- `fever_c` (default: 38.0 °C).
+- `fever_c` (default: 38.0 °C, allowed 37.5–39.0).
+- `fever_high_c` (default: 39.0 °C, allowed 38.5–40.0 and above `fever_c`).
 
 ---
 
@@ -493,7 +495,7 @@ Fetches the active emergency link token or generates a new 256-bit token (invali
 ## Alerts & Web Push Notifications
 
 ### `GET /api/v1/alerts/unacked`
-Returns pending unacknowledged alerts from the last 24 hours for the logged-in caregiver.
+Returns pending unacknowledged alerts from the last 24 hours for the logged-in caregiver. Each has `emergency: true|false`: emergencies (`bp_crisis`, `bp_low`, `fast_positive`, `spo2_low`, `sugar_low`, `alertness`, `fever_high`; `models.EmergencyAlertKinds`, mirrored in `clinical/alert-kinds.json`) show the red crisis bar and also postpone backups and update restarts.
 
 ### `POST /api/v1/alerts/{id}/ack`
 Marks an alert as acknowledged by the current caregiver.

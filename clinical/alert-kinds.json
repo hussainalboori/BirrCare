@@ -1,0 +1,5 @@
+{
+  "_comment": "Issue #54: every alert kind, and the ones that are emergencies (red crisis bar, block backups and update restarts). Checked by the Go tests (models.EmergencyAlertKinds, the alerts table) and the TypeScript tests (AlertCenter renders each kind).",
+  "kinds": ["bp_crisis", "bp_low", "alertness", "fast_positive", "dose_override", "vomited", "correction", "duty_handover", "duty_unaccepted", "emergency_card", "low_stock", "spo2_low", "reposition_overdue", "bowel_overdue", "low_fluid", "backup_failed", "bleeding", "sugar_low", "sugar_very_high", "fever", "fever_high"],
+  "emergency": ["bp_crisis", "bp_low", "fast_positive", "spo2_low", "sugar_low", "alertness", "fever_high"]
+}

@@ -9,6 +9,7 @@ import (
 
 	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
+	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/push"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -36,6 +37,38 @@ func recordAlertFor(tx *sql.Tx, kind, refID, createdBy, target string, payload m
 	return id, err
 }
 
+// raisedAlert is an alert written in a transaction, to push after commit.
+type raisedAlert struct {
+	ID, Kind string
+	Target   string // "" = everyone
+}
+
+// pushRaised sends a committed alert to its audience, never to the caregiver who
+// caused it (they are looking at the screen).
+func pushRaised(n *push.Notifier, a raisedAlert, actorID string) {
+	switch {
+	case a.ID == "":
+	case a.Target == "":
+		n.NotifyAsync(a.ID, a.Kind, actorID)
+	case a.Target != actorID:
+		n.NotifyCaregiverAsync(a.ID, a.Kind, a.Target)
+	}
+}
+
+// onDutyCaregiverID is whoever is assigned to the shift running now, or "" if
+// nobody is. Safe inside a transaction (pass the tx).
+func onDutyCaregiverID(q querier) string {
+	shift, date, err := findCurrentShift(q, time.Now().In(ClinicalLocation()))
+	if err != nil || shift == nil {
+		return ""
+	}
+	var id string
+	if q.QueryRow(`SELECT caregiver_id FROM shift_assignments WHERE shift_id = ? AND date = ?`, shift.ID, date).Scan(&id) != nil {
+		return ""
+	}
+	return id
+}
+
 type Alert struct {
 	ID            string          `json:"id"`
 	Kind          string          `json:"kind"`
@@ -44,6 +77,7 @@ type Alert struct {
 	CreatedByName string          `json:"created_by_name,omitempty"`
 	Payload       json.RawMessage `json:"payload"`
 	CreatedAt     string          `json:"created_at"` // RFC3339
+	Emergency     bool            `json:"emergency"`  // models.EmergencyAlertKinds: red crisis bar
 }
 
 type AlertsHandler struct {
@@ -78,6 +112,7 @@ func (h *AlertsHandler) Unacked(w http.ResponseWriter, r *http.Request) {
 		}
 		a.Payload = json.RawMessage(payload)
 		a.CreatedAt = sqliteToRFC3339(createdAt)
+		a.Emergency = models.IsEmergencyAlert(a.Kind)
 		out = append(out, a)
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -71,6 +71,9 @@ func loadKeys(db *sql.DB) (string, string, error) {
 	return pub, priv, nil
 }
 
+// SetHTTPClient replaces the client used to reach push services (tests, proxies).
+func (n *Notifier) SetHTTPClient(c webpush.HTTPClient) { n.client = c }
+
 // Message is what the service worker shows. Kept generic for the lock screen.
 type Message struct {
 	Title string `json:"title"`
@@ -127,6 +130,18 @@ func MessageFor(kind, alertID, lang string) Message {
 		body = "Bleeding sign reported — open Birrcare"
 		if ar {
 			body = "تم الإبلاغ عن علامة نزيف — افتح رعاية بر"
+		}
+	}
+	if kind == "sugar_low" || kind == "sugar_very_high" {
+		body = "Blood sugar alert — open Birrcare"
+		if ar {
+			body = "تنبيه سكر الدم — افتح رعاية بر"
+		}
+	}
+	if kind == "fever" || kind == "fever_high" {
+		body = "Temperature alert — open Birrcare"
+		if ar {
+			body = "تنبيه الحرارة — افتح رعاية بر"
 		}
 	}
 	if kind == "bp_crisis" || kind == "bp_low" {

@@ -96,7 +96,7 @@ func NewRouter(o Options) http.Handler {
 	shiftsHandler := &handlers.ShiftsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	contactsHandler := &handlers.ContactsHandler{Contacts: o.Contacts}
 	emergencyHandler := &handlers.EmergencyHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, Contacts: o.Contacts, Limiter: o.EmergencyLimiter}
-	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker}
+	insulinHandler := &handlers.InsulinHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}

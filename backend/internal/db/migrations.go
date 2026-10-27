@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -992,6 +992,34 @@ func Migrate(database *sql.DB) error {
 			PRAGMA foreign_keys = ON;
 		`); err != nil {
 			return fmt.Errorf("failed migrating alerts for bleeding: %w", err)
+		}
+	}
+
+	// Migrate alerts for low/very high blood sugar and fever (issue #54).
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'fever_high'") {
+		log.Println("Migrating alerts: adding sugar and fever kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v11;
+			CREATE TABLE alerts_v11 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id)
+			);
+			INSERT INTO alerts_v11 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v11 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for sugar and fever: %w", err)
 		}
 	}
 

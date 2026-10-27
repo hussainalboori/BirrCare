@@ -26,11 +26,17 @@ const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
 // (/alerts/unacked), so one missed while the phone was locked or the app closed is
 // replayed on the next open or reconnect, with the alarm, until this caregiver
 // taps "Seen". The crisis bar keeps both call buttons on screen on every page.
+// Which alerts are emergencies comes from the server (the "emergency" flag,
+// models.EmergencyAlertKinds, issue #54), not from a list kept here.
+
+// Orange: needs attention soon, not an emergency.
+const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high";
   created_by_name?: string;
+  emergency?: boolean;
   payload: Record<string, unknown>;
   created_at: string;
 }
@@ -127,8 +133,8 @@ export function AlertCenter() {
 
   const p = current.payload;
   const duty = DUTY_KINDS.has(current.kind);
-  const red = !duty && current.kind !== "dose_override" && current.kind !== "vomited" && current.kind !== "correction" && current.kind !== "emergency_card" && current.kind !== "low_stock";
-  const crisis = current.kind === "bp_crisis";
+  const red = current.emergency || (!duty && !AMBER_KINDS.has(current.kind));
+  const crisis = current.emergency || current.kind === "bp_crisis";
   const medName = String((ar ? p.name_ar : p.name_en) || p.name_en || p.name_ar || "");
   const when = <bdi dir="auto">{formatTime(current.created_at, locale)}</bdi>;
   const by = current.created_by_name ? <bdi>{current.created_by_name}</bdi> : null;
@@ -175,6 +181,32 @@ export function AlertCenter() {
       advice = ar
         ? "اجلسها مستقيمة وتأكد أن الجهاز على إصبع دافئ. إن تأكد الرقم: اتصل بالإسعاف."
         : "Sit her upright and check the clip is on a warm finger. If it is confirmed: call emergency.";
+      break;
+    case "sugar_low":
+      // Issue #54: the 15-15 rule only, never a dose.
+      title = <>{ar ? "هبوط السكر" : "Low blood sugar"}: <Ltr>{String(p.blood_sugar)} mmol/L</Ltr></>;
+      advice = ar
+        ? "إن كانت تستطيع البلع: أعطها سكراً سريعاً (عصير) الآن وأعد القياس بعد 15 دقيقة. إن لم تستطع البلع أو لا تستجيب: اتصل بالإسعاف."
+        : "If she can swallow: give fast sugar (juice) now and recheck in 15 minutes. If she can't swallow or doesn't respond: call emergency.";
+      break;
+    case "sugar_very_high":
+      title = <>{ar ? "السكر مرتفع جداً" : "Blood sugar very high"}: <Ltr>{String(p.blood_sugar)} mmol/L</Ltr></>;
+      advice = ar ? "أعد القياس واتصل بالطبيب. أعطها ماءً إن كانت تستطيع البلع." : "Re-measure and call the doctor. Offer water if she can swallow.";
+      break;
+    case "fever":
+      title = <>{ar ? "حمّى" : "Fever"}: <Ltr>{String(p.temperature_c)} °C</Ltr></>;
+      advice = ar ? "أعد القياس بعد 30 دقيقة، وقِس الأكسجين، واتصل بالطبيب إن استمرت." : "Re-measure in 30 minutes, check her oxygen, and call the doctor if it stays.";
+      break;
+    case "fever_high":
+      title = (
+        <>
+          {ar ? "حمّى شديدة" : "High fever"}: <Ltr>{String(p.temperature_c)} °C</Ltr>
+          {p.spo2 != null && <> · <Ltr>SpO₂ {String(p.spo2)}%</Ltr></>}
+        </>
+      );
+      advice = ar
+        ? "اتصل بالطبيب الآن. إن كان الأكسجين منخفضاً أو تتنفس بصعوبة أو بعد سعال أثناء الأكل: اتصل بالإسعاف."
+        : "Call the doctor now. If her oxygen is low, she is breathing hard, or it follows coughing while eating: call emergency.";
       break;
     case "low_stock": {
       // Issue #20: a medicine is about to run out.
@@ -329,6 +361,7 @@ export function AlertCenter() {
             )}
           </div>
         )}
+        {current.kind === "sugar_low" && <RecheckTimer since={current.created_at} ar={ar} />}
         {current.kind === "alertness" && (
           <Link href="/fast" className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-rose-800">
             {ar ? "افحص F.A.S.T. الآن" : "Do the F.A.S.T. check now"}
@@ -349,6 +382,30 @@ export function AlertCenter() {
         )}
       </div>
     </div>
+  );
+}
+
+/** The 15-15 rule (issue #54): counts down to the sugar recheck, 15 minutes after the alert. */
+function RecheckTimer({ since, ar }: { since: string; ar: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const left = Math.max(0, Math.ceil((new Date(since).getTime() + 15 * 60_000 - now) / 1000));
+  const mmss = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  return (
+    <p data-testid="sugar-recheck" role="timer" className="rounded-xl bg-white px-3 py-2 text-center text-base font-black text-rose-800">
+      {left > 0 ? (
+        <>
+          {ar ? "أعد قياس السكر بعد" : "Recheck sugar in"} <Ltr>{mmss}</Ltr>
+        </>
+      ) : ar ? (
+        "أعد قياس السكر الآن"
+      ) : (
+        "Recheck sugar now"
+      )}
+    </p>
   );
 }
 

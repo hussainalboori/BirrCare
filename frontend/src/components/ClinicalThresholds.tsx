@@ -9,13 +9,14 @@ import { setBPLowThresholds, setOxygenFeverThresholds } from "@/lib/clinical";
 
 // The doctor's limits, admins only: low blood pressure (issue #13, default below
 // 90/60) and oxygen / fever (issue #22, default SpO2 92% re-check, 88% alert,
-// fever from 38.0 °C).
+// fever from 38.0 °C, high fever from 39.0 °C, issue #54).
 interface Settings {
   bp_low_systolic: number;
   bp_low_diastolic: number;
   spo2_warn: number;
   spo2_critical: number;
   fever_c: number;
+  fever_high_c?: number;
   reposition_interval_minutes?: number;
   fluid_daily_target_ml?: number;
 }
@@ -30,6 +31,7 @@ export function ClinicalThresholds() {
     spo2_warn: "",
     spo2_critical: "",
     fever_c: "",
+    fever_high_c: "39",
     reposition_interval_minutes: "120",
     fluid_daily_target_ml: "1500",
   });
@@ -47,6 +49,7 @@ export function ClinicalThresholds() {
           spo2_warn: String(t.spo2_warn ?? 92),
           spo2_critical: String(t.spo2_critical ?? 88),
           fever_c: String(t.fever_c ?? 38),
+          fever_high_c: String(t.fever_high_c ?? 39),
           reposition_interval_minutes: String(t.reposition_interval_minutes ?? 120),
           fluid_daily_target_ml: String(t.fluid_daily_target_ml ?? 1500),
         });
@@ -69,8 +72,8 @@ export function ClinicalThresholds() {
     } catch {
       setMsg(
         ar
-          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39، فاصل التقليب 30–360 دقيقة، هدف السوائل 500–5000 مل"
-          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39, reposition interval 30–360m, fluid target 500–5000ml"
+          ? "القيم المسموحة: الانقباضي 70–120، الانبساطي 40–80، أكسجين الخطر 80–94 والتنبيه أعلى منه حتى 96، الحمّى 37.5–39، الحمّى الشديدة 38.5–40 وأعلى من الحمّى، فاصل التقليب 30–360 دقيقة، هدف السوائل 500–5000 مل"
+          : "Allowed: systolic 70–120, diastolic 40–80, oxygen alert 80–94 with re-check above it up to 96, fever 37.5–39, high fever 38.5–40 and above fever, reposition interval 30–360m, fluid target 500–5000ml"
       );
     }
   };
@@ -108,6 +111,7 @@ export function ClinicalThresholds() {
         {field("spo2_warn", ar ? "أعد القياس" : "Re-check")}
         {field("spo2_critical", ar ? "تنبيه" : "Alert")}
         {field("fever_c", ar ? "حمّى من (°م)" : "Fever from (°C)", "0.1")}
+        {field("fever_high_c", ar ? "حمّى شديدة من (°م)" : "High fever from (°C)", "0.1")}
       </div>
       <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
         {ar ? "مؤقت تقليب المريض للوقاية من قرح الفراش (بالدقائق، الافتراضي 120 دقيقة = ساعتان):" : "Repositioning interval to prevent pressure sores (minutes, default 120 min = 2 hours):"}

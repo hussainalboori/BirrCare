@@ -259,13 +259,13 @@ type installRequest struct {
 	ConfirmDuringAlert bool   `json:"confirm_during_alert"`
 }
 
-// activeCrisisAlerts counts crisis / low-BP / F.A.S.T. alerts from the last 30
-// minutes that nobody has acknowledged yet.
+// activeCrisisAlerts counts emergency alerts (models.EmergencyAlertKinds) from the
+// last 30 minutes that nobody has acknowledged yet.
 func (h *UpdatesHandler) activeCrisisAlerts(ctx context.Context) (int, error) {
 	var n int
 	err := h.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM alerts a
-		WHERE a.kind IN ('bp_crisis', 'bp_low', 'fast_positive')
+		WHERE a.kind IN (`+models.EmergencyAlertKindsSQL()+`)
 		  AND datetime(a.created_at) >= datetime('now', ?)
 		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id)
 	`, fmt.Sprintf("-%d minutes", int(updateCrisisWindow.Minutes()))).Scan(&n)

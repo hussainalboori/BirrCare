@@ -149,3 +149,39 @@ for (const scheme of ["light", "dark"] as const) {
     await expectContrast(page, '[data-testid="live-crisis"]');
   });
 }
+
+// Issue #54: a low sugar logged by a sibling turns this phone's screen into the red
+// crisis bar with the 15-15 steps, a recheck timer and the call buttons.
+for (const lang of ["en", "ar"] as const) {
+  test(`sibling gets the sugar_low crisis bar with the 15-minute timer (${lang})`, async ({ page, context, baseURL }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await context.addCookies([{ name: "birrcare_lang", value: lang, url: baseURL! }]);
+    const now = new Date().toISOString();
+    await mockApi(page, {
+      contacts: { emergency_number: "997", doctor_name: "Dr. Salem", doctor_phone: "+966500000000" },
+      sse: [
+        {
+          type: "VITAL_LOGGED",
+          timestamp: now,
+          actor: { id: "c2", name: "Fatima", avatar_color: "#2563eb" },
+          payload: { id: "v1", alert_id: "a1", vital_type: "sugar", blood_sugar: 2.9, sugar_status: "LOW", recorded_at: now },
+        },
+      ],
+      alerts: [{ id: "a1", kind: "sugar_low", emergency: true, created_by_name: "Fatima", payload: { blood_sugar: 2.9 }, created_at: now }],
+    });
+    await page.goto("/");
+
+    const bar = page.getByTestId("crisis-bar");
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute("data-kind", "sugar_low");
+    await expect(bar).toContainText("2.9 mmol/L");
+    await expect(bar).toContainText(lang === "ar" ? "هبوط السكر" : "Low blood sugar");
+    await expect(bar.getByTestId("sugar-recheck")).toContainText(lang === "ar" ? "أعد قياس السكر بعد" : "Recheck sugar in");
+    await expect(bar.getByTestId("sugar-recheck")).toContainText(/1[45]:\d\d/);
+    for (const href of ["tel:997", "tel:+966500000000"]) {
+      await expect(bar.locator(`a[href="${href}"]`)).toBeInViewport({ ratio: 1 });
+    }
+    await expectTapTargets(bar);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}

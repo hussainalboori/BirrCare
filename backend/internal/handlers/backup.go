@@ -194,7 +194,7 @@ func (h *BackupHandler) busyReason(ctx context.Context) string {
 	}
 	_ = h.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM alerts a
-		WHERE a.kind IN ('bp_crisis', 'bp_low', 'fast_positive')
+		WHERE a.kind IN (`+models.EmergencyAlertKindsSQL()+`)
 		  AND datetime(a.created_at) >= datetime('now', '-30 minutes')
 		  AND NOT EXISTS (SELECT 1 FROM alert_acks k WHERE k.alert_id = a.id)`).Scan(&n)
 	if n > 0 {
