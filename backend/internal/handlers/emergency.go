@@ -59,6 +59,10 @@ type EmergencyMed struct {
 	Slots    []string `json:"slots"`
 	Times    []string `json:"times,omitempty"`
 	Critical bool     `json:"blood_thinner"` // anticoagulant / antiplatelet
+	// Swallowing guidance (issue #64): "do_not_crush" matters to paramedics too.
+	Crush    string `json:"crush"`
+	SplitOK  *bool  `json:"split_ok"`
+	WithFood string `json:"with_food"`
 	// LastDose (issue #56): the latest taken or partial dose that wasn't cancelled.
 	// "When did she last take her blood thinner?" decides stroke treatment.
 	LastDose *EmergencyDose `json:"last_dose,omitempty"`
@@ -111,6 +115,8 @@ type EmergencyCard struct {
 	PRN24h      []EmergencyPRN    `json:"prn_24h"`
 	// LastIncident (issue #60): the latest fall or seizure in the last 7 days.
 	LastIncident *Incident `json:"last_incident,omitempty"`
+	// SwallowingDifficulty (issue #64): tagged in a handover in the last 7 days.
+	SwallowingDifficulty *SwallowNote `json:"swallowing_difficulty,omitempty"`
 	Contacts    Contacts          `json:"contacts"`
 	Family      []EmergencyFamily `json:"family"`
 	GeneratedAt string            `json:"generated_at"`
@@ -153,7 +159,8 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	card := &EmergencyCard{Patient: p, Contacts: h.Contacts, Medications: []EmergencyMed{}, LastBP: []EmergencyBP{}, Family: []EmergencyFamily{},
 		PRN24h: []EmergencyPRN{}, GeneratedAt: now.Format(time.RFC3339), TimeZone: ClinicalLocation().String()}
 
-	rows, err := h.DB.Query(`SELECT id, name_ar, name_en, dosage, frequency_slots, COALESCE(slot_times, ''), COALESCE(is_critical, 0)
+	rows, err := h.DB.Query(`SELECT id, name_ar, name_en, dosage, frequency_slots, COALESCE(slot_times, ''), COALESCE(is_critical, 0),
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
 		FROM medications WHERE is_active = 1 ORDER BY is_critical DESC, name_en`)
 	if err != nil {
 		return nil, err
@@ -161,10 +168,12 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 	for rows.Next() {
 		var m EmergencyMed
 		var slots, times string
-		if err := rows.Scan(&m.id, &m.NameAr, &m.NameEn, &m.Dosage, &slots, &times, &m.Critical); err != nil {
+		var splitOK sql.NullBool
+		if err := rows.Scan(&m.id, &m.NameAr, &m.NameEn, &m.Dosage, &slots, &times, &m.Critical, &m.Crush, &splitOK, &m.WithFood); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		m.SplitOK = nullableBool(splitOK)
 		_ = json.Unmarshal([]byte(slots), &m.Slots)
 		var byslot map[string]string
 		if json.Unmarshal([]byte(times), &byslot) == nil {
@@ -186,6 +195,11 @@ func (h *EmergencyHandler) buildCard() (*EmergencyCard, error) {
 		inc := list[0]
 		inc.By, inc.Notes = "", "" // no names or free text on a public page
 		card.LastIncident = &inc
+	}
+	if sw, err := recentSwallowingDifficulty(h.DB, now); err != nil {
+		return nil, err
+	} else if sw != nil {
+		card.SwallowingDifficulty = &SwallowNote{At: sw.At} // no names on a public page
 	}
 
 	// Corrected readings (issue #15) are replaced by their correction.

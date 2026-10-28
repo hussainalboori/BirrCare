@@ -115,6 +115,10 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [ingredient, setIngredient] = useState("");
   const [drugClass, setDrugClass] = useState<DrugClass>("");
   const [duplicate, setDuplicate] = useState<{ name_ar: string; name_en: string; dosage: string } | null>(null);
+  // Issue #64: crush / split / food, from the box or the pharmacist.
+  const [crush, setCrush] = useState<NonNullable<Medication["crush"]>>("ask_pharmacist");
+  const [splitOK, setSplitOK] = useState<"" | "yes" | "no">("");
+  const [withFood, setWithFood] = useState<NonNullable<Medication["with_food"]>>("any");
   const [duplicateReason, setDuplicateReason] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
@@ -175,6 +179,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setRemind(true);
     setIngredient("");
     setDrugClass("");
+    setCrush("ask_pharmacist");
+    setSplitOK("");
+    setWithFood("any");
     setDoseByDay({});
     setShowDoseByDay(false);
     setDuplicate(null);
@@ -214,6 +221,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setDoseByDay(med.dose_by_day || {});
     setShowDoseByDay(Object.keys(med.dose_by_day || {}).length > 0);
     setDrugClass((med.drug_class as DrugClass) || "");
+    setCrush(med.crush || "ask_pharmacist");
+    setSplitOK(med.split_ok === true ? "yes" : med.split_ok === false ? "no" : "");
+    setWithFood(med.with_food || "any");
     setDuplicate(null);
     setDuplicateReason("");
     setSaveError("");
@@ -283,6 +293,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
       active_ingredient: ingredient.trim(),
       drug_class: drugClass,
       ...(confirmDuplicate ? { confirm_duplicate: true, duplicate_reason: duplicateReason.trim() } : {}),
+      crush,
+      split_ok: splitOK === "" ? null : splitOK === "yes",
+      with_food: withFood,
     };
     try {
       let res: { warnings?: string[] } | null = null;
@@ -800,6 +813,65 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                   );
                 })()}
               </div>
+
+              {/* SWALLOWING (issue #64): from the box or the pharmacist */}
+              <fieldset className="mb-4 rounded-xl border border-slate-200 p-3 dark:border-slate-700" data-testid="med-swallow">
+                <legend className="px-1 text-sm font-bold text-slate-800 dark:text-slate-100">
+                  {locale === "ar" ? "الطحن والقسم والطعام (من العلبة أو الصيدلي)" : "Crushing, splitting and food (from the box or the pharmacist)"}
+                </legend>
+                <p className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-300">{locale === "ar" ? "هل يمكن طحنها؟" : "Can it be crushed?"}</p>
+                <div role="radiogroup" aria-label={locale === "ar" ? "هل يمكن طحنها؟" : "Can it be crushed?"} className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {(
+                    [
+                      { v: "ok", en: "Can be crushed", ar: "يمكن طحنها", on: "border-emerald-700 bg-emerald-700 text-white" },
+                      { v: "do_not_crush", en: "Do not crush", ar: "لا تُطحن", on: "border-rose-700 bg-rose-700 text-white" },
+                      { v: "ask_pharmacist", en: "Not known: ask the pharmacist", ar: "غير معروف: اسأل الصيدلي", on: "border-slate-700 bg-slate-700 text-white" },
+                    ] as const
+                  ).map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      role="radio"
+                      aria-checked={crush === o.v}
+                      data-testid={`med-crush-${o.v}`}
+                      onClick={() => setCrush(o.v)}
+                      className={`min-h-12 rounded-lg border px-2 text-base font-bold ${
+                        crush === o.v ? o.on : "border-slate-300 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                      }`}
+                    >
+                      {locale === "ar" ? o.ar : o.en}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "هل يمكن قسمها؟" : "Can it be split?"}
+                    <select
+                      value={splitOK}
+                      onChange={(e) => setSplitOK(e.target.value as "" | "yes" | "no")}
+                      data-testid="med-split"
+                      className="mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-base text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    >
+                      <option value="">{locale === "ar" ? "غير معروف" : "Not known"}</option>
+                      <option value="yes">{locale === "ar" ? "نعم، يمكن قسمها" : "Yes, can be split"}</option>
+                      <option value="no">{locale === "ar" ? "لا تُقسم" : "Do not split"}</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "مع الطعام؟" : "With food?"}
+                    <select
+                      value={withFood}
+                      onChange={(e) => setWithFood(e.target.value as NonNullable<Medication["with_food"]>)}
+                      data-testid="med-with-food"
+                      className="mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-base text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    >
+                      <option value="any">{locale === "ar" ? "أي وقت" : "Any time"}</option>
+                      <option value="with_food">{locale === "ar" ? "مع الطعام" : "With food"}</option>
+                      <option value="empty_stomach">{locale === "ar" ? "على معدة فارغة" : "On an empty stomach"}</option>
+                    </select>
+                  </label>
+                </div>
+              </fieldset>
 
               {/* CRITICAL MEDICATION (doctor report) */}
               <label className="mb-4 flex min-h-12 items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">

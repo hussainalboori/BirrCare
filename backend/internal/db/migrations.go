@@ -1263,6 +1263,22 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating lab_results: %w", err)
 	}
 
+	// Issue #64: crush / split / food guidance per medicine. Until the admin fills
+	// it in from the box or the pharmacist, a medicine says "ask the pharmacist".
+	for _, c := range []struct{ col, def string }{
+		{"crush", "TEXT NOT NULL DEFAULT 'ask_pharmacist' CHECK (crush IN ('ok', 'do_not_crush', 'ask_pharmacist'))"},
+		{"split_ok", "INTEGER"},
+		{"with_food", "TEXT NOT NULL DEFAULT 'any' CHECK (with_food IN ('with_food', 'empty_stomach', 'any'))"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+
 	// Issue #63: appointments (doctor, lab, physio) with reminders, and a running
 	// list of questions for the doctor, answered after the visit.
 	if _, err := database.Exec(`

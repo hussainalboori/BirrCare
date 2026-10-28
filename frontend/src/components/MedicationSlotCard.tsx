@@ -1,6 +1,7 @@
 "use client";
 
 import { MedPhotoGallery, medPhotoList } from "@/components/MedPhotoGallery";
+import { CrushBadge, SwallowNotes } from "@/components/SwallowBadges";
 import { haptic } from "@/lib/theme";
 import React, { useEffect, useRef, useState } from "react";
 import { MedicationLog, ScheduledDose } from "@/lib/types";
@@ -32,9 +33,11 @@ interface MedicationSlotCardProps {
   dose: ScheduledDose;
   scheduledDate: string;
   onLoggedSuccess?: () => void;
+  /** Issue #64: "swallowing difficulty" was noted in a handover in the last 7 days. */
+  swallowing?: boolean;
 }
 
-export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: MedicationSlotCardProps) {
+export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess, swallowing = false }: MedicationSlotCardProps) {
   const { locale, t } = useLanguage();
   const { currentCaregiver, openPinModal } = useCaregiver();
 
@@ -312,6 +315,10 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
   const instructions = locale === "ar" ? medication.instructions_ar : medication.instructions_en;
   const pillImage = medication.image_url || "/meds/pill-default.svg";
   const photos = medPhotoList(medication.image_url, medication.photo_urls);
+  // Issue #64: "do not crush" / "can be crushed" always; "ask the pharmacist" only
+  // while a swallowing difficulty is recent.
+  const showCrush = medication.crush === "do_not_crush" || medication.crush === "ok" || swallowing;
+  const crushFirst = swallowing && medication.crush === "do_not_crush";
 
   // Format timestamp for display (handles RFC3339 and raw SQLite UTC strings)
   const formattedTime = formatTime(log?.taken_at, locale);
@@ -389,6 +396,12 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
             </button>
 
             <div className="flex-1 min-w-0">
+              {/* Issue #64: with a recent swallowing difficulty, "do not crush" comes first */}
+              {crushFirst && (
+                <div className="mb-2" data-testid="crush-first">
+                  <CrushBadge crush="do_not_crush" ar={ar} />
+                </div>
+              )}
               {/* Slot & Dosage & Scheduled Time Badges */}
               <div className="flex items-center gap-2 flex-wrap mb-1.5">
                 <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -412,6 +425,8 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                     {ar ? "(جرعة مختلفة اليوم)" : "(different today)"}
                   </span>
                 )}
+                {showCrush && !crushFirst && <CrushBadge crush={medication.crush} ar={ar} />}
+                <SwallowNotes medication={medication} ar={ar} />
 
                 {isOverdue && (
                   <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 animate-pulse">
@@ -919,6 +934,20 @@ export function MedicationSlotCard({ dose, scheduledDate, onLoggedSuccess }: Med
                 {t.slots[slot as keyof typeof t.slots] || slot}
               </span>
             </div>
+
+            {(showCrush || swallowing) && (
+              <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
+                <CrushBadge crush={medication.crush} ar={ar} />
+                <SwallowNotes medication={medication} ar={ar} />
+              </div>
+            )}
+            {swallowing && (
+              <p data-testid="liquid-form-hint" className="mb-2 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-sm font-bold text-amber-950 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-50">
+                {ar
+                  ? "سُجّلت صعوبة في البلع هذا الأسبوع: اسأل الصيدلي هل يوجد هذا الدواء شراباً أو بشكل آخر أسهل للبلع."
+                  : "Swallowing difficulty was noted this week: ask the pharmacist whether this medicine comes as a liquid or another easier form."}
+              </p>
+            )}
 
             {/* Title & Info */}
             <h3 className="text-lg font-black text-slate-900 dark:text-white">

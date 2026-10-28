@@ -24,6 +24,8 @@ export interface EmergencyCard {
     slots: string[];
     times?: string[];
     blood_thinner: boolean;
+    /** Issue #64: "do_not_crush" for slow-release / coated tablets. */
+    crush?: "ok" | "do_not_crush" | "ask_pharmacist";
     /** Issue #56: the latest taken/partial dose that wasn't cancelled. */
     last_dose?: { at: string; status: "taken" | "partial"; hours_ago: number; vomited: boolean };
   }[];
@@ -37,6 +39,8 @@ export interface EmergencyCard {
   prn_24h?: { name_ar: string; name_en: string; dosage: string; count: number; total_dose?: string; last_at: string }[];
   /** Issue #60: the latest fall or seizure in the last 7 days. */
   last_incident?: { kind: "fall" | "seizure"; at: string; hit_head?: boolean; awake_normal?: boolean; pain_or_bleeding?: boolean; duration_seconds?: number; repeat?: boolean; escalate: boolean };
+  /** Issue #64: a swallowing difficulty noted in a handover in the last 7 days. */
+  swallowing_difficulty?: { at: string };
   contacts: { emergency_number?: string; doctor_name?: string; doctor_phone?: string };
   family: { name: string; phone: string }[];
   generated_at: string;
@@ -136,6 +140,7 @@ h2{font-size:20px;margin:22px 0 8px;padding-bottom:4px;border-bottom:3px solid #
 .alarm .v{color:#b91c1c}
 .med{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 0;border-bottom:1px solid #e2e8f0}
 .med b{font-size:21px} .med .d{font-size:18px;font-weight:700} .med .s{color:#334155;font-size:16px}
+.nocrush{display:inline-block;background:#fff;color:#b91c1c;border:2px solid #b91c1c;font-weight:800;font-size:14px;border-radius:6px;padding:1px 7px;margin-top:4px;margin-inline-start:4px}
 .thin{display:inline-block;background:#b91c1c;color:#fff;font-weight:800;font-size:14px;border-radius:6px;padding:2px 8px;margin-top:4px}
 table{width:100%;border-collapse:collapse;font-size:20px} td,th{padding:8px 6px;border-bottom:1px solid #e2e8f0;text-align:left}
 th{font-size:14px;color:#475569} .num{font-weight:800;font-variant-numeric:tabular-nums;direction:ltr;unicode-bidi:isolate}
@@ -164,9 +169,9 @@ export function renderEmergencyCard(c: EmergencyCard, now = new Date()): string 
           const times = m.times?.length ? ` (${m.times.map(esc).join(", ")})` : "";
           return `<div class="med"><div><b>${esc(m.name_en)}</b> <span class="d num">${esc(m.dosage)}</span><div class="s">${esc(slotsEn)}${times}</div>${
             m.blood_thinner ? '<span class="thin">BLOOD THINNER / ANTIPLATELET</span>' : ""
-          }</div><div class="ar" dir="rtl" lang="ar"><b>${esc(m.name_ar)}</b> <span class="d num">${esc(m.dosage)}</span><div class="s">${esc(slotsAr)}${times}</div>${
+          }${m.crush === "do_not_crush" ? '<span class="nocrush">DO NOT CRUSH</span>' : ""}</div><div class="ar" dir="rtl" lang="ar"><b>${esc(m.name_ar)}</b> <span class="d num">${esc(m.dosage)}</span><div class="s">${esc(slotsAr)}${times}</div>${
             m.blood_thinner ? '<span class="thin">مميّع للدم / مضاد للصفائح</span>' : ""
-          }</div></div>`;
+          }${m.crush === "do_not_crush" ? '<span class="nocrush">لا تُطحن</span>' : ""}</div></div>`;
         })
         .join("")
     : '<p class="empty">No medicines recorded · لا توجد أدوية مسجلة</p>';
@@ -229,9 +234,20 @@ export function renderEmergencyCard(c: EmergencyCard, now = new Date()): string 
         );
       })()
     : "";
+  // Issue #64: aspiration risk; tablets may have been crushed.
+  const sw = c.swallowing_difficulty;
+  const swallowing = sw
+    ? row(
+        "Swallowing difficulty",
+        `noted <bdi class="num">${esc(whenAbs(sw.at, tz, false))}</bdi> — aspiration risk`,
+        "صعوبة في البلع",
+        `سُجّلت <bdi class="num">${esc(whenAbs(sw.at, tz, true))}</bdi> — خطر دخول الطعام أو الشراب إلى الرئة`,
+        "alarm",
+      )
+    : "";
   const recent =
-    thinners || insulin || prn || incident
-      ? `<section class="now" data-testid="recent-doses">${thinners}${incident}${insulin}${prn}<p class="empty">As of · حتى <bdi class="num">${esc(whenAbs(c.generated_at, tz, false))}</bdi></p></section>`
+    thinners || insulin || prn || incident || swallowing
+      ? `<section class="now" data-testid="recent-doses">${thinners}${incident}${swallowing}${insulin}${prn}<p class="empty">As of · حتى <bdi class="num">${esc(whenAbs(c.generated_at, tz, false))}</bdi></p></section>`
       : "";
 
   const bp = c.last_bp.length

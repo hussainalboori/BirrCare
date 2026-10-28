@@ -104,7 +104,8 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 	rows, err := h.DB.Query(`
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
 		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1),
-		       COALESCE(active_ingredient, ''), COALESCE(drug_class, ''), COALESCE(dose_by_day, '')
+		       COALESCE(active_ingredient, ''), COALESCE(drug_class, ''), COALESCE(dose_by_day, ''),
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -123,11 +124,14 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		var prnMax24h sql.NullInt64
 		var slotsJSON, photosJSON, doseByDayJSON string
 		var createdAtStr string
+		var splitOK sql.NullBool
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
-			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass, &doseByDayJSON); err != nil {
+			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass, &doseByDayJSON,
+			&m.Crush, &splitOK, &m.WithFood); err != nil {
 			continue
 		}
+		m.SplitOK = nullableBool(splitOK)
 		if doseByDayJSON != "" {
 			_ = json.Unmarshal([]byte(doseByDayJSON), &m.DoseByDay)
 		}
@@ -205,6 +209,8 @@ type CreateMedicationRequest struct {
 	IngredientFields
 	// DoseByDay (issue #62): a different dose on some weekdays, e.g. {"sat":"2.5 mg"}.
 	DoseByDay map[string]string `json:"dose_by_day,omitempty"`
+	// Crush / split / food guidance (issue #64).
+	SwallowFields
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +282,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusBadRequest, code, msg)
 		return
 	}
+	if code, msg := req.SwallowFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	crush, splitOK, withFood := req.SwallowFields.insertValues()
 	ingredient, drugClass := "", ""
 	if req.ActiveIngredient != nil {
 		ingredient = *req.ActiveIngredient
@@ -316,9 +327,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class, dose_by_day)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass, doseByDay)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class, dose_by_day, crush, split_ok, with_food)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass, doseByDay, crush, splitOK, withFood)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -412,6 +423,8 @@ type UpdateMedicationRequest struct {
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`
 	PRNMaxPer24h *int     `json:"prn_max_per_24h,omitempty"`
 	StockSettings
+	// Crush / split / food guidance (issue #64); absent = unchanged.
+	SwallowFields
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -463,6 +476,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if code, msg := req.IngredientFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	if code, msg := req.SwallowFields.validate(); code != "" {
 		writeJSONError(w, http.StatusBadRequest, code, msg)
 		return
 	}
@@ -534,16 +551,21 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		IsCritical      bool
 		Remind          bool
 		IsActive        bool
+		Crush           string
+		SplitOK         sql.NullBool
+		WithFood        string
 	}
 	err = tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
 		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
-		       min_hours_between, is_critical, COALESCE(remind, 1), is_active
+		       min_hours_between, is_critical, COALESCE(remind, 1), is_active,
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&before.NameAr, &before.NameEn, &before.Dosage, &before.InstructionsAr, &before.InstructionsEn, &before.FrequencySlots,
 		&before.DaysOfWeek, &before.SlotTimes, &before.ImageURL, &before.PhotoURLs,
 		&before.MinHoursBetween, &before.IsCritical, &before.Remind, &before.IsActive,
+		&before.Crush, &before.SplitOK, &before.WithFood,
 	)
 	if err == sql.ErrNoRows {
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "Medication not found")
@@ -631,6 +653,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if err := req.SwallowFields.apply(tx, medID); err != nil {
+		internalError(w, "failed to update medication", err)
+		return
+	}
 	if req.Remind != nil {
 		if _, err := tx.Exec("UPDATE medications SET remind = ? WHERE id = ?", *req.Remind, medID); err != nil {
 			internalError(w, "failed to update medication", err)
@@ -704,16 +730,21 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		IsCritical      bool
 		Remind          bool
 		IsActive        bool
+		Crush           string
+		SplitOK         sql.NullBool
+		WithFood        string
 	}
 	if err := tx.QueryRow(`
 		SELECT name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots,
 		       COALESCE(days_of_week, ''), COALESCE(slot_times, ''), COALESCE(image_url, ''), COALESCE(photo_urls, '[]'),
-		       min_hours_between, is_critical, COALESCE(remind, 1), is_active
+		       min_hours_between, is_critical, COALESCE(remind, 1), is_active,
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
 		FROM medications WHERE id = ?
 	`, medID).Scan(
 		&after.NameAr, &after.NameEn, &after.Dosage, &after.InstructionsAr, &after.InstructionsEn, &after.FrequencySlots,
 		&after.DaysOfWeek, &after.SlotTimes, &after.ImageURL, &after.PhotoURLs,
 		&after.MinHoursBetween, &after.IsCritical, &after.Remind, &after.IsActive,
+		&after.Crush, &after.SplitOK, &after.WithFood,
 	); err != nil {
 		internalError(w, "failed to query updated medication", err)
 		return
@@ -733,6 +764,9 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"is_critical":     before.IsCritical,
 		"remind":          before.Remind,
 		"is_active":       before.IsActive,
+		"crush":           before.Crush,
+		"split_ok":        nullableBool(before.SplitOK),
+		"with_food":       before.WithFood,
 	}
 	if before.MinHoursBetween.Valid {
 		beforeMap["min_hours_between"] = before.MinHoursBetween.Float64
@@ -752,6 +786,9 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		"is_critical":     after.IsCritical,
 		"remind":          after.Remind,
 		"is_active":       after.IsActive,
+		"crush":           after.Crush,
+		"split_ok":        nullableBool(after.SplitOK),
+		"with_food":       after.WithFood,
 	}
 	if after.MinHoursBetween.Valid {
 		afterMap["min_hours_between"] = after.MinHoursBetween.Float64
@@ -1056,7 +1093,8 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	medRows, err := h.DB.Query(`
-		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0), COALESCE(photo_urls, '[]')
+		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_prn, 0), COALESCE(photo_urls, '[]'),
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
 		FROM medications
 	`)
 	if err != nil {
@@ -1072,9 +1110,12 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		var minHours sql.NullFloat64
 		var slotsJSON, createdAtStr, photosJSON string
 		var isPRN int
-		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours, &isPRN, &photosJSON); err != nil {
+		var splitOK sql.NullBool
+		if err := medRows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdAtStr, &daysJSON, &timesJSON, &minHours, &isPRN, &photosJSON,
+			&m.Crush, &splitOK, &m.WithFood); err != nil {
 			continue
 		}
+		m.SplitOK = nullableBool(splitOK)
 		m.PhotoURLs = parsePhotoURLs(photosJSON)
 		if isPRN == 1 {
 			continue // PRN medications are rendered in their dedicated dashboard section
@@ -1269,10 +1310,17 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		return strings.Compare(a.Slot, b.Slot)
 	})
 
+	// Issue #64: a swallowing difficulty in the last 7 days puts "do not crush" first.
+	swallow, err := recentSwallowingDifficulty(h.DB, time.Now())
+	if err != nil {
+		internalError(w, "failed to read handover tags", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"date":     dateStr,
-		"schedule": schedule,
+		"date":                  dateStr,
+		"schedule":              schedule,
+		"swallowing_difficulty": swallow,
 	})
 }
 

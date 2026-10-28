@@ -80,6 +80,11 @@ type Medication struct {
 	DrugClass        string `json:"drug_class,omitempty"`
 	// DoseByDay (issue #62): the dose on some weekdays, overriding Dosage.
 	DoseByDay map[string]string `json:"dose_by_day,omitempty"`
+	// Swallowing guidance (issue #64): crush is ok | do_not_crush | ask_pharmacist;
+	// split_ok nil = not known; with_food is with_food | empty_stomach | any.
+	Crush    string `json:"crush"`
+	SplitOK  *bool  `json:"split_ok"`
+	WithFood string `json:"with_food"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`

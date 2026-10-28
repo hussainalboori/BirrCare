@@ -28,6 +28,8 @@ export default function MedicationsPage() {
   // Whether the user is looking at "today" (so we can roll over at midnight on wake).
   const followsTodayRef = useRef(true);
   const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
+  // Issue #64: a "swallowing difficulty" handover tag in the last 7 days.
+  const [swallowing, setSwallowing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const selectedDayName = useMemo(() => {
@@ -48,6 +50,7 @@ export default function MedicationsPage() {
       const res = await fetchApi<DailyScheduleResponse>(`/medications/schedule?date=${encodeURIComponent(date)}`);
       if (seq !== requestSeqRef.current) return;
       setScheduleData(res?.schedule || []);
+      setSwallowing(Boolean(res?.swallowing_difficulty));
     } catch (err) {
       console.warn("Failed fetching schedule:", err);
     } finally {
@@ -238,6 +241,7 @@ export default function MedicationsPage() {
                         dose={dose}
                         scheduledDate={selectedDate}
                         onLoggedSuccess={() => loadSchedule(selectedDate)}
+                        swallowing={swallowing}
                       />
                     ))}
                   </div>

@@ -220,6 +220,9 @@ Creates a new scheduled medication.
   "is_critical": true,
   "remind": true,
   "active_ingredient": "clopidogrel",
+  "crush": "ok",
+  "split_ok": null,
+  "with_food": "any",
   "drug_class": "antiplatelet",
   "min_hours_between": 18,
   "track_stock": true,
@@ -246,6 +249,8 @@ Returns scheduled medication cards for a given day (defaults to today in househo
 **Dose by weekday (issue #62).** `POST /medications` and `PUT /medications/{id}` take `dose_by_day` (`{"sat": "2.5 mg", "sun": "2.5 mg"}`; `{}` clears it), kept in the schedule history like the other schedule fields. The schedule returns that day's dose as `medication.dosage`, with `dose_changed_from_yesterday`, and a logged dose's `dosage_snapshot` is that day's dose.
 
 **Lab results (issue #62).** `POST /api/v1/labs` `{kind: "inr" | "hba1c" | "other", value, unit?, taken_on? (default today), next_test_on?, notes?, client_request_id?}` (caregivers and admins). An INR outside the doctor's range (`inr_target_low` / `inr_target_high` in `/settings/clinical`, default 2.0–3.0, allowed 1.5–4.5) is saved with `out_of_range: true` and raises an `inr_out_of_range` alert for each admin. `GET /api/v1/labs?kind=inr&days=180` → `{results, inr_target}`. The doctor report includes `lab_results` and `inr_target`.
+
+**Crush, split and food (issue #64).** `POST /medications` and `PUT /medications/{id}` take `crush` (`ok`, `do_not_crush`, `ask_pharmacist`; default `ask_pharmacist`), `split_ok` (`true`, `false` or `null` = not known) and `with_food` (`with_food`, `empty_stomach`, `any`; default `any`). On an update, an absent field is unchanged. Other values answer `400 INVALID_CRUSH` / `INVALID_SPLIT_OK` / `INVALID_WITH_FOOD`. The fields are returned by `/medications`, by each `medication` in `/medications/schedule` and by the emergency card. `/medications/schedule` also returns `swallowing_difficulty: {at, by}` (or `null`) when a handover was tagged "swallowing difficulty" in the last 7 days; the emergency card returns `swallowing_difficulty: {at}` (no name).
 
 **Same ingredient, two names (issue #61).** `POST /medications` and `PUT /medications/{id}` take `active_ingredient` (normalised to lowercase, e.g. `clopidogrel`) and `drug_class` (`antiplatelet`, `anticoagulant`, `insulin`, `antidiabetic`, `antihypertensive`, `statin`, `anticonvulsant`, `painkiller`, `other`). A second active medicine with the same ingredient (on create, an ingredient change, or re-activation) answers `409 DUPLICATE_INGREDIENT` with `existing: {id, name_ar, name_en, dosage}`; send `confirm_duplicate: true` with a `duplicate_reason` to save it anyway (audited as `DUPLICATE_INGREDIENT_CONFIRMED`). A second anticoagulant or antiplatelet saves with `warnings: ["two_blood_thinners"]`. The interval lock and PRN limits count doses across every medicine with the same ingredient.
 

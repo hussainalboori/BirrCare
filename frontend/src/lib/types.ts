@@ -90,6 +90,10 @@ export interface Medication {
   drug_class?: string;
   /** Issue #62: the dose on some weekdays, e.g. { sat: "2.5 mg" }. */
   dose_by_day?: Record<string, string>;
+  /** Issue #64: crush / split / food guidance (default "ask the pharmacist"). */
+  crush?: "ok" | "do_not_crush" | "ask_pharmacist";
+  split_ok?: boolean | null;
+  with_food?: "with_food" | "empty_stomach" | "any";
   /** PRN (as-needed) medication (issue #25). */
   is_prn?: boolean;
   prn_min_hours?: number | null;
@@ -178,6 +182,8 @@ export interface ScheduledDose {
 export interface DailyScheduleResponse {
   date: string;
   schedule: ScheduledDose[];
+  /** Issue #64: the latest "swallowing difficulty" handover tag of the last 7 days. */
+  swallowing_difficulty?: { at: string; by?: string } | null;
 }
 
 export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast" | "spo2" | "temp";

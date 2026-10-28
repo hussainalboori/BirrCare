@@ -112,6 +112,22 @@ describe("emergency card: recent doses first (issue #56)", () => {
     expect(none).toContain("no dose recorded in this app");
   });
 
+  it("issue #64: do-not-crush medicines and a recent swallowing difficulty", () => {
+    const html = renderEmergencyCard({
+      ...card,
+      medications: [{ ...withDoses.medications[1], crush: "do_not_crush" }],
+      swallowing_difficulty: { at: "2026-10-20T08:00:00Z" },
+    });
+    expect(html).toContain('<span class="nocrush">DO NOT CRUSH</span>');
+    expect(html).toContain('<span class="nocrush">لا تُطحن</span>');
+    expect(html).toContain("Swallowing difficulty");
+    expect(html).toContain("صعوبة في البلع");
+    expect(html).toContain("recent-doses");
+    const plain = renderEmergencyCard({ ...card, medications: [{ ...withDoses.medications[1], crush: "ok" }] });
+    expect(plain).not.toContain('class="nocrush"');
+    expect(plain).not.toContain("Swallowing difficulty");
+  });
+
   it("no blood thinner, insulin or as-needed doses: no block", () => {
     const plain = renderEmergencyCard({ ...card, medications: [withDoses.medications[1]] });
     expect(plain).not.toContain("recent-doses");
