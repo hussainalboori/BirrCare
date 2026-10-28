@@ -103,10 +103,14 @@ test("the admin records crush, split and food from the box", async ({ page, cont
   await page.getByTestId("med-crush-do_not_crush").click();
   await page.getByTestId("med-split").selectOption("no");
   await page.getByTestId("med-with-food").selectOption("with_food");
+  // Issue #65: the pharmacy, and a new prescription first.
+  await page.getByTestId("med-pharmacy-name").fill("Al-Nahdi");
+  await page.getByTestId("med-pharmacy-phone").fill("+966110000000");
+  await page.getByTestId("med-needs-prescription").check();
   await page.getByPlaceholder("مثال: كلوبيدوغريل (بلافيكس)").fill("نيفيديبين");
   await page.getByPlaceholder("مثال: 75mg قرص واحد").fill("30 mg");
   await page.getByRole("button", { name: "Save Prescription" }).click();
   await expect.poll(() => posts.length).toBe(1);
-  expect(posts[0]).toMatchObject({ crush: "do_not_crush", split_ok: false, with_food: "with_food" });
+  expect(posts[0]).toMatchObject({ crush: "do_not_crush", split_ok: false, with_food: "with_food", pharmacy_name: "Al-Nahdi", pharmacy_phone: "+966110000000", needs_prescription: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

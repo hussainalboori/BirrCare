@@ -245,6 +245,7 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/medications/photos", photoHandler.Upload)
 				api.Get("/medications/photos/{name}", photoHandler.Serve)
 				api.Post("/medications/{id}/stock", medHandler.UpdateStock)
+				api.Post("/medications/{id}/refill/claim", medHandler.ClaimRefill) // issue #65: "I'll get it"
 				api.Post("/medications/log/{id}/void", medHandler.VoidDose)
 				api.Post("/medications/log/{id}/event", medHandler.AddDoseEvent)
 

@@ -12,12 +12,13 @@ import { playAlert } from "@/lib/alertSound";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
 import { setBPLowThresholds, setOxygenFeverThresholds } from "@/lib/clinical";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { SSEEvent } from "@/lib/types";
 import { useContacts } from "./CrisisActions";
 import { Ltr } from "./Ltr";
 import { tagLabel } from "@/lib/handoverTags";
 import { bleedingAdvice, bleedingLabel } from "@/lib/bruises";
-import { daysLeftText } from "@/lib/stockText";
+import { daysLeftText, dueText, OPEN_REFILL_EVENT } from "@/lib/stockText";
 import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft, CalendarClock } from "lucide-react";
 
 // Duty handovers (issue #18) are addressed to one sibling and aren't emergencies.
@@ -34,11 +35,11 @@ const REMINDER_KINDS = new Set(["appointment_reminder", "lab_test_due"]);
 // models.EmergencyAlertKinds, issue #54), not from a list kept here.
 
 // Orange: needs attention soon, not an emergency.
-const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever", "fall", "seizure", "inr_out_of_range"]);
+const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergency_card", "low_stock", "sugar_very_high", "fever", "fall", "seizure", "inr_out_of_range", "refill_followup"]);
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure" | "inr_out_of_range" | "appointment_reminder" | "lab_test_due";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure" | "inr_out_of_range" | "appointment_reminder" | "lab_test_due" | "refill_followup";
   created_by_name?: string;
   emergency?: boolean;
   payload: Record<string, unknown>;
@@ -53,6 +54,11 @@ export function AlertCenter() {
   // Overdue dose (issue #55): the "who gave it?" picker and any error, for one alert.
   const [doseUi, setDoseUi] = useState<{ id: string; picking: boolean; msg: string }>({ id: "", picking: false, msg: "" });
   const announced = useRef(new Set<string>());
+  const router = useRouter();
+  const pathname = usePathname();
+  const zone = useHouseholdZone();
+  // Refill buttons (issue #65): an error for one alert.
+  const [refillMsg, setRefillMsg] = useState<{ id: string; msg: string }>({ id: "", msg: "" });
   const ar = locale === "ar";
   const me = currentCaregiver?.id;
 
@@ -142,9 +148,37 @@ export function AlertCenter() {
   const reminder = REMINDER_KINDS.has(current.kind);
   const blue = duty || reminder;
   const overdue = current.kind === "dose_overdue";
-  // A missed blood thinner is red; other missed doses orange. Neither needs the call buttons.
-  const red = current.emergency || (overdue ? Boolean(p.critical) : !blue && !AMBER_KINDS.has(current.kind));
-  const calls = red && !overdue;
+  const refillKind = current.kind === "low_stock" || current.kind === "refill_followup";
+  // A missed blood thinner is red; other missed doses orange. Neither needs the call
+  // buttons; nor does a blood thinner about to run out (red refill follow-up, #65).
+  const red =
+    current.emergency ||
+    (overdue ? Boolean(p.critical) : current.kind === "refill_followup" ? Boolean(p.critical) : !blue && !AMBER_KINDS.has(current.kind));
+  const calls = red && !overdue && !refillKind;
+  const canRefill = refillKind && currentCaregiver?.role !== "viewer" && !!p.medication_id;
+
+  // "I'll get it": the server quiets this alert for everyone.
+  const claimRefill = async () => {
+    const id = current.id;
+    try {
+      await fetchApi(`/medications/${encodeURIComponent(String(p.medication_id))}/refill/claim`, { method: "POST", body: "{}" });
+      setAlerts((list) => list.filter((a) => a.id !== id));
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.data?.error === "NOT_LOW") {
+        setAlerts((list) => list.filter((a) => a.id !== id)); // already refilled
+        return;
+      }
+      setRefillMsg({ id, msg: err.status ? err.message : ar ? "لم يُرسل: تحقق من الاتصال وحاول مرة أخرى." : "Not sent: check the connection and try again." });
+    }
+  };
+  // "Already bought": the "new box" keypad on Home; the alert clears when it's saved.
+  const alreadyBought = () => {
+    const medID = String(p.medication_id);
+    setAlerts((list) => list.filter((a) => a.id !== current.id));
+    if (pathname === "/") window.dispatchEvent(new CustomEvent(OPEN_REFILL_EVENT, { detail: { medication_id: medID } }));
+    else router.push(`/?refill=${encodeURIComponent(medID)}`);
+  };
   const ui = doseUi.id === current.id ? doseUi : { id: current.id, picking: false, msg: "" };
   const canGive = overdue && currentCaregiver?.role !== "viewer";
   const otherGivers = (allCaregivers ?? []).filter((c) => c.id !== me);
@@ -343,6 +377,49 @@ export function AlertCenter() {
         : ar ? "اشترِ علبة جديدة قبل أن تنفد." : "Buy a new box before it runs out.";
       break;
     }
+    case "refill_followup": {
+      // Issue #65: nobody said "I'll get it", or the one who did hasn't bought it yet.
+      const due = dueText(p.due_by ? String(p.due_by) : undefined, ar, new Date(current.created_at), zone);
+      const owner = <bdi>{String(p.claimed_by_name || "")}</bdi>;
+      title =
+        p.stage === "owner" ? (
+          ar ? (
+            <>
+              قلت إنك ستشتري <bdi>{medName}</bdi> {due} — هل اشتريته؟
+            </>
+          ) : (
+            <>
+              You said you&apos;d get <bdi>{medName}</bdi> {due} — is it bought?
+            </>
+          )
+        ) : p.stage === "everyone" ? (
+          ar ? (
+            <>
+              لم يشترِ {owner} <bdi>{medName}</bdi> بعد ({due})
+            </>
+          ) : (
+            <>
+              {owner} hasn&apos;t bought <bdi>{medName}</bdi> yet ({due})
+            </>
+          )
+        ) : ar ? (
+          <>
+            لم يقل أحد إنه سيشتري <bdi>{medName}</bdi>
+          </>
+        ) : (
+          <>
+            Nobody has said they&apos;ll get <bdi>{medName}</bdi>
+          </>
+        );
+      advice = [
+        Number(p.days_left) >= 0 ? daysLeftText(Number(p.days_left), ar) : "",
+        p.needs_prescription ? (ar ? "أولاً: اطلب من الطبيب وصفة جديدة." : "First: ask the doctor for a new prescription.") : "",
+        p.blood_thinner ? (ar ? "مميّع للدم: لا يجوز أن ينقطع." : "Blood thinner: must not run out.") : "",
+      ]
+        .filter(Boolean)
+        .join(" — ");
+      break;
+    }
     case "emergency_card":
       // Issue #19: someone opened the paramedics' card (QR or SOS).
       title = ar ? "فُتحت بطاقة الطوارئ" : "The emergency card was opened";
@@ -534,6 +611,44 @@ export function AlertCenter() {
             {ui.msg && (
               <p role="alert" className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-rose-800">
                 {ui.msg}
+              </p>
+            )}
+          </div>
+        )}
+        {canRefill && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={claimRefill}
+                data-testid="alert-refill-claim"
+                className={`flex min-h-12 items-center justify-center rounded-xl bg-white px-2 text-base font-black ${red ? "text-rose-800" : "text-amber-900"}`}
+              >
+                {ar ? "سأشتريه أنا" : "I'll get it"}
+              </button>
+              <button
+                type="button"
+                onClick={alreadyBought}
+                data-testid="alert-refill-bought"
+                className="flex min-h-12 items-center justify-center rounded-xl border-2 border-white px-2 text-base font-black text-white"
+              >
+                {ar ? "اشتريته" : "Already bought"}
+              </button>
+            </div>
+            {p.pharmacy_phone ? (
+              <a
+                href={`tel:${String(p.pharmacy_phone)}`}
+                className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border-2 border-white px-2 text-base font-bold text-white"
+              >
+                <Phone className="h-5 w-5 shrink-0" />
+                <span>
+                  {ar ? "اتصل بـ" : "Call"} <bdi>{String(p.pharmacy_name || (ar ? "الصيدلية" : "the pharmacy"))}</bdi>
+                </span>
+              </a>
+            ) : null}
+            {refillMsg.id === current.id && refillMsg.msg && (
+              <p role="alert" className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-rose-800">
+                {refillMsg.msg}
               </p>
             )}
           </div>

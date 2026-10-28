@@ -105,7 +105,8 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 		SELECT id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, image_url, is_active, created_by, created_at, days_of_week, slot_times, min_hours_between, COALESCE(is_critical, 0),
 		       stock_units, units_per_dose, refill_threshold_days, COALESCE(is_prn, 0), prn_min_hours, prn_max_per_24h, COALESCE(photo_urls, '[]'), COALESCE(remind, 1),
 		       COALESCE(active_ingredient, ''), COALESCE(drug_class, ''), COALESCE(dose_by_day, ''),
-		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any')
+		       COALESCE(crush, 'ask_pharmacist'), split_ok, COALESCE(with_food, 'any'),
+		       COALESCE(pharmacy_name, ''), COALESCE(pharmacy_phone, ''), COALESCE(needs_prescription, 0)
 		FROM medications WHERE is_active = 1 ORDER BY name_ar ASC
 	`)
 	if err != nil {
@@ -128,7 +129,7 @@ func (h *MedicationHandler) ListMedications(w http.ResponseWriter, r *http.Reque
 
 		if err := rows.Scan(&m.ID, &m.NameAr, &m.NameEn, &m.Dosage, &instAr, &instEn, &slotsJSON, &imgURL, &m.IsActive, &createdBy, &createdAtStr, &daysJSON, &timesJSON, &minHours, &m.IsCritical,
 			&stock, &m.UnitsPerDose, &m.RefillThresholdDays, &isPRNInt, &prnMinHours, &prnMax24h, &photosJSON, &m.Remind, &m.ActiveIngredient, &m.DrugClass, &doseByDayJSON,
-			&m.Crush, &splitOK, &m.WithFood); err != nil {
+			&m.Crush, &splitOK, &m.WithFood, &m.PharmacyName, &m.PharmacyPhone, &m.NeedsPrescription); err != nil {
 			continue
 		}
 		m.SplitOK = nullableBool(splitOK)
@@ -211,6 +212,8 @@ type CreateMedicationRequest struct {
 	DoseByDay map[string]string `json:"dose_by_day,omitempty"`
 	// Crush / split / food guidance (issue #64).
 	SwallowFields
+	// Pharmacy and prescription (issue #65).
+	RefillFields
 }
 
 func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Request) {
@@ -287,6 +290,11 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	crush, splitOK, withFood := req.SwallowFields.insertValues()
+	if code, msg := req.RefillFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	pharmacyName, pharmacyPhone, needsRx := req.RefillFields.insertValues()
 	ingredient, drugClass := "", ""
 	if req.ActiveIngredient != nil {
 		ingredient = *req.ActiveIngredient
@@ -327,9 +335,9 @@ func (h *MedicationHandler) CreateMedication(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class, dose_by_day, crush, split_ok, with_food)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
-	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass, doseByDay, crush, splitOK, withFood)
+		INSERT INTO medications (id, name_ar, name_en, dosage, instructions_ar, instructions_en, frequency_slots, days_of_week, slot_times, image_url, photo_urls, min_hours_between, is_critical, is_prn, prn_min_hours, prn_max_per_24h, created_by, created_at, remind, active_ingredient, drug_class, dose_by_day, crush, split_ok, with_food, pharmacy_name, pharmacy_phone, needs_prescription)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, req.NameAr, req.NameEn, req.Dosage, req.InstructionsAr, req.InstructionsEn, string(slotsJSON), string(daysJSON), string(timesJSON), req.ImageURL, string(photosJSON), req.MinHoursBetween, req.IsCritical, isPRNInt, req.PRNMinHours, req.PRNMaxPer24h, caregiver.ID, req.Remind == nil || *req.Remind, ingredient, drugClass, doseByDay, crush, splitOK, withFood, pharmacyName, pharmacyPhone, needsRx)
 
 	if err != nil {
 		http.Error(w, `{"error":"failed to create medication"}`, http.StatusInternalServerError)
@@ -425,6 +433,8 @@ type UpdateMedicationRequest struct {
 	StockSettings
 	// Crush / split / food guidance (issue #64); absent = unchanged.
 	SwallowFields
+	// Pharmacy and prescription (issue #65); absent = unchanged.
+	RefillFields
 }
 
 func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Request) {
@@ -480,6 +490,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if code, msg := req.SwallowFields.validate(); code != "" {
+		writeJSONError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	if code, msg := req.RefillFields.validate(); code != "" {
 		writeJSONError(w, http.StatusBadRequest, code, msg)
 		return
 	}
@@ -654,6 +668,10 @@ func (h *MedicationHandler) UpdateMedication(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if err := req.SwallowFields.apply(tx, medID); err != nil {
+		internalError(w, "failed to update medication", err)
+		return
+	}
+	if err := req.RefillFields.apply(tx, medID); err != nil {
 		internalError(w, "failed to update medication", err)
 		return
 	}

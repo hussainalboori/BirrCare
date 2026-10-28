@@ -119,6 +119,10 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
   const [crush, setCrush] = useState<NonNullable<Medication["crush"]>>("ask_pharmacist");
   const [splitOK, setSplitOK] = useState<"" | "yes" | "no">("");
   const [withFood, setWithFood] = useState<NonNullable<Medication["with_food"]>>("any");
+  // Issue #65: the pharmacy to call when it runs low, and a new prescription first.
+  const [pharmacyName, setPharmacyName] = useState("");
+  const [pharmacyPhone, setPharmacyPhone] = useState("");
+  const [needsPrescription, setNeedsPrescription] = useState(false);
   const [duplicateReason, setDuplicateReason] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
@@ -182,6 +186,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setCrush("ask_pharmacist");
     setSplitOK("");
     setWithFood("any");
+    setPharmacyName("");
+    setPharmacyPhone("");
+    setNeedsPrescription(false);
     setDoseByDay({});
     setShowDoseByDay(false);
     setDuplicate(null);
@@ -224,6 +231,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
     setCrush(med.crush || "ask_pharmacist");
     setSplitOK(med.split_ok === true ? "yes" : med.split_ok === false ? "no" : "");
     setWithFood(med.with_food || "any");
+    setPharmacyName(med.pharmacy_name || "");
+    setPharmacyPhone(med.pharmacy_phone || "");
+    setNeedsPrescription(!!med.needs_prescription);
     setDuplicate(null);
     setDuplicateReason("");
     setSaveError("");
@@ -296,6 +306,9 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
       crush,
       split_ok: splitOK === "" ? null : splitOK === "yes",
       with_food: withFood,
+      pharmacy_name: pharmacyName.trim(),
+      pharmacy_phone: pharmacyPhone.trim(),
+      needs_prescription: needsPrescription,
     };
     try {
       let res: { warnings?: string[] } | null = null;
@@ -888,6 +901,39 @@ export function MedicationCatalogModal({ isOpen, onClose, onUpdated }: Medicatio
                     : "Remind us if a dose isn't logged (whoever is on duty after 45 min, everyone after 90; blood thinners 30 and 60)"}
                 </label>
               )}
+
+              {/* PHARMACY (issue #65): shown on the low-stock card with a call button */}
+              <fieldset className="mb-4 rounded-xl border border-slate-200 p-3 dark:border-slate-700" data-testid="med-pharmacy">
+                <legend className="px-1 text-sm font-bold text-slate-800 dark:text-slate-100">{locale === "ar" ? "عندما ينفد: من أين نشتريه؟" : "When it runs low: where do we buy it?"}</legend>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "الصيدلية (اختياري)" : "Pharmacy (optional)"}
+                    <input
+                      value={pharmacyName}
+                      onChange={(e) => setPharmacyName(e.target.value)}
+                      maxLength={80}
+                      data-testid="med-pharmacy-name"
+                      className="mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-base text-slate-800 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-800"
+                    />
+                  </label>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {locale === "ar" ? "هاتف الصيدلية (اختياري)" : "Pharmacy phone (optional)"}
+                    <input
+                      type="tel"
+                      dir="ltr"
+                      value={pharmacyPhone}
+                      onChange={(e) => setPharmacyPhone(e.target.value)}
+                      maxLength={20}
+                      data-testid="med-pharmacy-phone"
+                      className="mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-base text-slate-800 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-800"
+                    />
+                  </label>
+                </div>
+                <label className="mt-3 flex min-h-12 items-center gap-3 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  <input type="checkbox" checked={needsPrescription} onChange={(e) => setNeedsPrescription(e.target.checked)} className="h-5 w-5" data-testid="med-needs-prescription" />
+                  {locale === "ar" ? "يحتاج وصفة جديدة من الطبيب كل مرة" : "Needs a new prescription from the doctor each time"}
+                </label>
+              </fieldset>
 
               {/* STOCK (issue #20) */}
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">

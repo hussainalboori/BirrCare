@@ -33,6 +33,12 @@ type StockStatus struct {
 	ThresholdDays int      `json:"refill_threshold_days"`
 	Low           bool     `json:"low"`
 	BloodThinner  bool     `json:"blood_thinner"`
+	// Issue #65: where to buy it, whether the doctor must write a new
+	// prescription first, and who is getting it (the open refill task).
+	PharmacyName      string      `json:"pharmacy_name,omitempty"`
+	PharmacyPhone     string      `json:"pharmacy_phone,omitempty"`
+	NeedsPrescription bool        `json:"needs_prescription"`
+	Refill            *RefillTask `json:"refill,omitempty"`
 }
 
 // dosesPerDay averages the schedule over a week: 2 slots on 3 days = 6/7 a day.
@@ -52,7 +58,8 @@ func daysLeft(stock, perDose, perDay float64) *float64 {
 }
 
 const stockSelect = `SELECT id, name_ar, name_en, dosage, stock_units, units_per_dose, refill_threshold_days,
-	frequency_slots, COALESCE(days_of_week, ''), COALESCE(is_critical, 0), COALESCE(low_stock_alerted_at, '')
+	frequency_slots, COALESCE(days_of_week, ''), COALESCE(is_critical, 0), COALESCE(low_stock_alerted_at, ''),
+	COALESCE(pharmacy_name, ''), COALESCE(pharmacy_phone, ''), COALESCE(needs_prescription, 0)
 	FROM medications`
 
 type stockRow struct {
@@ -67,7 +74,7 @@ func scanStock(scan func(...any) error) (stockRow, error) {
 	var stock sql.NullFloat64
 	var slotsJSON, daysJSON, alerted string
 	if err := scan(&r.MedicationID, &r.NameAr, &r.NameEn, &r.Dosage, &stock, &r.UnitsPerDose, &r.ThresholdDays,
-		&slotsJSON, &daysJSON, &r.BloodThinner, &alerted); err != nil {
+		&slotsJSON, &daysJSON, &r.BloodThinner, &alerted, &r.PharmacyName, &r.PharmacyPhone, &r.NeedsPrescription); err != nil {
 		return r, err
 	}
 	var slots, days []string
@@ -86,8 +93,9 @@ func scanStock(scan func(...any) error) (stockRow, error) {
 // stockChange is what a write did to one medicine's stock, for SSE and push
 // after the commit.
 type stockChange struct {
-	Status  StockStatus
-	AlertID string
+	Status     StockStatus
+	AlertID    string
+	RefillDone string // the refill task this change closed (issue #65)
 }
 
 // changeStock adds delta (negative = out of the box) inside tx, never below 0,
@@ -124,12 +132,20 @@ func changeStock(tx *sql.Tx, medID, logID, caregiverID, reason string, delta flo
 		if ch.AlertID, err = recordAlert(tx, "low_stock", medID, caregiverID, map[string]interface{}{
 			"medication_id": medID, "name_ar": r.NameAr, "name_en": r.NameEn, "stock_units": after,
 			"days_left": *r.DaysLeft, "blood_thinner": r.BloodThinner,
+			"needs_prescription": r.NeedsPrescription, "pharmacy_name": r.PharmacyName, "pharmacy_phone": r.PharmacyPhone,
 		}); err != nil {
+			return nil, err
+		}
+		// Issue #65: someone has to say "I'll get it".
+		if err := ensureRefillTask(tx, medID, ch.AlertID, now); err != nil {
 			return nil, err
 		}
 	case !r.Low && r.alerted:
 		// Refilled above the threshold: the next drop alerts again.
 		if _, err := tx.Exec(`UPDATE medications SET low_stock_alerted_at = NULL WHERE id = ?`, medID); err != nil {
+			return nil, err
+		}
+		if ch.RefillDone, err = completeRefillTask(tx, medID, caregiverID, now); err != nil {
 			return nil, err
 		}
 	}
@@ -172,7 +188,11 @@ func (h *MedicationHandler) broadcastStock(ch *stockChange, c *models.Caregiver)
 		h.Push.NotifyAsync(ch.AlertID, "low_stock", c.ID)
 		return
 	}
-	h.Broker.Broadcast("STOCK_UPDATED", actorOf(c), map[string]interface{}{"stock": ch.Status})
+	payload := map[string]interface{}{"stock": ch.Status}
+	if ch.RefillDone != "" {
+		payload["alert_id"] = ch.RefillDone // apps reload their alerts: the follow-ups are gone
+	}
+	h.Broker.Broadcast("STOCK_UPDATED", actorOf(c), payload)
 }
 
 // ListStock returns every medicine whose stock is tracked, lowest first.
@@ -182,15 +202,26 @@ func (h *MedicationHandler) ListStock(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to load stock", err)
 		return
 	}
-	defer rows.Close()
 	out := []StockStatus{}
 	for rows.Next() {
 		row, err := scanStock(rows.Scan)
 		if err != nil {
+			rows.Close()
 			internalError(w, "failed to load stock", err)
 			return
 		}
 		out = append(out, row.StockStatus)
+	}
+	rows.Close() // release the single pooled connection before the next query
+	tasks, err := openRefillTasks(h.DB)
+	if err != nil {
+		internalError(w, "failed to load refill tasks", err)
+		return
+	}
+	for i := range out {
+		if t, ok := tasks[out[i].MedicationID]; ok {
+			out[i].Refill = &t
+		}
 	}
 	for i := 1; i < len(out); i++ { // few rows: insertion sort by days left
 		for j := i; j > 0 && lessDays(out[j], out[j-1]); j-- {
@@ -256,6 +287,14 @@ func (h *MedicationHandler) UpdateStock(w http.ResponseWriter, r *http.Request) 
 		delta = req.Units - current.Float64
 	}
 	ch, err := changeStock(tx, medID, "", me.ID, req.Action, delta, now)
+	// A new box closes the refill task even if the medicine is still below its
+	// threshold: someone went to the pharmacy (issue #65).
+	if err == nil && req.Action == "refill" && ch.RefillDone == "" {
+		ch.RefillDone, err = completeRefillTask(tx, medID, me.ID, now)
+		if err == nil && ch.RefillDone != "" {
+			ch.Status.Refill = nil
+		}
+	}
 	if err == nil {
 		err = audit.Record(tx, me.ID, "STOCK_"+map[string]string{"refill": "REFILLED", "count": "COUNTED"}[req.Action], "medication", medID,
 			fmt.Sprintf("%s %g units; now %g", req.Action, req.Units, ch.Status.StockUnits))

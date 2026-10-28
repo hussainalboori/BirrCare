@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range', 'appointment_reminder', 'lab_test_due')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range', 'appointment_reminder', 'lab_test_due', 'refill_followup')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -1145,12 +1145,43 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("failed migrating alerts for appointment reminders: %w", err)
 		}
 	}
+	// Migrate alerts for refill follow-ups (issue #65), keeping resolved_at.
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'refill_followup'") {
+		log.Println("Migrating alerts: adding refill_followup kind...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v16;
+			CREATE TABLE alerts_v16 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range', 'appointment_reminder', 'lab_test_due', 'refill_followup')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id),
+				resolved_at TEXT
+			);
+			INSERT INTO alerts_v16 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v16 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for refill follow-ups: %w", err)
+		}
+	}
 	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dose_overdue ON alerts(ref_id) WHERE kind = 'dose_overdue'`); err != nil {
 		return fmt.Errorf("failed creating uq_alerts_dose_overdue: %w", err)
 	}
 	// One reminder per appointment, per moment (evening before / 2 h before), and per lab test.
 	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_reminders ON alerts(kind, ref_id) WHERE kind IN ('appointment_reminder', 'lab_test_due')`); err != nil {
 		return fmt.Errorf("failed creating uq_alerts_reminders: %w", err)
+	}
+	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_refill ON alerts(ref_id) WHERE kind = 'refill_followup'`); err != nil {
+		return fmt.Errorf("failed creating uq_alerts_refill: %w", err)
 	}
 	// medications.remind: admins can turn overdue reminders off (e.g. a vitamin).
 	// medication_logs.recorded_by: who tapped, when logging for someone else who gave it.
@@ -1277,6 +1308,42 @@ func Migrate(database *sql.DB) error {
 				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
 			}
 		}
+	}
+
+	// Issue #65: who is getting a medicine that is running low, and by when; the
+	// pharmacy to call, and whether a new prescription is needed first.
+	for _, c := range []struct{ col, def string }{
+		{"pharmacy_name", "TEXT NOT NULL DEFAULT ''"},
+		{"pharmacy_phone", "TEXT NOT NULL DEFAULT ''"},
+		{"needs_prescription", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		var n int
+		_ = database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('medications') WHERE name = ?", c.col).Scan(&n)
+		if n == 0 {
+			if _, err := database.Exec("ALTER TABLE medications ADD COLUMN " + c.col + " " + c.def); err != nil {
+				return fmt.Errorf("failed adding medications.%s: %w", c.col, err)
+			}
+		}
+	}
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS refill_tasks (
+			id TEXT PRIMARY KEY,
+			medication_id TEXT NOT NULL REFERENCES medications(id),
+			alert_id TEXT,
+			created_at TEXT NOT NULL,
+			claimed_by TEXT REFERENCES caregivers(id),
+			claimed_at TEXT,
+			due_by TEXT,
+			done_at TEXT,
+			done_by TEXT REFERENCES caregivers(id),
+			notes TEXT NOT NULL DEFAULT '',
+			unclaimed_alerted_at TEXT,
+			owner_reminded_at TEXT,
+			everyone_reminded_at TEXT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_refill_open ON refill_tasks(medication_id) WHERE done_at IS NULL;
+	`); err != nil {
+		return fmt.Errorf("failed creating refill_tasks: %w", err)
 	}
 
 	// Issue #63: appointments (doctor, lab, physio) with reminders, and a running

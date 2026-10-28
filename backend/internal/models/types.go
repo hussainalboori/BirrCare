@@ -85,6 +85,10 @@ type Medication struct {
 	Crush    string `json:"crush"`
 	SplitOK  *bool  `json:"split_ok"`
 	WithFood string `json:"with_food"`
+	// Refill (issue #65): where to buy it, and whether a new prescription is needed.
+	PharmacyName      string `json:"pharmacy_name,omitempty"`
+	PharmacyPhone     string `json:"pharmacy_phone,omitempty"`
+	NeedsPrescription bool   `json:"needs_prescription"`
 	// PRN (as-needed) medication settings (issue #25).
 	IsPRN        bool     `json:"is_prn"`
 	PRNMinHours  *float64 `json:"prn_min_hours,omitempty"`

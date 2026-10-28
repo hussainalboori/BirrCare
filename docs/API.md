@@ -300,6 +300,11 @@ Tracks pill inventory, daily consumption rates, and days remaining. Caregivers c
 
 PRN medications are taken when needed (for pain, headache, fever) rather than on a fixed schedule.
 
+
+### `POST /api/v1/medications/{id}/refill/claim` (issue #65)
+"I'll get it". `{notes?}` (optional). Caregivers and admins only; viewers get 403. It sets the owner, and `due_by` = the next 12:00 at home (today if claimed before 06:00, otherwise tomorrow). It resolves the medicine's `low_stock` alert and its follow-ups for everyone, and broadcasts `REFILL_CLAIMED`. Claiming again (someone else takes over) moves the owner and the due time. `409 NOT_LOW` if the medicine isn't running low.
+
+When the days left drop below the threshold, a refill task opens with the `low_stock` alert. `GET /medications/stock` returns it as `refill: {id, claimed_by, claimed_by_name, claimed_at, due_by}`, plus `pharmacy_name`, `pharmacy_phone` and `needs_prescription` (also set on `POST`/`PUT /medications`). A refill (`action: "refill"`), or a count back above the threshold, closes the task. The server follows up every minute with `refill_followup` alerts (`stage`: `unclaimed` to everyone after 12 h unclaimed; `owner` to the owner at `due_by`; `everyone` 4 h later). Each is sent once. The payload has `critical: true` (red) for a blood thinner with 2 days or less left. There are no follow-ups while care is paused.
 ### `GET /api/v1/medications/prn`
 Returns active PRN medications with current safety status:
 - Rolling 24-hour dose count.

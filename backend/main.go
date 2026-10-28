@@ -92,6 +92,7 @@ func main() {
 	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)
 	handlers.StartDoseWatcher(reminderCtx, database, notifier, broker)
 	handlers.StartAppointmentReminders(reminderCtx, database, notifier, broker)
+	handlers.StartRefillWatcher(reminderCtx, database, notifier, broker)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),

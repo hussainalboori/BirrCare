@@ -51,7 +51,7 @@ test("Refilled → keypad → 30 → the warning disappears on both phones", asy
   await expect(cardA).toContainText("Blood thinner");
   await expect(b.getByTestId("low-stock")).toContainText("يكفي نحو 3 أيام");
 
-  await cardA.getByRole("button", { name: "Refilled" }).click();
+  await cardA.getByRole("button", { name: "Already bought" }).click(); // "Refilled" before issue #65
   const pad = a.getByRole("dialog", { name: "New box" });
   await pad.getByRole("button", { name: "3", exact: true }).click();
   await pad.getByRole("button", { name: "0", exact: true }).click();

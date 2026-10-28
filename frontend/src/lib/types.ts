@@ -94,6 +94,10 @@ export interface Medication {
   crush?: "ok" | "do_not_crush" | "ask_pharmacist";
   split_ok?: boolean | null;
   with_food?: "with_food" | "empty_stomach" | "any";
+  /** Issue #65: the pharmacy to call, and whether the doctor must write a new prescription first. */
+  pharmacy_name?: string;
+  pharmacy_phone?: string;
+  needs_prescription?: boolean;
   /** PRN (as-needed) medication (issue #25). */
   is_prn?: boolean;
   prn_min_hours?: number | null;
@@ -120,6 +124,21 @@ export interface StockStatus {
   refill_threshold_days: number;
   low: boolean;
   blood_thinner: boolean;
+  /** Issue #65: where to buy it, a new prescription first, and who is getting it. */
+  pharmacy_name?: string;
+  pharmacy_phone?: string;
+  needs_prescription?: boolean;
+  refill?: RefillTask;
+}
+
+export interface RefillTask {
+  id: string;
+  medication_id: string;
+  created_at: string;
+  claimed_by?: string;
+  claimed_by_name?: string;
+  claimed_at?: string;
+  due_by?: string;
 }
 
 export interface MedicationLog {

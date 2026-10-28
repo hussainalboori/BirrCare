@@ -156,6 +156,12 @@ func MessageFor(kind, alertID, lang string) Message {
 			body = "نتيجة INR خارج حدود الطبيب — افتح رعاية بر"
 		}
 	}
+	if kind == "refill_followup" {
+		body = "A medicine still needs buying — open Birrcare"
+		if ar {
+			body = "دواء لم يُشترَ بعد — افتح رعاية بر"
+		}
+	}
 	if kind == "appointment_reminder" {
 		body = "An appointment is coming up — open Birrcare"
 		if ar {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RESYNC_EVENT } from "@/hooks/useLiveSync";
 
 // Issue #12: alerts missed while the phone was locked are replayed on resync,
@@ -21,6 +21,8 @@ const playAlert = vi.fn();
 let mockRole = "caregiver";
 vi.mock("@/lib/api", () => ({ fetchApi: (e: string, o?: RequestInit) => fetchApi(e, o) }));
 vi.mock("@/lib/alertSound", () => ({ playAlert: (k: string) => playAlert(k), installAudioUnlock: () => {} }));
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: routerPush }), usePathname: () => "/vitals" }));
 vi.mock("@/context/LanguageContext", () => ({ useLanguage: () => ({ locale: "en" }) }));
 vi.mock("@/context/CaregiverContext", () => ({
   useCaregiver: () => ({
@@ -204,5 +206,31 @@ describe("HomeTimeBanner (issue #58)", () => {
     device("Asia/Bahrain");
     render(<HomeTimeBanner />);
     expect(screen.queryByTestId("home-time-banner")).toBeNull();
+  });
+});
+
+describe("AlertCenter: low stock gets an owner (issue #65)", () => {
+  it("I'll get it claims the refill and clears the bar; Already bought goes to the keypad", async () => {
+    unacked = [{ ...crisis, id: "ls1", kind: "low_stock", payload: { medication_id: "med_clop", name_en: "Clopidogrel", days_left: 2, blood_thinner: true, pharmacy_name: "Al-Nahdi", pharmacy_phone: "+966110000000" }, emergency: false }];
+    const { container } = render(<AlertCenter />);
+    const bar = await screen.findByTestId("alert-bar");
+    expect(bar.querySelector('a[href="tel:+966110000000"]')?.textContent).toContain("Al-Nahdi");
+    expect(bar.querySelector('a[href^="tel:997"]')).toBeNull(); // no emergency call for a pill
+    fireEvent.click(screen.getByTestId("alert-refill-claim"));
+    await waitFor(() => expect(fetchApi.mock.calls.some(([e, o]) => e === "/medications/med_clop/refill/claim" && o?.method === "POST")).toBe(true));
+    await waitFor(() => expect(container.querySelector("[data-kind]")).toBeNull());
+    cleanup();
+
+    unacked = [{ ...crisis, id: "rf1", kind: "refill_followup", payload: { medication_id: "med_clop", name_en: "Clopidogrel", stage: "owner", due_by: "2026-10-29T09:00:00Z", days_left: 1, critical: true }, emergency: false }];
+    const second = render(<AlertCenter />);
+    const red = await waitFor(() => {
+      const el = second.container.querySelector('[data-kind="refill_followup"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(red.className).toContain("bg-rose-700");
+    expect(red.textContent).toContain("is it bought?");
+    fireEvent.click(within(red).getByTestId("alert-refill-bought"));
+    expect(routerPush).toHaveBeenCalledWith("/?refill=med_clop");
   });
 });
