@@ -101,6 +101,7 @@ func NewRouter(o Options) http.Handler {
 	carePauseHandler := &handlers.CarePauseHandler{DB: o.DB, Broker: o.Broker}
 	labHandler := &handlers.LabHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	appointmentHandler := &handlers.AppointmentHandler{DB: o.DB, Broker: o.Broker}
+	summaryHandler := &handlers.DailySummaryHandler{DB: o.DB}
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
@@ -326,6 +327,10 @@ func NewRouter(o Options) http.Handler {
 				// Lab results, INR (issue #62)
 				api.Get("/labs", labHandler.List)
 				api.Post("/labs", labHandler.Create)
+				// Daily family summary (issue #67)
+				api.Get("/summary/today", summaryHandler.Today)
+				api.Get("/summary/prefs", summaryHandler.GetPrefs)
+				api.Put("/summary/prefs", summaryHandler.PutPrefs)
 				// Appointments and questions for the doctor (issue #63)
 				api.Get("/appointments", appointmentHandler.List)
 				api.Post("/appointments", appointmentHandler.Create)

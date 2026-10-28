@@ -558,6 +558,25 @@ Sends a safe test notification to your registered phones after 10 seconds.
 
 ---
 
+## Daily Family Summary (issue #67)
+
+### `GET /api/v1/summary/today?date=&lang=`
+Any signed-in user, viewers included. Returns `{date, lang, headline, lines, meds_expected, meds_given, missed, blood_thinner_ok, bp_count, bp_min_systolic, bp_max_systolic, alerts, notes, fluid_ml, fluid_target_ml, incidents, on_duty, last_handover}` for a household day (default today), in the reader's language. The summary covers:
+- doses given vs expected, and the blood thinner;
+- the blood pressure (top number) range;
+- health alerts in plain words;
+- meal, mood and sleep tags from handovers;
+- fluids, falls and seizures;
+- who was on duty;
+- the last handover note (up to 140 letters).
+
+While care is paused (#59) it returns only `paused_since` and "In hospital since …".
+
+### `GET /api/v1/summary/prefs` & `PUT /api/v1/summary/prefs`
+`{enabled, lock_details, time}`. Each person opts in for themselves (default off). `lock_details` (default off) lets the lock-screen notification show the headline; otherwise it says only "Today's summary is ready". `time` (household `HH:MM`, default `21:00`) can be changed only by the Super Admin. Changes are audited.
+
+**Sending.** Every minute the server checks whether the household time has reached `time`. If so, it pushes today's summary once per opted-in user (`daily_summary_sent`), in their language, at normal urgency. There is no email.
+
 ## Appointments & Questions for the Doctor (issue #63)
 
 Viewers can read everything here; caregivers and admins can change it. Every write is audited.

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"os"
 	"time"
 )
@@ -40,4 +41,9 @@ var TotalDoseForTest = totalDose
 // ShiftSummaryForTest runs the night-shift summary (issue #66) at a fixed moment.
 func ShiftSummaryForTest(q querier, days int, now time.Time) (map[string]interface{}, error) {
 	return shiftSummary(q, days, now)
+}
+
+// BuildDailySummaryForTest builds the daily family summary (issue #67).
+func BuildDailySummaryForTest(db *sql.DB, date, lang string, now time.Time) (*DailySummary, error) {
+	return buildDailySummary(db, date, lang, now)
 }

@@ -6,6 +6,7 @@ import { SiblingBar } from "@/components/SiblingBar";
 import { DayReports } from "@/components/DayReports";
 import { PushOptIn } from "@/components/PushOptIn";
 import { NightThanksCard } from "@/components/NightThanksCard";
+import { TodaySummaryCard } from "@/components/TodaySummaryCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 
@@ -25,6 +26,8 @@ export default function ReportPage() {
           {ar ? "التقرير" : "Report"}
         </h1>
         <SiblingBar className="mb-4" />
+        {/* Issue #67: "how was she today?" in ten seconds, viewers included */}
+        <TodaySummaryCard />
         <DayReports />
         {/* Issue #66: thank-you for the nights, rest notes, days away */}
         <NightThanksCard />

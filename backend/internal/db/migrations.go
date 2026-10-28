@@ -1346,6 +1346,25 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating refill_tasks: %w", err)
 	}
 
+	// Issue #67: the daily family summary: who opted in (viewers too), whether
+	// the lock screen may show values, and one push per person per day.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS daily_summary_prefs (
+			caregiver_id TEXT PRIMARY KEY REFERENCES caregivers(id) ON DELETE CASCADE,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			lock_details INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS daily_summary_sent (
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+			date TEXT NOT NULL,
+			sent_at TEXT NOT NULL,
+			PRIMARY KEY (caregiver_id, date)
+		);
+	`); err != nil {
+		return fmt.Errorf("failed creating daily summary tables: %w", err)
+	}
+
 	// Issue #66: dates a sibling can't take a shift (travel, exams), shown when
 	// the Super Admin assigns the roster.
 	if _, err := database.Exec(`

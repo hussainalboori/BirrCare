@@ -287,7 +287,26 @@ func (n *Notifier) TestAsync(caregiverID string, delay time.Duration) {
 	}()
 }
 
+// SendMessageAsync pushes a non-alert message (the daily summary, issue #67) to
+// one caregiver's phones, built in each phone's language. Low urgency.
+func (n *Notifier) SendMessageAsync(caregiverID string, msg func(lang string) Message) {
+	if n == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := n.sendMessage(ctx, msg, webpush.UrgencyNormal, `c.is_active = 1 AND s.caregiver_id = ?`, caregiverID); err != nil {
+			log.Printf("[PUSH] message for %s: %v", caregiverID, err)
+		}
+	}()
+}
+
 func (n *Notifier) send(ctx context.Context, alertID, kind, where string, arg string) error {
+	return n.sendMessage(ctx, func(lang string) Message { return MessageFor(kind, alertID, lang) }, webpush.UrgencyHigh, where, arg)
+}
+
+func (n *Notifier) sendMessage(ctx context.Context, msg func(lang string) Message, urgency webpush.Urgency, where string, arg string) error {
 	rows, err := n.DB.QueryContext(ctx, `
 		SELECT s.id, s.endpoint, s.p256dh, s.auth, COALESCE(c.preferred_lang, 'ar')
 		FROM push_subscriptions s JOIN caregivers c ON c.id = s.caregiver_id
@@ -305,7 +324,7 @@ func (n *Notifier) send(ctx context.Context, alertID, kind, where string, arg st
 	rows.Close() // release the single pooled connection before sending
 	var failed int
 	for _, s := range subs {
-		payload, _ := json.Marshal(MessageFor(kind, alertID, s.lang))
+		payload, _ := json.Marshal(msg(s.lang))
 		resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 			Endpoint: s.endpoint,
 			Keys:     webpush.Keys{P256dh: s.p256dh, Auth: s.auth},
@@ -315,7 +334,7 @@ func (n *Notifier) send(ctx context.Context, alertID, kind, where string, arg st
 			VAPIDPublicKey:  n.PublicKey,
 			VAPIDPrivateKey: n.privateKey,
 			TTL:             3600,
-			Urgency:         webpush.UrgencyHigh,
+			Urgency:         urgency,
 		})
 		if err != nil {
 			failed++
