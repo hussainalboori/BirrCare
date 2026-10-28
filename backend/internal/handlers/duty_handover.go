@@ -149,12 +149,19 @@ func (h *ShiftsHandler) PassDuty(w http.ResponseWriter, r *http.Request) {
 		"alert_id": alertID, // lets the recipient's phone show "Accept duty" at once
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]interface{}{
 		"status": "success", "duty_handover_id": dutyID, "note_id": noteID, "created_at": createdAt,
 		"to_caregiver_id": req.ToCaregiverID, "to_name": toName, "urgent_flag": urgent,
-	})
+	}
+	// Issue #66: passing tonight to someone on their 4th night in a row warns (never blocks).
+	if warn, err := assignmentWarnings(h.DB, req.ToCaregiverID, shiftID, shiftDate); err == nil {
+		for k, v := range warn {
+			out[k] = v
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(out)
 }
 
 // AcceptDuty is the recipient's "Accept duty". Idempotent.

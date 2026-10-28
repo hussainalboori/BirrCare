@@ -301,6 +301,12 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/shifts/assignments", shiftsHandler.AssignShift)
 				api.Delete("/shifts/assignments/{id}", shiftsHandler.DeleteAssignment)
 				api.Get("/shifts/current-duty", shiftsHandler.GetCurrentDuty)
+				// Issue #66: night-shift fairness, rest warnings and unavailable dates
+				api.Get("/shifts/summary", shiftsHandler.Summary)
+				api.Get("/shifts/load", shiftsHandler.Load)
+				api.Get("/shifts/unavailable", shiftsHandler.ListUnavailable)
+				api.Post("/shifts/unavailable", shiftsHandler.AddUnavailable)
+				api.Delete("/shifts/unavailable/{id}", shiftsHandler.RemoveUnavailable)
 				api.Post("/shifts/handover", shiftsHandler.PassDuty)
 				api.Get("/patient", emergencyHandler.GetProfile)
 				api.Put("/patient", emergencyHandler.UpdateProfile)

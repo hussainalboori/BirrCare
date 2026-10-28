@@ -5,6 +5,7 @@ import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { SiblingBar } from "@/components/SiblingBar";
 import { DayReports } from "@/components/DayReports";
 import { PushOptIn } from "@/components/PushOptIn";
+import { NightThanksCard } from "@/components/NightThanksCard";
 import { useLanguage } from "@/context/LanguageContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 
@@ -25,6 +26,8 @@ export default function ReportPage() {
         </h1>
         <SiblingBar className="mb-4" />
         <DayReports />
+        {/* Issue #66: thank-you for the nights, rest notes, days away */}
+        <NightThanksCard />
         <PushOptIn />
       </main>
     </div>

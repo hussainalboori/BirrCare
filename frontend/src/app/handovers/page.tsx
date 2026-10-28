@@ -15,6 +15,7 @@ import { enqueue, isNetworkError, newRequestId, OUTBOX_RESULT_EVENT } from "@/li
 import { formatShortDate, formatTime } from "@/lib/datetime";
 import { Ltr } from "@/components/Ltr";
 import { ClipboardList, AlertTriangle, Clock, Send, Loader2, ArrowRightLeft, Check, Pencil, Trash2, X } from "lucide-react";
+import { assignWarningText, type AssignWarning } from "@/lib/roster";
 
 export default function HandoversPage() {
   const { t, locale } = useLanguage();
@@ -217,10 +218,11 @@ export default function HandoversPage() {
     const requestId = newRequestId();
     try {
       if (passTo) {
+        let passed: AssignWarning | null = null;
         // Passing duty moves the roster, so it is never queued offline: it must
         // happen now or visibly fail.
         try {
-          await fetchApi("/shifts/handover", {
+          passed = await fetchApi<AssignWarning>("/shifts/handover", {
             method: "POST",
             body: JSON.stringify({ to_caregiver_id: passTo, tags, summary: note.summary, urgent_flag: note.urgent_flag }),
           });
@@ -231,7 +233,9 @@ export default function HandoversPage() {
           if (code === "CANNOT_TAKE_DUTY") throw new Error(ar ? "هذا الحساب للمشاهدة فقط ولا يمكنه استلام المناوبة." : "This account is view-only and can't take duty.");
           throw err;
         }
-        setSentMessage(ar ? `سُلّمت المناوبة إلى ${passToName}. سيصلها تنبيه لقبولها.` : `Duty passed to ${passToName}. They'll get an alert to accept it.`);
+        // Issue #66: a gentle word when this is their 4th night in a row (never a block).
+        const rest = passed?.warning === "consecutive_nights" ? assignWarningText({ warnings: ["consecutive_nights"], consecutive_nights: passed.consecutive_nights }, passToName, ar)[0] : "";
+        setSentMessage((ar ? `سُلّمت المناوبة إلى ${passToName}. سيصلها تنبيه لقبولها.` : `Duty passed to ${passToName}. They'll get an alert to accept it.`) + (rest ? ` ${rest}` : ""));
       } else {
         try {
           await fetchApi("/handovers", { method: "POST", body: JSON.stringify({ ...note, client_request_id: requestId }) });

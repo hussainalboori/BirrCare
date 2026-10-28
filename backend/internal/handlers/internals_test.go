@@ -36,3 +36,8 @@ func NextBackupSlotForTest(now time.Time, loc *time.Location, times []string) ti
 // Emergency card internals (issue #56), for the external tests.
 var EmergencyTokenHashForTest = emergencyTokenHash
 var TotalDoseForTest = totalDose
+
+// ShiftSummaryForTest runs the night-shift summary (issue #66) at a fixed moment.
+func ShiftSummaryForTest(q querier, days int, now time.Time) (map[string]interface{}, error) {
+	return shiftSummary(q, days, now)
+}

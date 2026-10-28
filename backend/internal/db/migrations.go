@@ -1346,6 +1346,23 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating refill_tasks: %w", err)
 	}
 
+	// Issue #66: dates a sibling can't take a shift (travel, exams), shown when
+	// the Super Admin assigns the roster.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS caregiver_unavailability (
+			id TEXT PRIMARY KEY,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+			start_date TEXT NOT NULL,
+			end_date TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			created_by TEXT REFERENCES caregivers(id),
+			created_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_unavailability_dates ON caregiver_unavailability(caregiver_id, start_date, end_date);
+	`); err != nil {
+		return fmt.Errorf("failed creating caregiver_unavailability: %w", err)
+	}
+
 	// Issue #63: appointments (doctor, lab, physio) with reminders, and a running
 	// list of questions for the doctor, answered after the visit.
 	if _, err := database.Exec(`

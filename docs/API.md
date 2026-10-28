@@ -495,6 +495,19 @@ Logs shift handover summaries with structured status tags:
 | `POST` | `/api/v1/shifts/assignments` | Assigns a caregiver to a shift on a date. |
 | `DELETE` | `/api/v1/shifts/assignments/{id}` | Removes an assignment. |
 
+### Night-shift fairness (issue #66)
+- `GET /api/v1/shifts/summary?days=30` (1–92): `{from, to, days, night_start: "22:00", night_end: "07:00", caregivers: [...]}`. Each caregiver has `{caregiver_id, name, avatar_color, hours_on_duty, night_hours, nights, consecutive_nights, last_night_off, night_alerts_answered}`, sorted by name.
+  - Nights are 22:00–07:00 household time (`APP_TIMEZONE`). A shift "covers a night" when it overlaps that window by 4 hours or more.
+  - Hours count up to now.
+  - `night_alerts_answered` counts alerts the caregiver acknowledged between 22:00 and 07:00.
+  - A passed duty counts for whoever it was passed to.
+- `GET /api/v1/shifts/load?date=YYYY-MM-DD`: for the assignment picker. Returns `{night_shift_ids, caregivers: [{caregiver_id, nights_before, unavailable, unavailable_reason}]}`.
+- `POST /shifts/assignments` and `POST /shifts/handover` still save, but add `warning` / `warnings` when the assignment would be someone's 4th night or more in a row (`"consecutive_nights"`, with `consecutive_nights: N`) or a date they marked as away (`"unavailable"`, with `unavailable_reason`).
+- `GET /api/v1/shifts/unavailable?from=&to=` (default: today to +90 days).
+- `POST /api/v1/shifts/unavailable {caregiver_id?, start_date, end_date?, reason?}`: anyone for themselves; the Super Admin for anyone.
+- `DELETE /api/v1/shifts/unavailable/{id}`: the owner or the Super Admin.
+- Both writes are audited.
+
 ### `GET /api/v1/shifts/current-duty`
 Identifies which sibling is on duty right now.
 

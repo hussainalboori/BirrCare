@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"birrcare/backend/internal/audit"
 	"birrcare/backend/internal/auth"
 	"birrcare/backend/internal/models"
 	"birrcare/backend/internal/push"
@@ -449,13 +450,20 @@ func (h *ShiftsHandler) AssignShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Log(h.DB, caregiver.ID, "SHIFT_ASSIGNED", "shift_assignment", req.ShiftID+":"+req.Date, "Assigned "+req.CaregiverID)
 	if h.Broker != nil {
 		h.Broker.Broadcast("DUTY_UPDATED", models.ActorInfo{ID: caregiver.ID, Name: caregiver.Name, AvatarColor: caregiver.AvatarColor}, map[string]string{"date": req.Date, "shift_id": req.ShiftID, "caregiver_id": req.CaregiverID})
 	}
 
+	// Issue #66: a 4th night in a row, or a day they marked as away: saved, with a warning.
+	out, err := assignmentWarnings(h.DB, req.CaregiverID, req.ShiftID, req.Date)
+	if err != nil {
+		out = map[string]interface{}{}
+	}
+	out["status"], out["date"] = "assigned", req.Date
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "assigned", "date": req.Date})
+	json.NewEncoder(w).Encode(out)
 }
 
 func (h *ShiftsHandler) DeleteAssignment(w http.ResponseWriter, r *http.Request) {

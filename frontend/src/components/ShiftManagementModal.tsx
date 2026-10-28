@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { Shift, ShiftAssignment, Caregiver, CurrentDutyStatus, ShiftPreset } from "@/lib/types";
 import { isSuperAdmin } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
+import { assignWarningText, nightsText, type AssignWarning } from "@/lib/roster";
 import {
   X,
   Clock,
@@ -90,6 +91,9 @@ export function ShiftManagementModal({
   const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [dutyStatus, setDutyStatus] = useState<CurrentDutyStatus | null>(null);
+  // Issue #66: nights in a row and days away for the selected date, and the last warning.
+  const [load, setLoad] = useState<{ night_shift_ids: string[]; caregivers: { caregiver_id: string; nights_before: number; unavailable: boolean; unavailable_reason?: string }[] } | null>(null);
+  const [assignWarning, setAssignWarning] = useState<string[]>([]);
 
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     return new Date().toISOString().split("T")[0];
@@ -127,6 +131,8 @@ export function ShiftManagementModal({
         `/shifts/assignments?date=${selectedDate}`
       );
       setAssignments(assignData || []);
+      const loadInfo = await fetchApi<typeof load>(`/shifts/load?date=${selectedDate}`).catch(() => null);
+      setLoad(loadInfo && Array.isArray(loadInfo.caregivers) ? loadInfo : null);
     } catch (err: any) {
       setError(err?.message || "Failed to load shift data");
     } finally {
@@ -232,8 +238,9 @@ export function ShiftManagementModal({
   const handleAssignCaregiver = async (shiftId: string, caregiverId: string) => {
     setSaving(true);
     setError(null);
+    setAssignWarning([]);
     try {
-      await fetchApi("/shifts/assignments", {
+      const res = await fetchApi<AssignWarning>("/shifts/assignments", {
         method: "POST",
         body: JSON.stringify({
           shift_id: shiftId,
@@ -242,6 +249,8 @@ export function ShiftManagementModal({
         }),
       });
       setSuccessMsg(t.assignSuccess);
+      const name = caregivers.find((c) => c.id === caregiverId)?.name || "";
+      setAssignWarning(res ? assignWarningText(res, name, locale === "ar") : []);
       await loadData();
       onUpdated?.();
     } catch (err: any) {
@@ -682,6 +691,15 @@ export function ShiftManagementModal({
                     )}
                   </div>
 
+                  {assignWarning.length > 0 && (
+                    <div role="status" data-testid="assign-warning" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-950 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-50">
+                      {assignWarning.map((w) => (
+                        <p key={w}>{w}</p>
+                      ))}
+                      <p className="mt-1 text-xs font-semibold">{locale === "ar" ? "حُفظ التعيين. يمكنك تغييره من القائمة أدناه." : "Saved. You can change it in the list below."}</p>
+                    </div>
+                  )}
+
                   {/* Shift Assignments List for selected date */}
                   <div className="space-y-3">
                     {shifts.map((s) => {
@@ -730,11 +748,20 @@ export function ShiftManagementModal({
                               <option value="">
                                 -- {t.noCaregiverAssigned} --
                               </option>
-                              {caregivers.map((cg) => (
-                                <option key={cg.id} value={cg.id}>
-                                  {cg.name}
-                                </option>
-                              ))}
+                              {caregivers.map((cg) => {
+                                const l = load?.caregivers.find((x) => x.caregiver_id === cg.id);
+                                const night = load?.night_shift_ids.includes(s.id);
+                                const notes = [
+                                  night && l && l.nights_before >= 3 && (locale === "ar" ? `${nightsText(l.nights_before, true)} متتالية` : `${nightsText(l.nights_before, false)} in a row`),
+                                  l?.unavailable && (locale === "ar" ? "لديه ظرف" : "away"),
+                                ].filter(Boolean);
+                                return (
+                                  <option key={cg.id} value={cg.id}>
+                                    {cg.name}
+                                    {notes.length ? ` — ${notes.join(", ")}` : ""}
+                                  </option>
+                                );
+                              })}
                             </select>
                           </div>
                         </div>
