@@ -308,7 +308,11 @@ cmd_deploy() {
   done
   if ! docker info >>"$LOG" 2>&1; then
     fail_step "$(t "Docker isn't running, or this user can't use it" "Docker لا يعمل، أو لا يستطيع هذا المستخدم استخدامه")"
-    err "$(t "Start it: sudo systemctl start docker. If you just ran install-deps.sh, log out and back in (or: newgrp docker)." "شغّله: sudo systemctl start docker. إذا شغّلت install-deps.sh للتو، سجّل الخروج والدخول (أو: newgrp docker).")"
+    if [ "${BIRRCARE_UNAME:-$(uname -s)}" = "Darwin" ]; then # issue #68: Docker is an app on a Mac
+      err "$(t "Open Docker Desktop or OrbStack (or run: colima start), wait until it's running, then try again." "افتح Docker Desktop أو OrbStack (أو شغّل: colima start) وانتظر حتى يعمل، ثم أعد المحاولة.")"
+    else
+      err "$(t "Start it: sudo systemctl start docker. If you just ran install-deps.sh, log out and back in (or: newgrp docker)." "شغّله: sudo systemctl start docker. إذا شغّلت install-deps.sh للتو، سجّل الخروج والدخول (أو: newgrp docker).")"
+    fi
     exit 1
   fi
   free="$(free_gb)"
@@ -508,6 +512,8 @@ cmd_status() {
   fi
   if systemctl --user is-active birrcare-deploy.timer >/dev/null 2>&1; then
     say "  $(t "Timers" "المؤقتات"): systemd ($(t "active" "نشطة"))"
+  elif command -v launchctl >/dev/null 2>&1 && launchctl list 2>/dev/null | grep -q 'com.birrcare.deploy'; then
+    say "  $(t "Timers" "المؤقتات"): launchd"
   elif crontab -l 2>/dev/null | grep -q 'scripts/auto-deploy.sh'; then
     say "  $(t "Timers" "المؤقتات"): cron"
   else

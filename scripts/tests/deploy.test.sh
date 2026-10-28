@@ -83,7 +83,7 @@ EOF
 }
 
 run() {
-  (cd "$R" && env PATH="$W/bin:$PATH" BIRRCARE_MIN_FREE_GB="${MIN_GB:-0}" BIRRCARE_HEALTH_TIMEOUT=3 \
+  (cd "$R" && env PATH="$W/bin:$PATH" BIRRCARE_UNAME="${UNAME_FOR_TEST:-Linux}" BIRRCARE_MIN_FREE_GB="${MIN_GB:-0}" BIRRCARE_HEALTH_TIMEOUT=3 \
     bash ./scripts/deploy.sh "$@" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 }
 
@@ -215,6 +215,14 @@ touch "$W/docker-down"
 run
 check "docker down: exit 1" "$(cat "$W/rc")" "1"
 check "docker down: tells how to fix" "$(out_has 'sudo systemctl start docker')" "1"
+rm -rf "$W"
+
+# 6b. Docker not running on a Mac: open the Docker app, not systemctl (issue #68).
+setup
+touch "$W/docker-down"
+UNAME_FOR_TEST=Darwin run
+check "docker down mac: exit 1" "$(cat "$W/rc")" "1"
+check "docker down mac: open Docker Desktop" "$(out_has 'Open Docker Desktop or OrbStack')" "1"
 rm -rf "$W"
 
 # 7. The build fails: nothing changes.

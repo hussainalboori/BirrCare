@@ -23,7 +23,7 @@ setup() {
 }
 
 run() {
-  (cd "$W/repo" && PATH="$W/bin:/usr/bin:/bin" bash ./scripts/setup.sh "$@" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+  (cd "$W/repo" && PATH="$W/bin:/usr/bin:/bin" BIRRCARE_UNAME="${UNAME_FOR_TEST:-Linux}" bash ./scripts/setup.sh "$@" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 }
 
 check() {
@@ -62,6 +62,13 @@ echo 0 >"$W/uid"
 run
 check "root: refused" "$(cat "$W/rc")" "1"
 check "root: nothing run" "$(wc -l <"$W/calls" | tr -d ' ')" "0"
+rm -rf "$W"
+
+# 5. On a Mac: the installer runs without sudo (Homebrew refuses root).
+setup
+rm "$W/bin/restic"
+UNAME_FOR_TEST=Darwin run
+check "mac: installer without sudo, then deploy" "$(tr '\n' '|' <"$W/calls")" "install-deps|deploy |"
 rm -rf "$W"
 
 if [ "$fails" -gt 0 ]; then

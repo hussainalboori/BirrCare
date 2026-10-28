@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macOS LaunchAgent (issue #68): install an update as soon as the Super Admin taps Install
+     Installed into ~/Library/LaunchAgents by scripts/install-deps.sh, which
+     replaces @ROOT@ (this checkout) and @HOME@. Same job as the systemd units
+     in scripts/systemd/. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.birrcare.deploy-request</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@ROOT@/scripts/auto-deploy.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>@ROOT@</string>
+  <key>WatchPaths</key>
+  <array>
+    <string>@ROOT@/data/update/request.json</string>
+  </array>
+  <key>StandardOutPath</key>
+  <string>@HOME@/.local/state/birrcare/updater.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/.local/state/birrcare/updater.log</string>
+</dict>
+</plist>

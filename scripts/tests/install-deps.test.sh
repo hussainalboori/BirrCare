@@ -2,7 +2,9 @@
 # Tests for scripts/install-deps.sh with stub apt-get / loginctl / crontab /
 # runuser… (nothing is really installed). Answers come on stdin through the
 # BIRRCARE_SETUP_TTY=1 hook; the question order is: [Docker] [restic+rclone]
-# [sqlite3] [go ahead] [docker group] [linger] [timers].
+# [sqlite3] [go ahead] [docker group] [linger] [timers]. The Linux cases force
+# BIRRCARE_UNAME=Linux (and a plain kernel, systemd running), so they behave the
+# same on a Mac; macOS and WSL2 have their own cases at the end (issue #68).
 # Usage: bash scripts/tests/install-deps.test.sh
 set -euo pipefail
 
@@ -16,12 +18,15 @@ setup() {
   mkdir -p "$W/bin" "$W/home" "$W/apt" "$W/run"
   : >"$W/calls"
   printf 'ID=ubuntu\nVERSION_CODENAME=noble\n' >"$W/os-release"
+  echo "Linux version 6.8.0-1017-generic (buildd@ubuntu)" >"$W/proc-version"
+  mkdir -p "$W/systemd"
+  mkdir -p "$W/launchd"
   echo no >"$W/linger"
   echo yes >"$W/linger-allowed"
   printf 'runner sudo\n' >"$W/groups"
   printf '*/5 * * * * /home/runner/birrcare/scripts/auto-deploy.sh >> x 2>&1\n0 4 * * * /usr/bin/my-own-job\n' >"$W/crontab"
   local s
-  for s in apt-get install usermod runuser chown chmod; do
+  for s in apt-get install usermod runuser chown chmod brew launchctl; do
     printf '#!/usr/bin/env bash\necho "%s $*" >>"%s/calls"\n' "$s" "$W" >"$W/bin/$s"
   done
   cat >"$W/bin/curl" <<EOF
@@ -53,7 +58,7 @@ esac
 EOF
   cat >"$W/bin/crontab" <<EOF
 #!/usr/bin/env bash
-if [ "\$3" = "-l" ]; then cat "$W/crontab"; else cat >"$W/crontab"; fi
+case " \$* " in *" -l "*) cat "$W/crontab" ;; *) cat >"$W/crontab" ;; esac
 EOF
   chmod +x "$W/bin/"*
 }
@@ -63,7 +68,8 @@ run() {
   local answers="$1"
   shift
   (printf '%s' "$answers" | env PATH="$W/bin:$PATH" SUDO_USER=runner BIRRCARE_DEPS_FAKE_ROOT=1 BIRRCARE_SETUP_TTY=1 \
-    OS_RELEASE="$W/os-release" BIRRCARE_APT_DIR="$W/apt" BIRRCARE_RUNTIME_DIR="$W/run" "$@" \
+    OS_RELEASE="$W/os-release" BIRRCARE_APT_DIR="$W/apt" BIRRCARE_RUNTIME_DIR="$W/run" \
+    BIRRCARE_UNAME=Linux BIRRCARE_PROC_VERSION="$W/proc-version" BIRRCARE_SYSTEMD_DIR="$W/systemd" "$@" \
     bash "$SCRIPT" --lang en >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 }
 
@@ -82,14 +88,14 @@ calls() { grep -c "$1" "$W/calls" || true; }
 
 # 1. Not root: asks for sudo, does nothing.
 setup
-(env PATH="$W/bin:$PATH" bash -c 'id() { echo 1000; }; export -f id; bash "$0" --lang en' "$SCRIPT" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+(env PATH="$W/bin:$PATH" BIRRCARE_UNAME=Linux bash -c 'id() { echo 1000; }; export -f id; bash "$0" --lang en' "$SCRIPT" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 check "not root: exit 1" "$(cat "$W/rc")" "1"
 check "not root: tells to use sudo" "$(grep -c 'sudo ./scripts/install-deps.sh' "$W/out")" "1"
 rm -rf "$W"
 
 # 2. No terminal and no --yes: refuses to install silently.
 setup
-(env PATH="$W/bin:$PATH" SUDO_USER=runner BIRRCARE_DEPS_FAKE_ROOT=1 OS_RELEASE="$W/os-release" bash "$SCRIPT" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+(env PATH="$W/bin:$PATH" SUDO_USER=runner BIRRCARE_DEPS_FAKE_ROOT=1 OS_RELEASE="$W/os-release" BIRRCARE_UNAME=Linux bash "$SCRIPT" </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 check "no terminal: exit 1" "$(cat "$W/rc")" "1"
 check "no terminal: nothing installed" "$(calls apt-get)" "0"
 rm -rf "$W"
@@ -164,10 +170,88 @@ rm -rf "$W"
 # 9. --yes accepts every suggestion without questions.
 setup
 (env PATH="$W/bin:$PATH" SUDO_USER=runner BIRRCARE_DEPS_FAKE_ROOT=1 OS_RELEASE="$W/os-release" BIRRCARE_APT_DIR="$W/apt" \
+  BIRRCARE_UNAME=Linux BIRRCARE_PROC_VERSION="$W/proc-version" BIRRCARE_SYSTEMD_DIR="$W/systemd" \
   BIRRCARE_RUNTIME_DIR="$W/run" BIRRCARE_DEPS_PRESENT="git curl update-ca-certificates docker apt-get loginctl systemctl crontab" \
   bash "$SCRIPT" --yes </dev/null >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
 check "--yes: exit 0" "$(cat "$W/rc")" "0"
 check "--yes: everything suggested" "$(grep '^apt-get install' "$W/calls" | sed 's/.*--no-install-recommends//')" " jq restic rclone sqlite3"
+rm -rf "$W"
+
+# --- macOS (issue #68) ----------------------------------------------------------
+
+# mac "answers" [extra env…]: as a normal user (no sudo, no fake root).
+mac() {
+  local answers="$1"
+  shift
+  (printf '%s' "$answers" | env PATH="$W/bin:$PATH" HOME="$W/home" BIRRCARE_UNAME=Darwin BIRRCARE_SETUP_TTY=1 \
+    BIRRCARE_LAUNCHD_DIR="$W/launchd" "$@" bash "$SCRIPT" --lang en >"$W/out" 2>&1) && echo 0 >"$W/rc" || echo $? >"$W/rc"
+}
+
+# 10. A Mac with Docker Desktop installed but not running; jq, restic and rclone
+#     missing: Homebrew as the user, launchd agents, no apt/sudo/usermod/linger.
+setup
+mac $'y\ny\ny\n' BIRRCARE_DOCKER_RUNNING=no BIRRCARE_DEPS_PRESENT="git curl docker sqlite3 brew crontab"
+check "mac: exit 0" "$(cat "$W/rc")" "0"
+check "mac: Homebrew installs the chosen tools" "$(grep '^brew install' "$W/calls")" "brew install jq restic rclone"
+check "mac: no apt, no sudo, no usermod, no linger" "$(grep -cE '^(apt-get|usermod|loginctl|runuser)' "$W/calls" || true)" "0"
+check "mac: Docker installed but not running is recognised" "$(grep -c 'installed, not running' "$W/out")" "1"
+check "mac: no docker cask when Docker is there" "$(grep -c 'cask' "$W/calls" || true)" "0"
+check "mac: four launchd agents" "$(LC_ALL=C ls "$W/launchd" | tr '\n' ' ')" "com.birrcare.backup-request.plist com.birrcare.backup.plist com.birrcare.deploy-request.plist com.birrcare.deploy.plist "
+check "mac: agents point at this checkout" "$(grep -c "<string>${ROOT}/scripts/backup.sh</string>" "$W/launchd/com.birrcare.backup.plist")" "1"
+check "mac: agents loaded" "$(calls 'launchctl bootstrap gui/')" "4"
+check "mac: old cron line removed, own job kept" "$(grep -c 'auto-deploy.sh' "$W/crontab" || true)/$(grep -c 'my-own-job' "$W/crontab")" "0/1"
+rm -rf "$W"
+
+# 11. On a Mac with sudo: refuses (Homebrew won't run as root).
+setup
+printf '#!/usr/bin/env bash\necho 0\n' >"$W/bin/id"
+mac "" BIRRCARE_DEPS_PRESENT="git curl jq docker brew"
+check "mac root: exit 1" "$(cat "$W/rc")" "1"
+check "mac root: says without sudo" "$(grep -c 'without sudo' "$W/out")" "1"
+rm -rf "$W"
+
+# 12. No Docker and no Homebrew: a clear list, exit 2.
+setup
+mac $'y\nn\nn\n' BIRRCARE_DEPS_PRESENT="git curl jq sqlite3"
+check "mac no brew: exit 2" "$(cat "$W/rc")" "2"
+check "mac no brew: points to brew.sh" "$(grep -c 'https://brew.sh' "$W/out")" "1"
+check "mac no brew: nothing installed" "$(calls '^brew')" "0"
+rm -rf "$W"
+
+# 13. No Docker, Homebrew present: Docker Desktop as a cask.
+setup
+mac $'y\nn\ny\nn\n' BIRRCARE_DEPS_PRESENT="git curl jq sqlite3 brew"
+check "mac docker: exit 0" "$(cat "$W/rc")" "0"
+check "mac docker: brew install --cask docker" "$(calls 'brew install --cask docker')" "1"
+check "mac docker: says to open it once" "$(grep -c 'Open Docker from Applications' "$W/out")" "1"
+rm -rf "$W"
+
+# --- WSL2 on Windows (issue #68) ----------------------------------------------------
+
+# 14. WSL2 without systemd, Docker missing: no docker-ce from apt (Docker Desktop
+#     integration instead), no linger question, timers via cron with a hint.
+setup
+echo "Linux version 5.15.153.1-microsoft-standard-WSL2" >"$W/proc-version"
+rmdir "$W/systemd"
+run $'y\ny\ny\n' BIRRCARE_DEPS_PRESENT="git curl jq update-ca-certificates sqlite3 apt-get loginctl systemctl crontab"
+check "wsl: exit 0" "$(cat "$W/rc")" "0"
+check "wsl: says WSL2" "$(grep -c 'WSL2 on Windows' "$W/out")" "1"
+check "wsl: no docker-ce" "$(calls 'docker-ce')" "0"
+check "wsl: points to Docker Desktop WSL integration" "$(grep -c 'WSL integration' "$W/out")" "1"
+check "wsl: only the backup tools from apt" "$(grep '^apt-get install' "$W/calls" | sed 's/.*--no-install-recommends//')" " restic rclone"
+check "wsl: linger not tried" "$(calls loginctl)" "0"
+check "wsl: timers via cron" "$(grep -c "${ROOT}/scripts/backup.sh --if-due" "$W/crontab")" "1"
+check "wsl: how to start cron" "$(grep -c 'sudo service cron start' "$W/out")" "1"
+rm -rf "$W"
+
+# 15. WSL2 without systemd and without cron: cron is installed too. Docker
+#     Desktop integration on: no Docker question at all.
+setup
+echo "Linux version 5.15.153.1-microsoft-standard-WSL2" >"$W/proc-version"
+rmdir "$W/systemd"
+run $'n\ny\nn\n' BIRRCARE_DEPS_PRESENT="git curl jq update-ca-certificates docker sqlite3 apt-get"
+check "wsl cron: exit 0" "$(cat "$W/rc")" "0"
+check "wsl cron: cron installed with apt" "$(grep '^apt-get install' "$W/calls" | sed 's/.*--no-install-recommends//')" " cron"
 rm -rf "$W"
 
 if [ "$fails" -gt 0 ]; then

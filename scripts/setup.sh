@@ -9,7 +9,9 @@ set -euo pipefail
 #    through sudo: see scripts/install-deps.sh).
 # 2. Asks the settings questions and starts the app (scripts/deploy.sh).
 # Run it as your normal user, not with sudo. Options are passed to deploy.sh
-# (e.g. --lang ar).
+# (e.g. --lang ar). On a Mac the installer runs without sudo (Homebrew); on
+# Windows run this inside WSL2 (see docs/DEPLOYMENT.md). Test hook:
+# BIRRCARE_UNAME (Linux|Darwin).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -24,7 +26,11 @@ for c in git curl jq docker; do command -v "$c" >/dev/null 2>&1 || missing="$mis
 if [ -z "$missing" ] && ! docker compose version >/dev/null 2>&1; then missing=" docker-compose"; fi
 if [ -n "$missing" ] || ! command -v restic >/dev/null 2>&1; then
   echo "Installing what this server needs:${missing:- (optional backup tools)}"
-  sudo ./scripts/install-deps.sh
+  if [ "${BIRRCARE_UNAME:-$(uname -s)}" = "Darwin" ]; then
+    ./scripts/install-deps.sh # Homebrew refuses to run as root
+  else
+    sudo ./scripts/install-deps.sh
+  fi
 fi
 
 # Just added to the docker group? That only applies to new logins; run the

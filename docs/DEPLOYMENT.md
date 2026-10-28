@@ -20,7 +20,7 @@ Phone ──HTTPS──► Cloudflare Access (email login) ──► Cloudflare 
 
 ## 1. Requirements
 
-Any 64-bit Linux with apt works, e.g. Ubuntu 24.04, Debian 12 or Raspberry Pi OS on a Pi 4/5. You also need:
+Any 64-bit Linux with apt works, e.g. Ubuntu 24.04, Debian 12 or Raspberry Pi OS on a Pi 4/5. A Mac or a Windows PC works too (§2a, §2b), as long as it stays on and signed in. A small always-on Linux box is still the best home for the app. You also need:
 
 - about 2 GB of free disk, for the Docker images plus the database and backups;
 - outbound HTTPS from the host, because lock-screen alerts go through Apple's and Google's push services;
@@ -56,6 +56,53 @@ cd ~/birrcare
 > Don't give your user password-less `sudo` (a `NOPASSWD` rule) to avoid the prompt. Anything running as that user could then become root without asking. Running the installer once with `sudo` is enough; nothing else needs it.
 
 The systemd units expect the checkout at `~/birrcare`; the installer rewrites them for wherever you cloned it.
+
+### 2a. On a Mac
+
+```bash
+git clone https://github.com/hussainalboori/BirrCare.git ~/birrcare
+cd ~/birrcare
+./scripts/setup.sh            # or only the tools: ./scripts/install-deps.sh
+```
+
+Run it **without `sudo`**. Homebrew refuses to run as root, and the installer stops if you use sudo. What changes from Linux:
+
+- **Tools come from Homebrew** (`brew install jq restic rclone …`). If Homebrew isn't installed, the script points you to https://brew.sh and lists what's missing.
+- **Docker is an app.** Docker Desktop, OrbStack and Colima are all recognised. If none is installed, it offers `brew install --cask docker` (Docker Desktop); open it once and finish its setup. If Docker is installed but not running, it says so: start the app (or `colima start`) before `deploy.sh`.
+- **There is no `docker` group or linger step.** The Docker app handles access.
+- **Timers are launchd agents** in `~/Library/LaunchAgents`, built from `scripts/launchd/*.plist`:
+  - `com.birrcare.deploy`: the update check every 5 minutes;
+  - `com.birrcare.deploy-request`: starts the update when you tap Install in the app;
+  - `com.birrcare.backup`: asks whether a backup is due, every 5 minutes;
+  - `com.birrcare.backup-request`: runs a backup when you tap Back up now.
+
+  Logs go to `~/.local/state/birrcare/`. Old BirrCare cron lines are removed. The agents run while you are signed in, and Docker Desktop needs that anyway. In System Settings → Energy (or Battery), stop the Mac from sleeping, and turn on automatic sign-in if it must come back by itself after a power cut.
+- `./scripts/deploy.sh status` shows the timers as "launchd".
+
+To remove the timers: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.birrcare.*.plist && rm ~/Library/LaunchAgents/com.birrcare.*.plist`.
+
+### 2b. On Windows
+
+**Recommended: WSL2.** Inside WSL2 the Linux steps above work as they are:
+
+1. In PowerShell (as administrator): `wsl --install -d Ubuntu`, then restart.
+2. Install **Docker Desktop**, then turn on Settings → Resources → **WSL integration** → Ubuntu. Docker inside WSL comes from Docker Desktop. The installer detects WSL2 and never installs Docker's apt packages there, because they would conflict with Docker Desktop.
+3. In Ubuntu: `git clone … ~/birrcare && cd ~/birrcare && ./scripts/setup.sh`.
+
+WSL2 often runs without systemd. The installer then skips the linger question, installs cron if needed and uses cron for the timers. WSL doesn't start cron by itself, so after Windows restarts run `sudo service cron start`. Better: turn on systemd by adding this to `/etc/wsl.conf` and running `wsl --shutdown`, after which the normal systemd timers are used:
+
+```ini
+[boot]
+systemd=true
+```
+
+**Native Windows (without WSL).** Run `powershell -ExecutionPolicy Bypass -File .\scripts\install-deps.ps1` (`-Lang ar` for Arabic, `-Yes` to accept everything). It:
+
+- installs what's missing with **winget** after asking: Git (with Git Bash), jq and Docker Desktop, plus restic, rclone and sqlite3 if you choose them;
+- shows the WSL2 steps;
+- only if you choose native, registers the update and backup timers in **Task Scheduler**, run through Git Bash. They run every 5 minutes, and every minute for "Back up now".
+
+Then run `./scripts/deploy.sh` from Git Bash. The native path hasn't been tested as much as WSL2 or Linux; prefer WSL2.
 
 ## 3. Settings (`.env`)
 
