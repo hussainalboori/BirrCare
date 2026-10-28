@@ -535,6 +535,38 @@ Sends a safe test notification to your registered phones after 10 seconds.
 
 ---
 
+## Appointments & Questions for the Doctor (issue #63)
+
+Viewers can read everything here; caregivers and admins can change it. Every write is audited.
+
+### `GET /api/v1/appointments`
+`{upcoming, recent}`. `upcoming`: scheduled appointments from 6 hours ago on, soonest first. `recent`: done, cancelled or passed appointments of the last 90 days, newest first (up to 30). Each appointment: `{id, kind: "doctor" | "lab" | "physio" | "other", title, starts_at (UTC), date, time (household YYYY-MM-DD / HH:MM), location, notes, assigned_caregiver_id, assigned_name, status: "scheduled" | "done" | "cancelled", created_by_name, created_at, updated_at}`.
+
+### `POST /api/v1/appointments` & `PUT /api/v1/appointments/{id}`
+`{kind, title, date, time, location?, notes?, assigned_caregiver_id?, client_request_id?}`. `date` and `time` are household time (`APP_TIMEZONE`). A new appointment can't be in the past (`INVALID_DATE`); the person taking her must be an active, non-viewer member (`INVALID_CAREGIVER`). Only a scheduled appointment can be changed (`409 NOT_SCHEDULED`).
+
+### `POST /api/v1/appointments/{id}/status`
+`{status: "done" | "cancelled" | "scheduled"}`. Done or cancelled clears its open reminders.
+
+### `GET /api/v1/appointments/{id}/ics`
+"Add to my calendar": an iCalendar (RFC 5545) file with the time in UTC, a 2-hour alarm and a stable `UID`, so re-importing an edited appointment updates the event.
+
+**Reminders.** The server checks every minute. The one taking her (everyone if nobody is set) gets an `appointment_reminder` at 20:00 household time the evening before and 2 hours before; each is sent once per start time, so a rescheduled appointment is reminded again. A reminder whose time had already passed when the appointment was added is not sent. The evening before the `next_test_on` date of the latest lab result of each kind, everyone gets a `lab_test_due` reminder.
+
+### `GET /api/v1/doctor-questions`
+`{open, answered}`: open questions oldest first; answers of the last 180 days, newest first. Each: `{id, text, by, created_by, created_at, answered_at?, answered_by_name?, answer?, appointment_id?}`.
+
+### `POST /api/v1/doctor-questions`
+`{text (≤ 500 letters), client_request_id?}`.
+
+### `POST /api/v1/doctor-questions/{id}/answer`
+`{answer, appointment_id?}`: "Doctor said…". The question moves to the history (`409 NOT_OPEN` if already answered).
+
+### `DELETE /api/v1/doctor-questions/{id}`
+Removes an open question (whoever wrote it, or an admin). The row is kept for the audit log.
+
+The doctor report (`/export/summary`) includes `open_questions` (all, shown first) and `answered_questions` (answered in the period).
+
 ## Doctor Consultation Summary Export
 
 ### `GET /api/v1/export/summary?days=7`

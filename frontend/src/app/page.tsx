@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { SiblingBar } from "@/components/SiblingBar";
+import { NextAppointmentCard } from "@/components/NextAppointmentCard";
 import { LowStockCards } from "@/components/LowStockCards";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
@@ -140,6 +141,8 @@ export default function MedicationsPage() {
         >
           {locale === "ar" ? "حدث شيء؟ سقوط أو نوبة تشنج" : "Something happened? Fall or seizure"}
         </Link>
+        {/* Issue #63: the next appointment and the questions waiting for the doctor */}
+        <NextAppointmentCard />
         {/* Header & Date Selector */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

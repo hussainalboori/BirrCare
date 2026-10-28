@@ -320,6 +320,9 @@ export interface DoctorSummary {
   /** Lab results (INR) in the period, newest first, and the doctor's INR range (issue #62). */
   lab_results?: { id: string; kind: "inr" | "hba1c" | "other"; value: number; unit?: string; taken_on: string; out_of_range: boolean; next_test_on?: string }[];
   inr_target?: { inr_target_low: number; inr_target_high: number };
+  /** Questions for the doctor (issue #63): every open one, and those answered in the period. */
+  open_questions?: { id: string; text: string; by?: string; created_at: string }[];
+  answered_questions?: { id: string; text: string; answer?: string; answered_at?: string; answered_by_name?: string }[];
   /** Hospital stays / time away in the period (issue #59). */
   pauses?: { id: string; reason: "hospital" | "travel" | "other"; started_at: string; ended_at?: string; notes?: string }[];
   /** Blood pressure per household-local day. */

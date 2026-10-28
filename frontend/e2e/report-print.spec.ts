@@ -23,6 +23,13 @@ function summary() {
     recent_notes: Array.from({ length: 6 }, (_, i) => ({ id: `n${i}`, caregiver_id: "c1", caregiver_name: "Fatima", created_at: "2026-10-19T08:00:00Z", shift_type: "morning", summary: "Ate well, walked twice with help, slept after lunch.", urgent_flag: false })),
     recent_vitals: Array.from({ length: 40 }, (_, i) => ({ id: `v${i}`, caregiver_id: "c1", caregiver_name: "Fatima", recorded_at: "2026-10-19T08:00:00Z", vital_type: "bp", systolic: 140, diastolic: 85, pulse: 75, alertness_level: "alert", bp_status: "STAGE_2" })),
     insulin_logs: [],
+    // Issue #63: the family's open questions come first and still fit the page.
+    open_questions: [
+      { id: "q1", text: "Can she walk with the frame alone indoors?", created_at: "2026-10-18T08:00:00Z" },
+      { id: "q2", text: "Should the evening blood pressure tablet move to bedtime?", created_at: "2026-10-19T08:00:00Z" },
+      { id: "q3", text: "Is the swelling in her left ankle a concern?", created_at: "2026-10-19T09:00:00Z" },
+    ],
+    answered_questions: [{ id: "q0", text: "Can she have coffee?", answer: "One cup in the morning.", answered_at: "2026-10-10T10:00:00Z" }],
   };
 }
 
@@ -44,6 +51,7 @@ for (const locale of ["ar", "en"] as const) {
     await mock(page);
     await page.goto("/export");
     await expect(page.getByText(locale === "ar" ? "لم تُسجّل" : "Not recorded").first()).toBeVisible();
+    await expect(page.getByTestId("report-questions")).toContainText("Can she walk with the frame alone indoors?");
 
     const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
     await testInfo.attach(`report-${locale}.pdf`, { body: pdf, contentType: "application/pdf" });

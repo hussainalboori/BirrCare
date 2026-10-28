@@ -99,7 +99,7 @@ export default function DoctorExportPage() {
         ) : (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900 print:border-none print:shadow-none print:p-0">
             {/* Medical Header */}
-            <div className="border-b border-slate-200 pb-5 mb-6 dark:border-slate-800">
+            <div className="border-b border-slate-200 pb-5 mb-6 print:pb-1.5 print:mb-1.5 dark:border-slate-800">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900 dark:text-white">
@@ -119,6 +119,27 @@ export default function DoctorExportPage() {
                 </div>
               </div>
             </div>
+
+            {/* Questions for the doctor (issue #63): first, so the visit starts with them */}
+            {(summary.open_questions ?? []).length > 0 && (
+              <div data-testid="report-questions" className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950 break-inside-avoid print:mb-1 print:px-2 print:py-0.5 print:text-[8pt] print:leading-snug dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-50">
+                {/* On paper one compact paragraph, so the summary keeps to one A4 page. */}
+                <h3 className="mb-1 text-xs font-bold uppercase tracking-wider print:inline print:text-[8pt]">
+                  {locale === "ar" ? "أسئلة العائلة للطبيب" : "The family's questions for the doctor"}
+                  <span className="hidden print:inline">: </span>
+                </h3>
+                <ol className="list-decimal space-y-0.5 ps-5 print:inline print:ps-0">
+                  {summary.open_questions!.map((q, i) => (
+                    <li key={q.id} className="print:inline">
+                      <span className="hidden print:inline">
+                        <Ltr>{i + 1})</Ltr>{" "}
+                      </span>
+                      <bdi>{q.text}</bdi>{" "}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
 
             {/* INR history (issue #62), next to the warfarin doses below */}
             {(summary.lab_results ?? []).some((l) => l.kind === "inr") && (
@@ -559,7 +580,7 @@ export default function DoctorExportPage() {
             )}
 
             {/* Key Clinical Summary Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 gap-3 print:gap-2 mb-6 print:mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 print:grid-cols-5 gap-3 print:gap-2 mb-6 print:mb-2">
               {/* BP Average */}
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 print:p-2 dark:border-slate-800 dark:bg-slate-800/50">
                 <span className="text-xs font-semibold text-slate-500 block mb-1">
@@ -677,6 +698,20 @@ export default function DoctorExportPage() {
             {/* Details: on screen always; printed only when asked, on a new page, so the
                 default printout is the one-page A4 summary above. */}
             <div className={printDetails ? "print:break-before-page" : "print:hidden"}>
+            {(summary.answered_questions ?? []).length > 0 && (
+              <div data-testid="report-answered" className="mb-6">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  {locale === "ar" ? "ما قاله الطبيب (أسئلة سابقة)" : "What the doctor said (earlier questions)"}
+                </h3>
+                <ul className="space-y-1 text-xs text-slate-800 dark:text-slate-200">
+                  {summary.answered_questions!.map((q) => (
+                    <li key={q.id}>
+                      <bdi className="font-bold">{q.text}</bdi> — <bdi>{q.answer}</bdi> (<Auto>{formatDateTime(q.answered_at, locale)}</Auto>)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="mb-6">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3">
                 {locale === "ar" ? "آخر القياسات الحيوية التفصيلية" : "Detailed Vitals Records"}

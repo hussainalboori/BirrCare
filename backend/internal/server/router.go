@@ -100,6 +100,7 @@ func NewRouter(o Options) http.Handler {
 	careHandler := &handlers.CareHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	carePauseHandler := &handlers.CarePauseHandler{DB: o.DB, Broker: o.Broker}
 	labHandler := &handlers.LabHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
+	appointmentHandler := &handlers.AppointmentHandler{DB: o.DB, Broker: o.Broker}
 	bruiseHandler := &handlers.BruiseHandler{DB: o.DB, Broker: o.Broker, Push: o.Push, PhotoDir: o.PhotoDir}
 	auditHandler := &handlers.AuditHandler{DB: o.DB}
 
@@ -318,6 +319,16 @@ func NewRouter(o Options) http.Handler {
 				// Lab results, INR (issue #62)
 				api.Get("/labs", labHandler.List)
 				api.Post("/labs", labHandler.Create)
+				// Appointments and questions for the doctor (issue #63)
+				api.Get("/appointments", appointmentHandler.List)
+				api.Post("/appointments", appointmentHandler.Create)
+				api.Put("/appointments/{id}", appointmentHandler.Update)
+				api.Post("/appointments/{id}/status", appointmentHandler.SetStatus)
+				api.Get("/appointments/{id}/ics", appointmentHandler.ICS)
+				api.Get("/doctor-questions", appointmentHandler.ListQuestions)
+				api.Post("/doctor-questions", appointmentHandler.AddQuestion)
+				api.Post("/doctor-questions/{id}/answer", appointmentHandler.AnswerQuestion)
+				api.Delete("/doctor-questions/{id}", appointmentHandler.RemoveQuestion)
 				// Hospital stay / away (issue #59)
 				api.Get("/care/pause", carePauseHandler.Status)
 				api.Post("/care/pause", carePauseHandler.Pause)

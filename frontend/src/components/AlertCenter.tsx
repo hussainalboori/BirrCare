@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { fetchApi, type ApiError } from "@/lib/api";
-import { formatTime } from "@/lib/datetime";
+import { formatTime, intlLocale } from "@/lib/datetime";
 import { clockDiffersFromHome, homeCity } from "@/lib/householdTime";
 import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { playAlert } from "@/lib/alertSound";
@@ -18,10 +18,12 @@ import { Ltr } from "./Ltr";
 import { tagLabel } from "@/lib/handoverTags";
 import { bleedingAdvice, bleedingLabel } from "@/lib/bruises";
 import { daysLeftText } from "@/lib/stockText";
-import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft } from "lucide-react";
+import { Phone, Siren, Check, AlertTriangle, ArrowRightLeft, CalendarClock } from "lucide-react";
 
 // Duty handovers (issue #18) are addressed to one sibling and aren't emergencies.
 const DUTY_KINDS = new Set(["duty_handover", "duty_unaccepted"]);
+// Appointment and blood-test reminders (issue #63): blue, a chime, never urgent.
+const REMINDER_KINDS = new Set(["appointment_reminder", "lab_test_due"]);
 
 // Alerts every sibling must see (issues #11, #12): a BP crisis, a dose given inside
 // its minimum interval, vomiting after a dose. They come from the server
@@ -36,7 +38,7 @@ const AMBER_KINDS = new Set(["dose_override", "vomited", "correction", "emergenc
 
 export interface ServerAlert {
   id: string;
-  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure" | "inr_out_of_range";
+  kind: "bp_crisis" | "bp_low" | "alertness" | "fast_positive" | "dose_override" | "vomited" | "correction" | "duty_handover" | "duty_unaccepted" | "emergency_card" | "low_stock" | "spo2_low" | "reposition_overdue" | "bowel_overdue" | "low_fluid" | "backup_failed" | "bleeding" | "sugar_low" | "sugar_very_high" | "fever" | "fever_high" | "dose_overdue" | "fall" | "seizure" | "inr_out_of_range" | "appointment_reminder" | "lab_test_due";
   created_by_name?: string;
   emergency?: boolean;
   payload: Record<string, unknown>;
@@ -62,7 +64,7 @@ export function AlertCenter() {
     const fresh = list.filter((a) => !announced.current.has(a.id));
     if (fresh.length) {
       fresh.forEach((a) => announced.current.add(a.id));
-      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || a.kind === "low_stock" || a.kind === "bowel_overdue" || a.kind === "low_fluid" || a.kind === "backup_failed");
+      const quiet = fresh.every((a) => DUTY_KINDS.has(a.kind) || REMINDER_KINDS.has(a.kind) || a.kind === "low_stock" || a.kind === "bowel_overdue" || a.kind === "low_fluid" || a.kind === "backup_failed");
       playAlert(quiet ? "chime" : "crisis");
       haptic([400, 150, 400, 150, 400], { crisis: !quiet });
     }
@@ -137,9 +139,11 @@ export function AlertCenter() {
 
   const p = current.payload;
   const duty = DUTY_KINDS.has(current.kind);
+  const reminder = REMINDER_KINDS.has(current.kind);
+  const blue = duty || reminder;
   const overdue = current.kind === "dose_overdue";
   // A missed blood thinner is red; other missed doses orange. Neither needs the call buttons.
-  const red = current.emergency || (overdue ? Boolean(p.critical) : !duty && !AMBER_KINDS.has(current.kind));
+  const red = current.emergency || (overdue ? Boolean(p.critical) : !blue && !AMBER_KINDS.has(current.kind));
   const calls = red && !overdue;
   const ui = doseUi.id === current.id ? doseUi : { id: current.id, picking: false, msg: "" };
   const canGive = overdue && currentCaregiver?.role !== "viewer";
@@ -262,6 +266,31 @@ export function AlertCenter() {
         </>
       );
       advice = ar ? "أخبر الطبيب قبل جرعة الوارفارين القادمة." : "Tell the doctor before the next warfarin dose.";
+      break;
+    case "appointment_reminder": {
+      // Issue #63: the evening before and 2 hours before, to the one taking her.
+      const day = p.date ? new Date(`${String(p.date)}T12:00:00Z`).toLocaleDateString(intlLocale(locale), { weekday: "long", timeZone: "UTC" }) : "";
+      title = (
+        <>
+          {p.moment === "2h" ? (ar ? "بعد ساعتين" : "In 2 hours") : ar ? "غداً" : "Tomorrow"}: <bdi>{String(p.title || "")}</bdi> · <bdi>{day}</bdi>{" "}
+          <Ltr>{String(p.time || "")}</Ltr>
+        </>
+      );
+      advice = [
+        p.location ? String(p.location) : "",
+        p.assigned_name ? (ar ? `يأخذها: ${String(p.assigned_name)}` : `Taking her: ${String(p.assigned_name)}`) : ar ? "لم يُحدَّد من يأخذها" : "Nobody is set to take her yet",
+      ]
+        .filter(Boolean)
+        .join(" — ");
+      break;
+    }
+    case "lab_test_due":
+      title = (
+        <>
+          {ar ? "تحليل دم غداً" : "Blood test tomorrow"}: <Ltr>{String(p.kind || "").toUpperCase()}</Ltr>
+        </>
+      );
+      advice = ar ? "موعد التحليل التالي الذي حدده الطبيب." : "The next test date the doctor set.";
       break;
     case "fall": {
       // Issue #60: red (emergency flag) after a head knock, not awake, or pain / bleeding.
@@ -396,7 +425,7 @@ export function AlertCenter() {
     <button
       type="button"
       onClick={acknowledge}
-      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold text-white ${red ? "bg-rose-900/50" : duty ? "bg-blue-950/40" : "bg-amber-950/30"}`}
+      className={`flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl text-base font-bold text-white ${red ? "bg-rose-900/50" : blue ? "bg-blue-950/40" : "bg-amber-950/30"}`}
     >
       <Check className="h-5 w-5" />
       {ar ? "تم الاطلاع" : "Seen"}
@@ -411,12 +440,18 @@ export function AlertCenter() {
       data-testid={crisis ? "crisis-bar" : "alert-bar"}
       data-kind={current.kind}
       className={`fixed inset-x-0 top-0 z-[60] px-3 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] text-white shadow-2xl ${
-        red ? "bg-rose-700" : duty ? "bg-blue-800" : "bg-amber-800"
+        red ? "bg-rose-700" : blue ? "bg-blue-800" : "bg-amber-800"
       }`}
     >
       <div className="mx-auto max-w-3xl space-y-2">
         <p className="flex items-start gap-2 text-base font-black leading-snug">
-          {duty ? <ArrowRightLeft className="mt-0.5 h-5 w-5 shrink-0" /> : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />}
+          {duty ? (
+            <ArrowRightLeft className="mt-0.5 h-5 w-5 shrink-0" />
+          ) : reminder ? (
+            <CalendarClock className="mt-0.5 h-5 w-5 shrink-0" />
+          ) : (
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          )}
           <span>
             {title}
             {more}
@@ -502,6 +537,11 @@ export function AlertCenter() {
               </p>
             )}
           </div>
+        )}
+        {reminder && (
+          <Link href="/visits" className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-blue-900">
+            {ar ? "افتح المواعيد والأسئلة" : "Open visits & questions"}
+          </Link>
         )}
         {current.kind === "alertness" && (
           <Link href="/fast" className="flex min-h-12 items-center justify-center rounded-xl bg-white text-base font-black text-rose-800">

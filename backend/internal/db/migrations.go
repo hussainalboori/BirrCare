@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prn_logs_given ON prn_logs(given_at DESC);
 -- transaction as the event; replayed until each caregiver acknowledges it.
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range')),
+    kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range', 'appointment_reminder', 'lab_test_due')),
     ref_id TEXT,
     created_by TEXT REFERENCES caregivers(id),
     payload TEXT NOT NULL DEFAULT '{}',
@@ -1117,8 +1117,40 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("failed migrating alerts for inr_out_of_range: %w", err)
 		}
 	}
+	// Migrate alerts for appointment and lab-test reminders (issue #63), keeping resolved_at.
+	alertsSQL = ""
+	_ = database.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").Scan(&alertsSQL)
+	if !strings.Contains(alertsSQL, "'appointment_reminder'") {
+		log.Println("Migrating alerts: adding appointment_reminder and lab_test_due kinds...")
+		if _, err := database.Exec(`
+			PRAGMA foreign_keys = OFF;
+			DROP TABLE IF EXISTS alerts_v15;
+			CREATE TABLE alerts_v15 (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('bp_crisis', 'bp_low', 'alertness', 'fast_positive', 'dose_override', 'vomited', 'correction', 'duty_handover', 'duty_unaccepted', 'emergency_card', 'low_stock', 'spo2_low', 'reposition_overdue', 'bowel_overdue', 'low_fluid', 'backup_failed', 'bleeding', 'sugar_low', 'sugar_very_high', 'fever', 'fever_high', 'dose_overdue', 'fall', 'seizure', 'inr_out_of_range', 'appointment_reminder', 'lab_test_due')),
+				ref_id TEXT,
+				created_by TEXT REFERENCES caregivers(id),
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT DEFAULT (datetime('now')),
+				target_caregiver_id TEXT REFERENCES caregivers(id),
+				resolved_at TEXT
+			);
+			INSERT INTO alerts_v15 (id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at)
+				SELECT id, kind, ref_id, created_by, payload, created_at, target_caregiver_id, resolved_at FROM alerts;
+			DROP TABLE alerts;
+			ALTER TABLE alerts_v15 RENAME TO alerts;
+			CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
+			PRAGMA foreign_keys = ON;
+		`); err != nil {
+			return fmt.Errorf("failed migrating alerts for appointment reminders: %w", err)
+		}
+	}
 	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_dose_overdue ON alerts(ref_id) WHERE kind = 'dose_overdue'`); err != nil {
 		return fmt.Errorf("failed creating uq_alerts_dose_overdue: %w", err)
+	}
+	// One reminder per appointment, per moment (evening before / 2 h before), and per lab test.
+	if _, err := database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_reminders ON alerts(kind, ref_id) WHERE kind IN ('appointment_reminder', 'lab_test_due')`); err != nil {
+		return fmt.Errorf("failed creating uq_alerts_reminders: %w", err)
 	}
 	// medications.remind: admins can turn overdue reminders off (e.g. a vitamin).
 	// medication_logs.recorded_by: who tapped, when logging for someone else who gave it.
@@ -1229,6 +1261,41 @@ func Migrate(database *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_lab_results_kind ON lab_results(kind, taken_on DESC);
 	`); err != nil {
 		return fmt.Errorf("failed creating lab_results: %w", err)
+	}
+
+	// Issue #63: appointments (doctor, lab, physio) with reminders, and a running
+	// list of questions for the doctor, answered after the visit.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS appointments (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('doctor', 'lab', 'physio', 'other')),
+			title TEXT NOT NULL,
+			starts_at TEXT NOT NULL,
+			location TEXT NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			assigned_caregiver_id TEXT REFERENCES caregivers(id),
+			status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'done', 'cancelled')),
+			created_by TEXT NOT NULL REFERENCES caregivers(id),
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			client_request_id TEXT UNIQUE
+		);
+		CREATE INDEX IF NOT EXISTS idx_appointments_starts ON appointments(status, starts_at);
+		CREATE TABLE IF NOT EXISTS doctor_questions (
+			id TEXT PRIMARY KEY,
+			text TEXT NOT NULL,
+			created_by TEXT NOT NULL REFERENCES caregivers(id),
+			created_at TEXT NOT NULL,
+			answered_at TEXT,
+			answered_by TEXT REFERENCES caregivers(id),
+			answer TEXT NOT NULL DEFAULT '',
+			appointment_id TEXT REFERENCES appointments(id),
+			removed_at TEXT,
+			client_request_id TEXT UNIQUE
+		);
+		CREATE INDEX IF NOT EXISTS idx_doctor_questions_open ON doctor_questions(answered_at, created_at);
+	`); err != nil {
+		return fmt.Errorf("failed creating appointments: %w", err)
 	}
 
 	// Ensure care_events table exists

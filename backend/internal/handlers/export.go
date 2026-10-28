@@ -48,6 +48,10 @@ type DoctorSummaryResponse struct {
 	// Lab results (INR) in the period and the doctor's INR range (issue #62).
 	LabResults []LabResult `json:"lab_results"`
 	INRTarget  INRTarget   `json:"inr_target"`
+	// Questions for the doctor (issue #63): all still open (shown first), and
+	// those answered in the period, as history.
+	OpenQuestions     []DoctorQuestion `json:"open_questions"`
+	AnsweredQuestions []DoctorQuestion `json:"answered_questions"`
 }
 
 // DailyFluid is one household-local day of fluid intake (issue #28).
@@ -368,6 +372,16 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		internalError(w, "failed to load lab results", err)
 		return
 	}
+	openQs, err := openQuestions(h.DB)
+	if err != nil {
+		internalError(w, "failed to load questions", err)
+		return
+	}
+	answeredQs, err := answeredQuestionsSince(h.DB, time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc))
+	if err != nil {
+		internalError(w, "failed to load questions", err)
+		return
+	}
 	incidents, err := incidentsSince(h.DB, time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, loc))
 	if err != nil {
 		internalError(w, "failed to load falls and seizures", err)
@@ -558,6 +572,9 @@ func (h *ExportHandler) ExportDoctorSummary(w http.ResponseWriter, r *http.Reque
 		Incidents:       incidents,
 		LabResults:      labs,
 		INRTarget:       currentINRTarget(),
+
+		OpenQuestions:     openQs,
+		AnsweredQuestions: answeredQs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ConnectionStatus, RESYNC_EVENT } from "@/hooks/useLiveSync";
-import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock, Download, FileText } from "lucide-react";
+import { User, Users, Globe, ShieldAlert, Pill, Eye, Heart, ShieldCheck, Calendar, Clock, KeyRound, ShieldOff, Menu, X, Tablet, Siren, QrCode, Moon, Wifi, Lock, Download, FileText, CalendarClock } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { emergencyPath, useEmergencyToken } from "@/lib/emergencyLink";
 import { useRouter } from "next/navigation";
@@ -189,6 +189,14 @@ export function CaregiverHeader({ connectionStatus = "connected", onMedicationsU
           onClick: () => router.push("/emergency-qr"),
         }]
       : []),
+    {
+      key: "visits",
+      icon: CalendarClock,
+      label: ar ? "المواعيد وأسئلة الطبيب" : "Visits & questions for the doctor",
+      short: ar ? "المواعيد" : "Visits",
+      tone: "bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 dark:hover:bg-sky-900/60",
+      onClick: () => router.push("/visits"),
+    },
     {
       key: "theme",
       icon: Moon,
