@@ -634,6 +634,8 @@ Super Admins can manage server maintenance directly from **Menu → Server**:
 | `GET` | `/api/v1/admin/backup/status` | Reports off-site restic backup status, storage destinations, and test restore health. |
 | `POST` | `/api/v1/admin/backup/run` | Triggers an immediate off-site backup. |
 | `PUT` | `/api/v1/admin/backup/schedule` | Sets the backup times (1–6 a day, household time), "wait while the app is in use", and retention (`history` or `latest`). |
+| `GET` | `/api/v1/admin/reset` | "Start fresh" preview: how many trial records would be removed (`counts`: `doses`, `readings`, `alerts`, `notes`, `care`, `shifts`, `visits`). |
+| `POST` | `/api/v1/admin/reset` | Body `{"confirm":"start_fresh"}`. Copies the database to `data/backup/before-reset/birrcare-<time>.db` (never overwriting an earlier copy), then in one transaction removes doses, PRN entries, readings, lab results, care events, notes and handovers, alerts, refill tasks, hospital pauses, shifts before today, past or closed visits and answered questions. People, PINs, medicines, stock, settings, the roster from today, upcoming visits, open questions and the audit log stay. Records `DATA_RESET` in the audit log and broadcasts `DATA_RESET`, so other phones reload. Without the confirmation: `400 CONFIRM_REQUIRED`. |
 
 `POST /api/v1/admin/update/install` answers `409` with `NEEDS_CONFIG` (the new version needs a setting the server's `.env` lacks), `ACTIVE_CRISIS` (an emergency alert from the last 30 minutes is unacknowledged; send `confirm_during_alert: true` to install anyway), `STALE_TARGET` (a newer version is on offer) or `IN_PROGRESS`.
 

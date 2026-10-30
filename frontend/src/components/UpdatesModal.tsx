@@ -7,6 +7,7 @@ import { fetchApi } from "@/lib/api";
 import { CHECKER_COMMAND, UPDATE_STATUS_EVENT, UpdateStatus, fetchUpdateStatus, shortSha } from "@/lib/updates";
 import { Ltr } from "./Ltr";
 import { BackupsCard } from "./BackupsCard";
+import { ResetCard } from "./ResetCard";
 
 // Super Admin only (issue #43): see what is running, read what changed, and
 // install when the house is calm, or skip. Nothing installs by itself unless
@@ -171,6 +172,10 @@ export function UpdatesModal({ isOpen, onClose, onOpenLogs }: { isOpen: boolean;
 
         <div className="mb-4 border-b border-slate-200 pb-4 dark:border-slate-800">
           <BackupsCard ar={ar} />
+        </div>
+
+        <div className="mb-4 border-b border-slate-200 pb-4 dark:border-slate-800">
+          <ResetCard ar={ar} />
         </div>
 
         {onOpenLogs && (

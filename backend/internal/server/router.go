@@ -86,6 +86,7 @@ func NewRouter(o Options) http.Handler {
 	updatesHandler := &handlers.UpdatesHandler{DB: o.DB, Broker: o.Broker, Dir: o.UpdateDir}
 	photoHandler := &handlers.PhotoHandler{DB: o.DB, Dir: o.PhotoDir}
 	backupHandler := &handlers.BackupHandler{DB: o.DB, Dir: o.BackupDir}
+	resetHandler := &handlers.ResetHandler{DB: o.DB, Dir: o.BackupDir, Broker: o.Broker}
 	medHandler := &handlers.MedicationHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	vitalsHandler := &handlers.VitalsHandler{DB: o.DB, Broker: o.Broker, Push: o.Push}
 	alertsHandler := &handlers.AlertsHandler{DB: o.DB, Push: o.Push}
@@ -232,6 +233,10 @@ func NewRouter(o Options) http.Handler {
 				api.Get("/admin/backup/status", backupHandler.GetStatus)
 				api.Post("/admin/backup/run", backupHandler.Run)
 				api.Put("/admin/backup/schedule", backupHandler.SetSchedule)
+
+				// "Start fresh": remove the test records, keep people and medicines
+				api.Get("/admin/reset", resetHandler.Preview)
+				api.Post("/admin/reset", resetHandler.Reset)
 
 				// Medications & Scheduling
 				api.Get("/medications", medHandler.ListMedications)
