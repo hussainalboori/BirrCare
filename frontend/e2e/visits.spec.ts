@@ -133,3 +133,52 @@ test("a viewer sees appointments and questions but no buttons to change them", a
   await expect(page.getByTestId("question-input")).toHaveCount(0);
   await expect(page.getByTestId("appointment-done")).toHaveCount(0);
 });
+
+// The appointments as a month: a dot on each visit's day, tap a day to see it.
+async function showVisitMonth(page: Page) {
+  await page.getByTestId("view-calendar").click();
+  const day = page.locator(`[data-testid="calendar-day"][data-date="${tomorrow()}"]`);
+  if ((await day.count()) === 0) await page.getByTestId("calendar-next").click(); // tomorrow is next month
+  return day;
+}
+
+for (const locale of ["en", "ar"] as const) {
+  for (const scheme of ["light", "dark"] as const) {
+    test(`calendar view shows the visit on its day and fits 375 px (${locale}, ${scheme})`, async ({ page, context, baseURL }) => {
+      await context.addCookies([{ name: "birrcare_lang", value: locale, url: baseURL! }]);
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.setViewportSize({ width: 375, height: 740 });
+      await mockApi(page, locale, "caregiver", []);
+      await page.goto("/visits");
+      await expect(page.getByTestId("appointment")).toHaveCount(1);
+      const day = await showVisitMonth(page);
+      await expect(page.getByTestId("appointment-calendar")).toBeVisible();
+      await expect(day).toHaveAttribute("data-count", "1");
+      expect((await day.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+      await day.click();
+      const selected = page.getByTestId("calendar-selected");
+      await expect(selected.getByTestId("appointment")).toContainText("Neurology follow-up");
+      await expect(selected).toContainText("10:00");
+      expect(await noScroll(page)).toBe(true);
+    });
+  }
+}
+
+test("the calendar is remembered, and an empty day offers to add a visit on it", async ({ page, context, baseURL }) => {
+  await context.addCookies([{ name: "birrcare_lang", value: "en", url: baseURL! }]);
+  await page.setViewportSize({ width: 375, height: 740 });
+  await mockApi(page, "en", "caregiver", []);
+  await page.goto("/visits");
+  await showVisitMonth(page);
+  await page.reload();
+  await expect(page.getByTestId("appointment-calendar")).toBeVisible();
+
+  // Today has no visit in the mock (the visit is tomorrow): it is selected on open.
+  await page.getByTestId("add-on-day").click();
+  const today = await page.getByTestId("calendar-day").and(page.locator('[aria-selected="true"]')).getAttribute("data-date");
+  await expect(page.getByTestId("appointment-date")).toHaveValue(today!);
+
+  await page.getByTestId("view-list").click();
+  await expect(page.getByTestId("appointment-calendar")).toHaveCount(0);
+  await expect(page.locator("main").getByTestId("appointment")).toHaveCount(1);
+});

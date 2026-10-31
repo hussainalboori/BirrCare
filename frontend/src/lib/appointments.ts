@@ -72,3 +72,34 @@ export function icsHref(id: string): string {
 }
 
 export const APPOINTMENTS_CHANGED = new Set(["APPOINTMENT_CHANGED", "APPOINTMENT_REMINDER", "DOCTOR_QUESTION_CHANGED"]);
+
+/** "2026-11" → "2026-12" (step = 1) or "2026-10" (step = -1). */
+export function shiftMonth(month: string, step: number): string {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + step, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** The month's days as YYYY-MM-DD in weeks starting on Sunday; null pads the first and last week. */
+export function monthGrid(month: string): (string | null)[] {
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const cells: (string | null)[] = Array.from({ length: first }, () => null);
+  for (let d = 1; d <= days; d++) cells.push(`${month}-${String(d).padStart(2, "0")}`);
+  while (cells.length % 7) cells.push(null);
+  return cells;
+}
+
+/** "November 2026" in the app's language (Gregorian, Latin digits). */
+export function monthLabel(month: string, locale: Locale): string {
+  return new Date(`${month}-01T12:00:00Z`).toLocaleDateString(intlLocale(locale), { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** Weekday names for the calendar header, Sunday first ("Sun"; one letter in Arabic, as Arabic calendars do: the full names don't fit a phone). */
+export function weekdayNames(locale: Locale): string[] {
+  // 2023-01-01 was a Sunday.
+  return Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.UTC(2023, 0, 1 + i, 12)).toLocaleDateString(intlLocale(locale), { weekday: locale === "ar" ? "narrow" : "short", timeZone: "UTC" }),
+  );
+}

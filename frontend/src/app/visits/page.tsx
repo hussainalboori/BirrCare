@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { OPEN_MED_CATALOG_EVENT } from "@/components/CarePause";
 import { VoiceNoteButton } from "@/components/VoiceNoteButton";
+import { AppointmentCalendar, appointmentsOn, type CalendarState } from "@/components/AppointmentCalendar";
 import { Ltr } from "@/components/Ltr";
 import { useLanguage } from "@/context/LanguageContext";
 import { useCaregiver } from "@/context/CaregiverContext";
@@ -50,6 +51,8 @@ interface Draft {
   assigned_caregiver_id: string;
 }
 
+const VIEW_KEY = "birrcare_visits_view";
+
 const emptyDraft = (): Draft => ({ kind: "doctor", title: "", date: householdToday(), time: "10:00", location: "", notes: "", assigned_caregiver_id: "" });
 
 export default function VisitsPage() {
@@ -72,6 +75,8 @@ export default function VisitsPage() {
   const [questionMsg, setQuestionMsg] = useState("");
   const [answering, setAnswering] = useState<{ id: string; text: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  // null = the list; otherwise the month on show. Remembered on this phone.
+  const [cal, setCal] = useState<CalendarState | null>(null);
 
   const load = useCallback(async () => {
     const [a, q] = await Promise.all([
@@ -89,6 +94,21 @@ export default function VisitsPage() {
     window.addEventListener("birrcare:sse_event", onEvent);
     return () => window.removeEventListener("birrcare:sse_event", onEvent);
   }, [load]);
+
+  const openCalendar = (on: boolean) => {
+    const today = householdToday();
+    setCal(on ? { month: today.slice(0, 7), today, selected: today } : null);
+    try {
+      localStorage.setItem(VIEW_KEY, on ? "calendar" : "list");
+    } catch {}
+  };
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(VIEW_KEY);
+    } catch {}
+    if (saved === "calendar") openCalendar(true);
+  }, []);
 
   const notSent = ar ? "لم يُحفظ. تحقق من الاتصال وحاول مرة أخرى." : "Not saved. Check the connection and try again.";
   // The sign-in list; the server refuses a view-only member ("INVALID_CAREGIVER").
@@ -239,6 +259,64 @@ export default function VisitsPage() {
             )}
           </div>
         ))}
+    </li>
+  );
+
+  const appointmentCard = (a: Appointment) => (
+    <li key={a.id} data-testid="appointment" className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+      <p className="text-xs font-bold uppercase text-sky-800 dark:text-sky-300">{kindLabel(a.kind, ar)}</p>
+      <p className="text-base font-black text-slate-900 dark:text-slate-100">
+        <bdi>{a.title}</bdi>
+      </p>
+      <p className="text-base font-bold text-slate-800 dark:text-slate-200">
+        <bdi>{appointmentDay(a.date, locale)}</bdi> <Ltr>{a.time}</Ltr>
+      </p>
+      {a.location && (
+        <p className="text-sm text-slate-700 dark:text-slate-300">
+          <bdi>{a.location}</bdi>
+        </p>
+      )}
+      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{takesHer(a)}</p>
+      {a.notes && (
+        <p className="mt-1 whitespace-pre-line text-sm text-slate-700 dark:text-slate-300">
+          <bdi>{a.notes}</bdi>
+        </p>
+      )}
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <a href={icsHref(a.id)} download="birrcare-appointment.ics" className={`${secondaryBtn} flex items-center justify-center gap-1.5`} data-testid="add-to-calendar">
+          <CalendarPlus className="h-5 w-5 shrink-0" />
+          {ar ? "أضف لتقويمي" : "Add to my calendar"}
+        </a>
+        {canEdit && (
+          <button type="button" onClick={() => setStatus(a, "done")} className={primaryBtn} data-testid="appointment-done">
+            {ar ? "تمّ الموعد" : "It's done"}
+          </button>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() =>
+              setEditing({
+                id: a.id,
+                draft: { kind: a.kind, title: a.title, date: a.date, time: a.time, location: a.location ?? "", notes: a.notes ?? "", assigned_caregiver_id: a.assigned_caregiver_id ?? "" },
+              })
+            }
+            className={secondaryBtn}
+          >
+            {ar ? "تعديل" : "Change"}
+          </button>
+        )}
+        {canEdit &&
+          (confirmCancel === a.id ? (
+            <button type="button" onClick={() => setStatus(a, "cancelled")} className="min-h-12 rounded-xl bg-rose-700 px-3 text-base font-bold text-white">
+              {ar ? "نعم، ألغِ الموعد" : "Yes, cancel it"}
+            </button>
+          ) : (
+            <button type="button" onClick={() => setConfirmCancel(a.id)} className={secondaryBtn}>
+              {ar ? "إلغاء الموعد" : "Cancel visit"}
+            </button>
+          ))}
+      </div>
     </li>
   );
 
@@ -486,68 +564,79 @@ export default function VisitsPage() {
             </form>
           )}
 
-          {appts && appts.upcoming.length === 0 && !editing && (
-            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">{ar ? "لا مواعيد قادمة." : "No appointments coming up."}</p>
-          )}
-          <ul className="mt-3 space-y-3">
-            {appts?.upcoming.map((a) => (
-              <li key={a.id} data-testid="appointment" className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                <p className="text-xs font-bold uppercase text-sky-800 dark:text-sky-300">{kindLabel(a.kind, ar)}</p>
-                <p className="text-base font-black text-slate-900 dark:text-slate-100">
-                  <bdi>{a.title}</bdi>
-                </p>
-                <p className="text-base font-bold text-slate-800 dark:text-slate-200">
-                  <bdi>{appointmentDay(a.date, locale)}</bdi> <Ltr>{a.time}</Ltr>
-                </p>
-                {a.location && (
-                  <p className="text-sm text-slate-700 dark:text-slate-300">
-                    <bdi>{a.location}</bdi>
-                  </p>
-                )}
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{takesHer(a)}</p>
-                {a.notes && (
-                  <p className="mt-1 whitespace-pre-line text-sm text-slate-700 dark:text-slate-300">
-                    <bdi>{a.notes}</bdi>
-                  </p>
-                )}
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <a href={icsHref(a.id)} download="birrcare-appointment.ics" className={`${secondaryBtn} flex items-center justify-center gap-1.5`} data-testid="add-to-calendar">
-                    <CalendarPlus className="h-5 w-5 shrink-0" />
-                    {ar ? "أضف لتقويمي" : "Add to my calendar"}
-                  </a>
-                  {canEdit && (
-                    <button type="button" onClick={() => setStatus(a, "done")} className={primaryBtn} data-testid="appointment-done">
-                      {ar ? "تمّ الموعد" : "It's done"}
-                    </button>
-                  )}
-                  {canEdit && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEditing({
-                          id: a.id,
-                          draft: { kind: a.kind, title: a.title, date: a.date, time: a.time, location: a.location ?? "", notes: a.notes ?? "", assigned_caregiver_id: a.assigned_caregiver_id ?? "" },
-                        })
-                      }
-                      className={secondaryBtn}
-                    >
-                      {ar ? "تعديل" : "Change"}
-                    </button>
-                  )}
-                  {canEdit &&
-                    (confirmCancel === a.id ? (
-                      <button type="button" onClick={() => setStatus(a, "cancelled")} className="min-h-12 rounded-xl bg-rose-700 px-3 text-base font-bold text-white">
-                        {ar ? "نعم، ألغِ الموعد" : "Yes, cancel it"}
-                      </button>
-                    ) : (
-                      <button type="button" onClick={() => setConfirmCancel(a.id)} className={secondaryBtn}>
-                        {ar ? "إلغاء الموعد" : "Cancel visit"}
-                      </button>
-                    ))}
-                </div>
-              </li>
+          <div role="tablist" className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+            {([false, true] as const).map((on) => (
+              <button
+                key={String(on)}
+                type="button"
+                role="tab"
+                aria-selected={!!cal === on}
+                data-testid={on ? "view-calendar" : "view-list"}
+                onClick={() => openCalendar(on)}
+                className={`min-h-12 rounded-lg text-base font-bold ${
+                  !!cal === on ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white" : "text-slate-600 dark:text-slate-300"
+                }`}
+              >
+                {on ? (ar ? "التقويم" : "Calendar") : ar ? "القائمة" : "List"}
+              </button>
             ))}
-          </ul>
+          </div>
+
+          {cal ? (
+            <>
+              <AppointmentCalendar appointments={[...(appts?.upcoming ?? []), ...(appts?.recent ?? [])]} state={cal} onChange={setCal} locale={locale} />
+              {cal.selected && (
+                <div data-testid="calendar-selected" className="mt-4">
+                  <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
+                    <bdi>{appointmentDay(cal.selected, locale)}</bdi>
+                  </h3>
+                  {(() => {
+                    const day = cal.selected;
+                    const upcomingIds = new Set(appts?.upcoming.map((a) => a.id));
+                    const list = appointmentsOn([...(appts?.upcoming ?? []), ...(appts?.recent ?? [])], day);
+                    if (list.length === 0) {
+                      return (
+                        <div className="mt-2">
+                          <p className="text-sm text-slate-600 dark:text-slate-400">{ar ? "لا مواعيد في هذا اليوم." : "No visits on this day."}</p>
+                          {canEdit && !editing && day >= cal.today && (
+                            <button
+                              type="button"
+                              onClick={() => setEditing({ id: null, draft: { ...emptyDraft(), date: day } })}
+                              className={`${secondaryBtn} mt-2`}
+                              data-testid="add-on-day"
+                            >
+                              {ar ? "أضف موعداً في هذا اليوم" : "Add a visit on this day"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    }
+                    return (
+                      <ul className="mt-2 space-y-3">
+                        {list.map((a) =>
+                          upcomingIds.has(a.id) ? (
+                            appointmentCard(a)
+                          ) : (
+                            <li key={a.id} className="rounded-xl border border-slate-200 p-3 text-sm text-slate-800 dark:border-slate-700 dark:text-slate-200">
+                              <bdi className="font-bold">{a.title}</bdi> · <Ltr>{a.time}</Ltr> ·{" "}
+                              {a.status === "done" ? (ar ? "تمّ" : "done") : ar ? "لم يُسجَّل" : "not marked"}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    );
+                  })()}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {appts && appts.upcoming.length === 0 && !editing && (
+                <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">{ar ? "لا مواعيد قادمة." : "No appointments coming up."}</p>
+              )}
+              <ul className="mt-3 space-y-3">{appts?.upcoming.map(appointmentCard)}</ul>
+            </>
+          )}
         </section>
 
         {(appts?.recent.length ?? 0) > 0 && (
