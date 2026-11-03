@@ -12,9 +12,9 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "lucide-react": "^1.61.0",
+    "lucide-react": "^1.65.0",
     "next": "16.4.3",
-    "postcss": "^8.5.31",
+    "postcss": "^8.5.32",
     "qrcode": "1.5.4",
     "react": "19.3.1",
     "react-dom": "19.3.1"
