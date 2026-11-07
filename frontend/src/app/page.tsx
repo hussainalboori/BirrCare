@@ -13,6 +13,7 @@ import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
 import { OUTBOX_RESULT_EVENT } from "@/lib/outbox";
 import { householdToday } from "@/lib/householdTime";
+import { orderedSlots } from "@/lib/medOrder";
 import { useHouseholdZone } from "@/context/HouseholdTimeContext";
 import { CarePauseStart } from "@/components/CarePause";
 import { Ltr } from "@/components/Ltr";
@@ -30,6 +31,8 @@ export default function MedicationsPage() {
   const [scheduleData, setScheduleData] = useState<ScheduledDose[]>([]);
   // Issue #64: a "swallowing difficulty" handover tag in the last 7 days.
   const [swallowing, setSwallowing] = useState(false);
+  // The current shift's start, when the list follows the shift (Shift settings).
+  const [orderFrom, setOrderFrom] = useState("");
   const [loading, setLoading] = useState(true);
 
   const selectedDayName = useMemo(() => {
@@ -51,6 +54,7 @@ export default function MedicationsPage() {
       if (seq !== requestSeqRef.current) return;
       setScheduleData(res?.schedule || []);
       setSwallowing(Boolean(res?.swallowing_difficulty));
+      setOrderFrom(res?.order_from || "");
     } catch (err) {
       console.warn("Failed fetching schedule:", err);
     } finally {
@@ -92,6 +96,7 @@ export default function MedicationsPage() {
     onMedLogged: onDoseChanged,
     onMedVoided: onDoseChanged,
     onMedEvent: onDoseChanged,
+    onShiftUpdated: () => loadSchedule(selectedDate),
     // After reconnect / returning from background: re-hydrate (and roll over to the new day).
     onResync: () => {
       const today = householdToday(new Date(), zone);
@@ -108,10 +113,9 @@ export default function MedicationsPage() {
   const takenDoses = scheduleData.filter((d) => d.log?.status === "taken").length;
   const progressPercent = totalDoses > 0 ? Math.round((takenDoses / totalDoses) * 100) : 0;
 
-  // Group by slots in clock order. "night" (02:00 by default) must be listed, or the
-  // dose given at 3 AM never renders on the dashboard.
-  const slotOrder = ["night", "morning", "afternoon", "evening", "bedtime"];
-  const groupedBySlot = slotOrder.map((slot) => ({
+  // Group by slots, in clock order or from the shift's start. "night" (02:00 by default)
+  // must be listed, or the dose given at 3 AM never renders on the dashboard.
+  const groupedBySlot = orderedSlots(scheduleData, orderFrom).map((slot) => ({
     slot,
     doses: scheduleData.filter((d) => d.slot === slot),
   }));
@@ -221,6 +225,13 @@ export default function MedicationsPage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {orderFrom && (
+              <p data-testid="order-from" className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                {locale === "ar" ? "القائمة تبدأ من وقت الوردية " : "List starts from the shift at "}
+                <Ltr>{orderFrom}</Ltr>
+                {locale === "ar" ? "، وما قبله في آخر القائمة." : "; earlier medicines are at the end."}
+              </p>
+            )}
             {groupedBySlot.map(({ slot, doses }) => {
               if (doses.length === 0) return null;
               return (

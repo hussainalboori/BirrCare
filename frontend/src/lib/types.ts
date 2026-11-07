@@ -203,6 +203,8 @@ export interface DailyScheduleResponse {
   schedule: ScheduledDose[];
   /** Issue #64: the latest "swallowing difficulty" handover tag of the last 7 days. */
   swallowing_difficulty?: { at: string; by?: string } | null;
+  /** "HH:MM" the list starts from (Shift settings); empty means clock order. */
+  order_from?: string;
 }
 
 export type VitalKind = "bp" | "sugar" | "alertness" | "full" | "fast" | "spo2" | "temp";

@@ -1334,11 +1334,17 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		internalError(w, "failed to read handover tags", err)
 		return
 	}
+	orderFrom, err := medOrderFrom(h.DB, now)
+	if err != nil {
+		internalError(w, "failed to read the medicines order", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"date":                  dateStr,
 		"schedule":              schedule,
 		"swallowing_difficulty": swallow,
+		"order_from":            orderFrom,
 	})
 }
 

@@ -94,6 +94,7 @@ export function ShiftManagementModal({
   // Issue #66: nights in a row and days away for the selected date, and the last warning.
   const [load, setLoad] = useState<{ night_shift_ids: string[]; caregivers: { caregiver_id: string; nights_before: number; unavailable: boolean; unavailable_reason?: string }[] } | null>(null);
   const [assignWarning, setAssignWarning] = useState<string[]>([]);
+  const [medOrder, setMedOrder] = useState<"clock" | "shift" | null>(null);
 
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     return new Date().toISOString().split("T")[0];
@@ -125,6 +126,8 @@ export function ShiftManagementModal({
       setShifts(shiftsData || []);
       setCaregivers(cgData?.filter((c) => c.is_active && c.role !== "viewer") || []);
       setDutyStatus(dutyData || null);
+      const orderData = await fetchApi<{ order: "clock" | "shift" }>("/shifts/med-order").catch(() => null);
+      setMedOrder(orderData?.order ?? null);
 
       // Load assignments for selected date
       const assignData = await fetchApi<ShiftAssignment[]>(
@@ -164,6 +167,21 @@ export function ShiftManagementModal({
       onUpdated?.();
     } catch (err: any) {
       setError(err?.message || "Failed to apply preset");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMedOrder = async (order: "clock" | "shift") => {
+    setSaving(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await fetchApi("/shifts/med-order", { method: "PUT", body: JSON.stringify({ order }) });
+      setMedOrder(order);
+      setSuccessMsg(locale === "ar" ? "تم حفظ ترتيب الأدوية" : "Medicines order saved");
+    } catch (err: any) {
+      setError(err?.message || "Failed to save the medicines order");
     } finally {
       setSaving(false);
     }
@@ -463,6 +481,43 @@ export function ShiftManagementModal({
                       );
                     })}
                   </div>
+
+                  {/* The order of the medicines page follows the shift, if chosen */}
+                  {medOrder && (
+                    <div data-testid="med-order" className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                      <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                        {locale === "ar" ? "ترتيب قائمة الأدوية" : "Medicines list order"}
+                      </h3>
+                      <p className="mt-1 mb-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                        {locale === "ar"
+                          ? "عند البدء من الوردية تظهر أولاً الأدوية التي تلي بدايتها، وتنتقل الأدوية التي قبلها إلى آخر القائمة."
+                          : "Starting from the shift shows the first medicines after it begins on top. Medicines before it move to the end."}
+                      </p>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {([
+                          ["shift", locale === "ar" ? "البدء من وقت الوردية" : "Start from the shift"],
+                          ["clock", locale === "ar" ? "ترتيب ثابت، منتصف الليل أولاً" : "Same order, Night first"],
+                        ] as const).map(([id, label]) => (
+                          <button
+                            key={id}
+                            type="button"
+                            disabled={saving}
+                            aria-pressed={medOrder === id}
+                            data-testid={`med-order-${id}`}
+                            onClick={() => handleMedOrder(id)}
+                            className={`flex min-h-12 items-center justify-center gap-1.5 rounded-xl border-2 px-3 py-2 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 ${
+                              medOrder === id
+                                ? "border-purple-600 bg-purple-50 text-purple-800 dark:border-purple-400 dark:bg-purple-950/40 dark:text-purple-200"
+                                : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                            }`}
+                          >
+                            {medOrder === id && <Check className="h-4 w-4 shrink-0" />}
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : activeTab === "slots" ? (
                 /* TAB 2: Shift Slots List & Custom Add */
