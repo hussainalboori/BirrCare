@@ -9,6 +9,11 @@ import (
 // IntervalHoursForTest exposes intervalHours to the external test package.
 var IntervalHoursForTest = intervalHours
 
+// MedOrderFromForTest exposes medOrderFrom, which depends on the time of day.
+func MedOrderFromForTest(db *sql.DB, caregiverID string, now time.Time) (string, error) {
+	return medOrderFrom(db, caregiverID, now)
+}
+
 // SetClinicalLocationForTest overrides the household time zone (APP_TIMEZONE).
 func SetClinicalLocationForTest(loc *time.Location) {
 	clinicalLocOnce.Do(func() {})

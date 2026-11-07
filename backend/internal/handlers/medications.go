@@ -1334,7 +1334,11 @@ func (h *MedicationHandler) GetSchedule(w http.ResponseWriter, r *http.Request) 
 		internalError(w, "failed to read handover tags", err)
 		return
 	}
-	orderFrom, err := medOrderFrom(h.DB, now)
+	viewerID := ""
+	if viewer := auth.GetCaregiverFromContext(r.Context()); viewer != nil {
+		viewerID = viewer.ID
+	}
+	orderFrom, err := medOrderFrom(h.DB, viewerID, now)
 	if err != nil {
 		internalError(w, "failed to read the medicines order", err)
 		return

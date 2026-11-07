@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// The medicines list can start from the current shift (Shift settings).
+// The medicines list can start from each person's own shift (Shift settings).
 
 const med = (id: string, en: string) => ({ id, name_ar: en, name_en: en, dosage: "1", frequency_slots: [], is_active: true, created_at: "2026-10-01T00:00:00Z" });
 
@@ -64,4 +64,22 @@ test("the Super Admin chooses the order in the shift settings", async ({ page })
   const box = await page.getByTestId("med-order-shift").boundingBox();
   expect(box!.height).toBeGreaterThanOrEqual(48);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("the list reloads when the roster changes", async ({ page }) => {
+  await mockApi(page, "", "en");
+  let from = "";
+  await page.route("**/api/v1/medications/schedule*", (route) =>
+    route.fulfill({ json: { date: "2026-10-21", order_from: from, schedule: [
+      { slot: "night", time: "02:00", medication: med("m1", "Night pill") },
+      { slot: "evening", time: "20:00", medication: med("m3", "Evening pill") },
+    ] } }),
+  );
+  await page.route("**/api/v1/events/stream", (route) =>
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: from ? `retry: 200\ndata: {"type":"DUTY_UPDATED","payload":{}}\n\n` : "retry: 200\n\n" }),
+  );
+  await page.goto("/");
+  await expect.poll(() => headings(page)).toEqual(["Night", "Evening"]);
+  from = "20:00";
+  await expect.poll(() => headings(page)).toEqual(["Evening", "Night"]);
 });

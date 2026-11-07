@@ -490,8 +490,8 @@ export function ShiftManagementModal({
                       </h3>
                       <p className="mt-1 mb-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                         {locale === "ar"
-                          ? "عند البدء من الوردية تظهر أولاً الأدوية التي تلي بدايتها، وتنتقل الأدوية التي قبلها إلى آخر القائمة."
-                          : "Starting from the shift shows the first medicines after it begins on top. Medicines before it move to the end."}
+                          ? "عند البدء من الوردية يرى كل شخص القائمة من بداية ورديته، وتنتقل الأدوية التي قبلها إلى آخر القائمة."
+                          : "Starting from the shift shows each person the list from the start of their own shift. Medicines before it move to the end."}
                       </p>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {([

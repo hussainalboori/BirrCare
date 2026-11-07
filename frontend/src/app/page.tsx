@@ -8,6 +8,7 @@ import { CaregiverHeader } from "@/components/CaregiverHeader";
 import { MedicationSlotCard } from "@/components/MedicationSlotCard";
 import { PRNSection } from "@/components/PRNSection";
 import { useLanguage } from "@/context/LanguageContext";
+import { useCaregiver } from "@/context/CaregiverContext";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { DailyScheduleResponse, ScheduledDose } from "@/lib/types";
 import { fetchApi } from "@/lib/api";
@@ -22,6 +23,8 @@ import Link from "next/link";
 
 export default function MedicationsPage() {
   const { t, locale } = useLanguage();
+  // The list starts from this person's shift, so it reloads when someone else signs in.
+  const caregiverId = useCaregiver().currentCaregiver?.id;
   // Today at home (issue #58): not the UTC date, and not this phone's date when
   // the phone is abroad.
   const zone = useHouseholdZone();
@@ -64,7 +67,7 @@ export default function MedicationsPage() {
 
   useEffect(() => {
     loadSchedule(selectedDate);
-  }, [selectedDate, loadSchedule]);
+  }, [selectedDate, loadSchedule, caregiverId]);
 
   // The household zone arrived from the server: "today" may be another date.
   useEffect(() => {
@@ -97,6 +100,7 @@ export default function MedicationsPage() {
     onMedVoided: onDoseChanged,
     onMedEvent: onDoseChanged,
     onShiftUpdated: () => loadSchedule(selectedDate),
+    onDutyUpdated: () => loadSchedule(selectedDate),
     // After reconnect / returning from background: re-hydrate (and roll over to the new day).
     onResync: () => {
       const today = householdToday(new Date(), zone);
@@ -227,7 +231,7 @@ export default function MedicationsPage() {
           <div className="space-y-6">
             {orderFrom && (
               <p data-testid="order-from" className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                {locale === "ar" ? "القائمة تبدأ من وقت الوردية " : "List starts from the shift at "}
+                {locale === "ar" ? "القائمة تبدأ من ورديتك الساعة " : "List starts from your shift at "}
                 <Ltr>{orderFrom}</Ltr>
                 {locale === "ar" ? "، وما قبله في آخر القائمة." : "; earlier medicines are at the end."}
               </p>
