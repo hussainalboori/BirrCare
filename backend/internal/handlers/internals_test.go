@@ -9,6 +9,15 @@ import (
 // IntervalHoursForTest exposes intervalHours to the external test package.
 var IntervalHoursForTest = intervalHours
 
+// FindCurrentShiftForTest exposes findCurrentShift.
+func FindCurrentShiftForTest(db *sql.DB, now time.Time) (string, string, error) {
+	shift, date, err := findCurrentShift(db, now)
+	if shift == nil {
+		return "", date, err
+	}
+	return shift.ID, date, err
+}
+
 // MedOrderFromForTest exposes medOrderFrom, which depends on the time of day.
 func MedOrderFromForTest(db *sql.DB, caregiverID string, now time.Time) (string, error) {
 	return medOrderFrom(db, caregiverID, now)

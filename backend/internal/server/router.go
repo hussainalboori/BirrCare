@@ -307,6 +307,9 @@ func NewRouter(o Options) http.Handler {
 				api.Post("/shifts/assignments", shiftsHandler.AssignShift)
 				api.Delete("/shifts/assignments/{id}", shiftsHandler.DeleteAssignment)
 				api.Get("/shifts/current-duty", shiftsHandler.GetCurrentDuty)
+				api.Get("/shifts/month", shiftsHandler.Month)
+				api.Post("/shifts/repeats", shiftsHandler.AddRepeat)
+				api.Delete("/shifts/repeats/{id}", shiftsHandler.StopRepeat)
 				api.Get("/shifts/med-order", shiftsHandler.GetMedOrder)
 				api.Put("/shifts/med-order", shiftsHandler.PutMedOrder)
 				// Issue #66: night-shift fairness, rest warnings and unavailable dates

@@ -91,6 +91,7 @@ func main() {
 	// 8. Watch for overdue patient repositioning to prevent pressure sores (issue #27)
 	handlers.StartRepositionWatcher(reminderCtx, database, notifier, broker)
 	handlers.StartDoseWatcher(reminderCtx, database, notifier, broker)
+	handlers.StartShiftRepeats(reminderCtx, database)
 	handlers.StartAppointmentReminders(reminderCtx, database, notifier, broker)
 	handlers.StartRefillWatcher(reminderCtx, database, notifier, broker)
 	handlers.StartDailySummaries(reminderCtx, database, notifier)

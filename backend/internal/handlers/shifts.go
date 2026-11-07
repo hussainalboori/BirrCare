@@ -443,6 +443,7 @@ func (h *ShiftsHandler) AssignShift(w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT(shift_id, date) DO UPDATE SET
 			caregiver_id = excluded.caregiver_id,
 			notes = excluded.notes,
+			repeat_id = NULL,
 			created_at = datetime('now')
 	`, assignID, req.ShiftID, req.CaregiverID, req.Date, req.Notes)
 	if err != nil {
@@ -548,8 +549,8 @@ func findCurrentShift(q querier, now time.Time) (*models.Shift, string, error) {
 	for _, s := range activeShifts {
 		if isTimeInShift(currentTime, s.StartTime, s.EndTime) {
 			currentShift = &s
-			// If overnight shift and currentTime < end_time, it started yesterday
-			if s.StartTime > s.EndTime && currentTime < s.EndTime {
+			// Overnight or 24-hour shift and currentTime < end_time: it started yesterday
+			if s.StartTime >= s.EndTime && currentTime < s.EndTime {
 				targetDate = yesterdayDate
 			}
 			break

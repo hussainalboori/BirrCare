@@ -1382,6 +1382,33 @@ func Migrate(database *sql.DB) error {
 		return fmt.Errorf("failed creating caregiver_unavailability: %w", err)
 	}
 
+	// Weekly repeating shifts: a rule per shift and weekday, written out as ordinary
+	// shift_assignments rows so every reader of the roster sees them. filled_until is
+	// how far a rule was written, so a day removed by hand is not put back.
+	if _, err := database.Exec(`
+		CREATE TABLE IF NOT EXISTS shift_repeats (
+			id TEXT PRIMARY KEY,
+			shift_id TEXT NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+			caregiver_id TEXT NOT NULL REFERENCES caregivers(id) ON DELETE CASCADE,
+			weekday INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+			filled_until TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			CONSTRAINT uq_shift_repeat UNIQUE (shift_id, weekday)
+		);
+	`); err != nil {
+		return fmt.Errorf("failed creating shift_repeats: %w", err)
+	}
+	var hasRepeatID int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('shift_assignments') WHERE name = 'repeat_id'`).Scan(&hasRepeatID); err != nil {
+		return fmt.Errorf("failed reading shift_assignments columns: %w", err)
+	}
+	if hasRepeatID == 0 {
+		if _, err := database.Exec(`ALTER TABLE shift_assignments ADD COLUMN repeat_id TEXT`); err != nil {
+			return fmt.Errorf("failed adding shift_assignments.repeat_id: %w", err)
+		}
+	}
+
 	// Issue #63: appointments (doctor, lab, physio) with reminders, and a running
 	// list of questions for the doctor, answered after the visit.
 	if _, err := database.Exec(`

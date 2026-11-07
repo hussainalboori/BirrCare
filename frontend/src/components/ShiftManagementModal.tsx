@@ -1,12 +1,16 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useCaregiver } from "@/context/CaregiverContext";
 import { useLanguage } from "@/context/LanguageContext";
-import { Shift, ShiftAssignment, Caregiver, CurrentDutyStatus, ShiftPreset } from "@/lib/types";
+import { Shift, ShiftAssignment, Caregiver, CurrentDutyStatus, ShiftPreset, ShiftMonthEntry, ShiftRepeat } from "@/lib/types";
 import { isSuperAdmin } from "@/lib/permissions";
 import { fetchApi } from "@/lib/api";
 import { assignWarningText, nightsText, type AssignWarning } from "@/lib/roster";
+import { householdToday } from "@/lib/householdTime";
+import { intlLocale } from "@/lib/datetime";
+import { ShiftCalendar } from "./ShiftCalendar";
+import { Ltr } from "./Ltr";
 import {
   X,
   Clock,
@@ -23,6 +27,7 @@ import {
   ArrowRight,
   Sun,
   Moon,
+  Repeat,
 } from "lucide-react";
 
 interface ShiftManagementModalProps {
@@ -96,9 +101,12 @@ export function ShiftManagementModal({
   const [assignWarning, setAssignWarning] = useState<string[]>([]);
   const [medOrder, setMedOrder] = useState<"clock" | "shift" | null>(null);
 
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return new Date().toISOString().split("T")[0];
-  });
+  const [selectedDate, setSelectedDate] = useState<string>(() => householdToday());
+  const [calMonth, setCalMonth] = useState<string>(() => householdToday().slice(0, 7));
+  const [monthEntries, setMonthEntries] = useState<ShiftMonthEntry[]>([]);
+  const [repeats, setRepeats] = useState<ShiftRepeat[]>([]);
+  // The weekly shift waiting for "Yes, stop" (in-page confirmation).
+  const [stoppingRepeat, setStoppingRepeat] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -113,9 +121,11 @@ export function ShiftManagementModal({
   const [newShiftColor, setNewShiftColor] = useState("#2563eb");
   const [showAddForm, setShowAddForm] = useState(false);
 
+  // The spinner is for opening only: tapping a day must not blank the calendar.
+  const loadedOnceRef = useRef(false);
   const loadData = useCallback(async () => {
     if (!isOpen) return;
-    setLoading(true);
+    if (!loadedOnceRef.current) setLoading(true);
     setError(null);
     try {
       const [shiftsData, cgData, dutyData] = await Promise.all([
@@ -139,6 +149,7 @@ export function ShiftManagementModal({
     } catch (err: any) {
       setError(err?.message || "Failed to load shift data");
     } finally {
+      loadedOnceRef.current = true;
       setLoading(false);
     }
   }, [isOpen, selectedDate]);
@@ -146,6 +157,17 @@ export function ShiftManagementModal({
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const loadMonth = useCallback(async () => {
+    if (!isOpen) return;
+    const res = await fetchApi<{ assignments: ShiftMonthEntry[]; repeats: ShiftRepeat[] }>(`/shifts/month?month=${calMonth}`).catch(() => null);
+    setMonthEntries(res?.assignments || []);
+    setRepeats(res?.repeats || []);
+  }, [isOpen, calMonth]);
+
+  useEffect(() => {
+    loadMonth();
+  }, [loadMonth]);
 
   // Handle preset application
   const handleApplyPreset = async (preset: ShiftPreset) => {
@@ -258,6 +280,15 @@ export function ShiftManagementModal({
     setError(null);
     setAssignWarning([]);
     try {
+      // "Nobody" takes the person off this one day.
+      if (!caregiverId) {
+        const current = assignments.find((a) => a.shift_id === shiftId);
+        if (current) await fetchApi(`/shifts/assignments/${current.id}`, { method: "DELETE" });
+        setSuccessMsg(t.assignSuccess);
+        await Promise.all([loadData(), loadMonth()]);
+        onUpdated?.();
+        return;
+      }
       const res = await fetchApi<AssignWarning>("/shifts/assignments", {
         method: "POST",
         body: JSON.stringify({
@@ -269,7 +300,7 @@ export function ShiftManagementModal({
       setSuccessMsg(t.assignSuccess);
       const name = caregivers.find((c) => c.id === caregiverId)?.name || "";
       setAssignWarning(res ? assignWarningText(res, name, locale === "ar") : []);
-      await loadData();
+      await Promise.all([loadData(), loadMonth()]);
       onUpdated?.();
     } catch (err: any) {
       setError(err?.message || "Failed to assign caregiver");
@@ -278,9 +309,31 @@ export function ShiftManagementModal({
     }
   };
 
+  const changeRepeat = async (call: () => Promise<unknown>, message: string) => {
+    setSaving(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await call();
+      setStoppingRepeat(null);
+      setSuccessMsg(message);
+      await Promise.all([loadData(), loadMonth()]);
+      onUpdated?.();
+    } catch (err: any) {
+      setError(err?.message || "Failed to change the weekly shift");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const isSuper = isSuperAdmin(currentCaregiver?.role);
+  const selectedDay = new Date(`${selectedDate}T12:00:00Z`);
+  const selectedWeekday = selectedDay.getUTCDay();
+  const intl = intlLocale(locale);
+  const selectedWeekdayName = selectedDay.toLocaleDateString(intl, { weekday: "long", timeZone: "UTC" });
+  const dayTitle = selectedDay.toLocaleDateString(intl, { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -698,28 +751,23 @@ export function ShiftManagementModal({
               ) : (
                 /* TAB 3: Duty Scheduler */
                 <div className="space-y-4">
-                  {/* Date Picker & Current Duty Banner */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/40">
-                    <div>
-                      <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block mb-1">
-                        {locale === "ar" ? "تاريخ المناوبة" : "Schedule Date"}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="date"
-                          value={selectedDate}
-                          onChange={(e) => setSelectedDate(e.target.value)}
-                          className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-base font-semibold text-slate-900 shadow-sm focus:border-purple-500 focus:ring-1 focus:ring-purple-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDate(new Date().toISOString().split("T")[0])}
-                          className="rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                        >
-                          {locale === "ar" ? "اليوم" : "Today"}
-                        </button>
-                      </div>
-                    </div>
+                  <ShiftCalendar
+                    month={calMonth}
+                    today={householdToday()}
+                    selected={selectedDate}
+                    entries={monthEntries}
+                    onMonth={setCalMonth}
+                    onSelect={(day) => {
+                      setStoppingRepeat(null);
+                      setSelectedDate(day);
+                    }}
+                    locale={locale}
+                  />
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <h3 data-testid="shift-day-title" className="text-base font-black text-slate-900 dark:text-white">
+                      {dayTitle}
+                    </h3>
 
                     {/* Live On-Duty Badge */}
                     {dutyStatus && (
@@ -759,15 +807,15 @@ export function ShiftManagementModal({
                   <div className="space-y-3">
                     {shifts.map((s) => {
                       const assignment = assignments.find((a) => a.shift_id === s.id);
-                      const assignedCg = caregivers.find(
-                        (c) => c.id === assignment?.caregiver_id
-                      );
+                      const repeat = repeats.find((r) => r.shift_id === s.id && r.weekday === selectedWeekday);
 
                       return (
                         <div
                           key={s.id}
-                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 shadow-sm"
+                          data-testid="shift-day-row"
+                          className="p-4 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 shadow-sm"
                         >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex items-center gap-3">
                             <span
                               className="h-10 w-2.5 rounded-full"
@@ -779,7 +827,8 @@ export function ShiftManagementModal({
                                   {locale === "ar" ? s.name_ar : s.name_en}
                                 </span>
                                 <span className="rounded-md bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 px-1.5 py-0.5 text-xs font-bold font-mono">
-                                  {s.start_time} - {s.end_time}
+                                  <Ltr>{s.start_time} - {s.end_time}</Ltr>
+                                  {s.start_time >= s.end_time && (locale === "ar" ? " اليوم التالي" : " next day")}
                                 </span>
                               </div>
                               <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -819,6 +868,79 @@ export function ShiftManagementModal({
                               })}
                             </select>
                           </div>
+                        </div>
+
+                        {/* Every week on this weekday */}
+                        {repeat ? (
+                          <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+                            <p data-testid="shift-repeat-note" className="flex items-center gap-1.5 text-sm font-bold text-purple-800 dark:text-purple-300">
+                              <Repeat className="h-4 w-4 shrink-0" />
+                              <span>
+                                {locale === "ar" ? `يتكرر كل ${selectedWeekdayName}: ` : `Repeats every ${selectedWeekdayName}: `}
+                                <bdi>{repeat.caregiver_name}</bdi>
+                              </span>
+                            </p>
+                            {stoppingRepeat === repeat.id ? (
+                              <div className="mt-2">
+                                <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                  {locale === "ar" ? `إيقاف التكرار وإزالة أيام ${selectedWeekdayName} القادمة؟` : `Stop repeating and remove the coming ${selectedWeekdayName}s?`}
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={saving}
+                                    data-testid="shift-repeat-stop-yes"
+                                    onClick={() =>
+                                      changeRepeat(
+                                        () => fetchApi(`/shifts/repeats/${repeat.id}`, { method: "DELETE" }),
+                                        locale === "ar" ? "تم إيقاف التكرار" : "Stopped repeating",
+                                      )
+                                    }
+                                    className="min-h-12 rounded-xl bg-rose-700 px-3 text-sm font-bold text-white disabled:opacity-50"
+                                  >
+                                    {locale === "ar" ? "نعم، أوقفه" : "Yes, stop"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStoppingRepeat(null)}
+                                    className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                  >
+                                    {locale === "ar" ? "إبقاء التكرار" : "Keep it"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                data-testid="shift-repeat-stop"
+                                onClick={() => setStoppingRepeat(repeat.id)}
+                                className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              >
+                                {locale === "ar" ? "إيقاف التكرار" : "Stop repeating"}
+                              </button>
+                            )}
+                          </div>
+                        ) : assignment ? (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            data-testid="shift-repeat"
+                            onClick={() =>
+                              changeRepeat(
+                                () =>
+                                  fetchApi("/shifts/repeats", {
+                                    method: "POST",
+                                    body: JSON.stringify({ shift_id: s.id, caregiver_id: assignment.caregiver_id, date: selectedDate }),
+                                  }),
+                                locale === "ar" ? `يتكرر الآن كل ${selectedWeekdayName}` : `Now repeats every ${selectedWeekdayName}`,
+                              )
+                            }
+                            className="mt-3 flex min-h-12 w-full items-center justify-center gap-1.5 rounded-xl border-2 border-purple-600 bg-white px-3 text-sm font-bold text-purple-800 disabled:opacity-50 dark:border-purple-400 dark:bg-slate-800 dark:text-purple-200"
+                          >
+                            <Repeat className="h-4 w-4 shrink-0" />
+                            {locale === "ar" ? `تكرار كل ${selectedWeekdayName}` : `Repeat every ${selectedWeekdayName}`}
+                          </button>
+                        ) : null}
                         </div>
                       );
                     })}

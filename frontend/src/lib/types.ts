@@ -198,6 +198,25 @@ export interface ScheduledDose {
   dose_changed_from_yesterday?: boolean;
 }
 
+/** One person's shift on one day, for the roster calendar. */
+export interface ShiftMonthEntry {
+  date: string;
+  shift_id: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  avatar_color?: string;
+  repeat_id?: string;
+}
+
+/** A shift that repeats every week on a weekday (0 = Sunday). */
+export interface ShiftRepeat {
+  id: string;
+  shift_id: string;
+  caregiver_id: string;
+  caregiver_name: string;
+  weekday: number;
+}
+
 export interface DailyScheduleResponse {
   date: string;
   schedule: ScheduledDose[];
