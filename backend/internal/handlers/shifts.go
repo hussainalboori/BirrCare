@@ -543,16 +543,31 @@ func findCurrentShift(q querier, now time.Time) (*models.Shift, string, error) {
 		return nil, "", err
 	}
 
+	rows.Close() // the only connection: free it before the next query
+
 	var currentShift *models.Shift
 	targetDate := todayDate
 
-	for _, s := range activeShifts {
-		if isTimeInShift(currentTime, s.StartTime, s.EndTime) {
-			currentShift = &s
-			// Overnight or 24-hour shift and currentTime < end_time: it started yesterday
-			if s.StartTime >= s.EndTime && currentTime < s.EndTime {
-				targetDate = yesterdayDate
-			}
+	// Shifts can overlap, and only some are staffed on a given day (a 24-hour shift on
+	// Thursdays, an 8 PM one on Saturdays), so a shift with someone on it comes first.
+	for i := range activeShifts {
+		s := &activeShifts[i]
+		if !isTimeInShift(currentTime, s.StartTime, s.EndTime) {
+			continue
+		}
+		date := todayDate
+		// Overnight or 24-hour shift and currentTime < end_time: it started yesterday
+		if s.StartTime >= s.EndTime && currentTime < s.EndTime {
+			date = yesterdayDate
+		}
+		var staffed int
+		if err := q.QueryRow(`SELECT COUNT(*) FROM shift_assignments WHERE shift_id = ? AND date = ?`, s.ID, date).Scan(&staffed); err != nil {
+			return nil, "", err
+		}
+		if currentShift == nil || staffed > 0 {
+			currentShift, targetDate = s, date
+		}
+		if staffed > 0 {
 			break
 		}
 	}

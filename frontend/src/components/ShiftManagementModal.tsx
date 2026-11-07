@@ -549,7 +549,7 @@ export function ShiftManagementModal({
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {([
                           ["shift", locale === "ar" ? "البدء من وقت الوردية" : "Start from the shift"],
-                          ["clock", locale === "ar" ? "ترتيب ثابت، منتصف الليل أولاً" : "Same order, Night first"],
+                          ["clock", locale === "ar" ? "ترتيب الساعة، لا يتغير" : "Clock order, never changes"],
                         ] as const).map(([id, label]) => (
                           <button
                             key={id}

@@ -31,17 +31,19 @@ func readMedOrder(q querier) (string, error) {
 
 // medOrderFrom is the "HH:MM" the medicines list starts from, or "" for clock order.
 // Each person sees the list from their own shift, so the order doesn't change under
-// them. Anyone without a shift gets the one running now; shifts can overlap (a 24-hour
-// shift beside an 8 PM one), so that is the one that began most recently. Who is on
-// duty still comes from findCurrentShift.
+// them. Anyone without a shift gets the day's roster: the staffed shift running now or
+// next. With nobody rostered it is the running shift that began most recently, as
+// shifts can overlap (a 24-hour shift beside an 8 PM one).
 func medOrderFrom(q querier, caregiverID string, now time.Time) (string, error) {
 	order, err := readMedOrder(q)
 	if err != nil || order != medOrderShift {
 		return "", err
 	}
 	now = now.In(ClinicalLocation())
-	if own, err := ownShiftStart(q, caregiverID, now); err != nil || own != "" {
-		return own, err
+	for _, who := range []string{caregiverID, ""} {
+		if from, err := rosterShiftStart(q, who, now); err != nil || from != "" {
+			return from, err
+		}
 	}
 	rows, err := q.Query(`SELECT start_time, end_time FROM shifts WHERE is_active = 1 ORDER BY display_order ASC, start_time ASC`)
 	if err != nil {
@@ -79,19 +81,17 @@ func medOrderFrom(q querier, caregiverID string, now time.Time) (string, error) 
 	return shift.StartTime, nil
 }
 
-// ownShiftStart is the start of the caregiver's shift: today's, or last night's while
-// it is still running. With several, the one running now, else the next to begin.
-func ownShiftStart(q querier, caregiverID string, now time.Time) (string, error) {
-	if caregiverID == "" {
-		return "", nil
-	}
+// rosterShiftStart is the start of a rostered shift: today's, or last night's while it
+// is still running. With several, the one running now, else the next to begin.
+// caregiverID narrows it to that person; "" means anyone.
+func rosterShiftStart(q querier, caregiverID string, now time.Time) (string, error) {
 	today, yesterday := now.Format("2006-01-02"), now.AddDate(0, 0, -1).Format("2006-01-02")
 	rows, err := q.Query(`
 		SELECT s.start_time, s.end_time, a.date
 		FROM shift_assignments a JOIN shifts s ON s.id = a.shift_id
-		WHERE a.caregiver_id = ? AND a.date IN (?, ?) AND s.is_active = 1
+		WHERE (? = '' OR a.caregiver_id = ?) AND a.date IN (?, ?) AND s.is_active = 1
 		ORDER BY s.display_order ASC, s.start_time ASC
-	`, caregiverID, today, yesterday)
+	`, caregiverID, caregiverID, today, yesterday)
 	if err != nil {
 		return "", err
 	}

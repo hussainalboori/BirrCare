@@ -184,3 +184,40 @@ func TestTwentyFourHourShiftPastMidnightBelongsToItsStartDay(t *testing.T) {
 		t.Fatalf("at 09:00: date %q", date)
 	}
 }
+
+// The real roster: a 24-hour shift on some days, an 8 PM one on others. Tonight's
+// 8 PM shift must not lose to a 24-hour shift nobody is on.
+func TestStaffedShiftWinsOverAnEmptyOverlappingOne(t *testing.T) {
+	med, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	if _, err := med.DB.Exec(`
+		INSERT INTO shifts (id, name_ar, name_en, start_time, end_time, duration_hours, display_order, is_active)
+		VALUES ('s_night', 'ليل', 'normal', '20:00', '08:00', 12, 2, 1);
+		INSERT INTO shift_assignments (id, shift_id, caregiver_id, date) VALUES
+			('a1', 's_night', 'cg_fatima', '2026-11-07'),
+			('a2', 'shift_24h', 'cg_hussain', '2026-11-12');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when time.Time, wantShift, wantDate string) {
+		t.Helper()
+		shift, date, err := handlers.FindCurrentShiftForTest(med.DB, when)
+		if err != nil || shift != wantShift || date != wantDate {
+			t.Fatalf("%s: %s on %s (err %v), want %s on %s", when, shift, date, err, wantShift, wantDate)
+		}
+	}
+	check(time.Date(2026, 11, 7, 21, 0, 0, 0, time.UTC), "s_night", "2026-11-07")
+	check(time.Date(2026, 11, 8, 2, 0, 0, 0, time.UTC), "s_night", "2026-11-07")
+	check(time.Date(2026, 11, 12, 21, 0, 0, 0, time.UTC), "shift_24h", "2026-11-12")
+	check(time.Date(2026, 11, 13, 2, 0, 0, 0, time.UTC), "shift_24h", "2026-11-12")
+
+	// The medicines list: someone off today sees the day's roster, not the empty shift.
+	super := &models.Caregiver{ID: "cg_hussain", Name: "Hussain", Role: models.RoleSuperAdmin}
+	if rec := putMedOrder(&handlers.ShiftsHandler{DB: med.DB}, super, `{"order":"shift"}`); rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
+	}
+	got, err := handlers.MedOrderFromForTest(med.DB, "cg_hussain", time.Date(2026, 11, 7, 17, 0, 0, 0, handlers.ClinicalLocation()))
+	if err != nil || got != "20:00" {
+		t.Fatalf("off today at 17:00: %q (err %v), want 20:00", got, err)
+	}
+}
